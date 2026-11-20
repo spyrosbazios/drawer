@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest a change or addition
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: drawer is an agent-only workspace with no sign-in. A model editor or sketcher, multi-user accounts and public hosting are out of scope.
+  - type: textarea
+    attributes:
+      label: What you want
+      description: What should drawer do that it doesn't?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Why
+      description: What are you trying to make or check that you can't, or only with effort?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Anything else
+      description: Which part it touches (web app, CLI and skill, agent runner, gates and measuring, rendering, imports, server), alternatives you considered.

@@ -1,0 +1,67 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+/*
+ * No colour is defined here. The palette comes from web/src/core/theme.ts as `--app-*` variables
+ * (plugins.ts); this file maps those roles to Tailwind and mixes the page's few washes from them.
+ */
+@theme inline {
+  --font-sans: "Geist Variable", system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+
+  --color-bg: var(--app-bg);
+  --color-card: var(--app-card);
+  --color-raised: var(--app-raised);
+  --color-line: var(--app-line);
+  --color-fg: var(--app-fg);
+  --color-dim: var(--app-dim);
+  --color-faint: var(--app-faint);
+  --color-brand: var(--app-brand);
+  --color-on-brand: var(--app-on-brand);
+  --color-up: var(--app-up);
+  --color-down: var(--app-down);
+  --color-warn: var(--app-warn);
+  --color-run: var(--app-run);
+  --color-model: var(--app-model);
+  --color-grid: var(--app-grid);
+
+  --color-brand-wash: color-mix(in oklab, var(--app-brand) 10%, transparent);
+  --color-brand-line: color-mix(in oklab, var(--app-brand) 35%, var(--app-line));
+  --color-up-wash: color-mix(in oklab, var(--app-up) 12%, transparent);
+  --color-down-wash: color-mix(in oklab, var(--app-down) 12%, transparent);
+  --color-run-wash: color-mix(in oklab, var(--app-run) 12%, transparent);
+  --color-shade: color-mix(in oklab, var(--app-fg) 14%, transparent);
+}
+
+@layer base {
+  html {
+    @apply scroll-smooth bg-bg font-sans text-fg antialiased;
+    scroll-padding-top: 5rem;
+    color-scheme: light dark;
+  }
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; }
+  body { @apply min-h-screen overflow-x-hidden bg-bg text-[17px] leading-relaxed; }
+  ::selection { background: var(--color-brand-wash); }
+  :focus-visible { @apply rounded-md outline-2 outline-offset-2 outline-brand; }
+  button:not(:disabled) { cursor: pointer; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; }
+  }
+}
+
+@layer components {
+  /* The blueprint grid behind the hero, in the 3D viewer's own grid colour. */
+  .grid-paper {
+    background-image:
+      linear-gradient(to right, var(--app-grid) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--app-grid) 1px, transparent 1px);
+    background-size: 32px 32px;
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, black 30%, transparent 75%);
+  }
+  .shadow-frame {
+    box-shadow: 0 1px 2px var(--color-shade), 0 24px 60px -24px var(--color-shade);
+  }
+}

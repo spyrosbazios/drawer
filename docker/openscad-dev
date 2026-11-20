@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# OpenSCAD for development on a host that has none:  DRAWER_OPENSCAD=/abs/path/to/docker/openscad-dev
+#
+# Runs `openscad "$@"` in the drawer-render-base image, which must exist:
+#   docker build --target render-base -t drawer-render-base -f docker/Dockerfile .
+#
+# Directories are bind-mounted at the same absolute path inside the container, so arguments
+# and the paths OpenSCAD reports (-d dependency files, messages) need no translation:
+#   the working directory, every existing $OPENSCADPATH entry, and the parent directory of
+#   every absolute-path argument (input file, -o output, -d file).
+#
+# Limits:
+#   - Files outside those directories are invisible: e.g. `use </elsewhere/x.scad>`, or
+#     `../` reaching past the working directory and the search paths. The renderer always
+#     runs with cwd = the file's directory and OPENSCADPATH = project:library, which covers
+#     drawer's own layout.
+#   - Each call starts a container (~0.5 s), and a render makes 2 + one-per-view calls.
+#   - When the renderer times out it SIGKILLs this script's process group, which kills the
+#     docker client but not the container. `timeout` inside the container bounds how long an
+#     orphaned run can keep going (OPENSCAD_DEV_TIMEOUT seconds, default 130).
+#   - Paths containing ':' cannot be bind-mounted with -v and fail.
+set -euo pipefail
+
+image="${OPENSCAD_DEV_IMAGE:-drawer-render-base}"
+mounts=("$PWD")
+if [[ -n "${OPENSCADPATH:-}" ]]; then
+  IFS=: read -r -a search <<<"$OPENSCADPATH"
+  for dir in "${search[@]}"; do [[ -d "$dir" ]] && mounts+=("$dir"); done
+fi
+for arg in "$@"; do
+  if [[ "$arg" == /* ]]; then
+    dir="$(dirname "$arg")"
+    [[ -d "$dir" ]] && mounts+=("$dir")
+  fi
+done
+
+volumes=()
+while IFS= read -r dir; do
+  [[ -n "$dir" ]] && volumes+=(-v "$dir:$dir")
+done < <(printf '%s\n' "${mounts[@]}" | sort -u)
+
+exec docker run --rm --init \
+  -u "$(id -u):$(id -g)" \
+  -e HOME=/tmp \
+  -e OPENSCADPATH="${OPENSCADPATH:-}" \
+  "${volumes[@]}" \
+  -w "$PWD" \
+  "$image" \
+  timeout "${OPENSCAD_DEV_TIMEOUT:-130}" openscad "$@"

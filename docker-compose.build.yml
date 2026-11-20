@@ -1,0 +1,16 @@
+# Build the image from this checkout instead of pulling it. Merge it over the base file:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+# or set COMPOSE_FILE=docker-compose.yml:docker-compose.build.yml in .env (then list docker-compose.override.yml too:
+# Compose merges that one on its own only when COMPOSE_FILE is unset).
+# DRAWER_VERSION is what GET /api/health reports: DRAWER_VERSION=$(sh scripts/version.sh) docker compose up -d --build
+services:
+  drawer:
+    image: drawer:local
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        DRAWER_VERSION: ${DRAWER_VERSION:-0.0.0}
+        # The owner of ./data on the host, so the server can write to the bind mount.
+        UID: ${DRAWER_UID:-1000}
+        GID: ${DRAWER_GID:-1000}

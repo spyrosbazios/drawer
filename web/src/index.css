@@ -1,0 +1,255 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Colours are not defined here. They are generated from src/core/theme.ts into `--app-*` variables
+ * (inlined into index.html by plugins/theme.ts). This file only maps those roles to Tailwind and shadcn.
+ */
+@theme inline {
+  --font-sans: "Geist Variable", system-ui, sans-serif;
+  --font-heading: var(--font-sans);
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+
+  --color-bg: var(--app-bg);
+  --color-raised: var(--app-raised);
+  --color-line: var(--app-line);
+  --color-fg: var(--app-fg);
+  --color-dim: var(--app-dim);
+  --color-faint: var(--app-faint);
+  --color-brand: var(--app-brand);
+  --color-on-brand: var(--app-on-brand);
+  --color-up: var(--app-up);
+  --color-down: var(--app-down);
+  --color-warn: var(--app-warn);
+  --color-run: var(--app-run);
+  --color-model: var(--app-model);
+  --color-cat1: var(--app-cat1);
+  --color-cat2: var(--app-cat2);
+  --color-cat3: var(--app-cat3);
+  --color-cat4: var(--app-cat4);
+  --color-cat5: var(--app-cat5);
+  --color-cat6: var(--app-cat6);
+
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* shadcn's variables pointed at our roles, so its components follow the theme in light and dark. */
+:root {
+  --background: var(--app-bg);
+  --foreground: var(--app-fg);
+  --card: var(--app-card);
+  --card-foreground: var(--app-fg);
+  --popover: var(--app-card);
+  --popover-foreground: var(--app-fg);
+  --primary: var(--app-brand);
+  --primary-foreground: var(--app-on-brand);
+  --secondary: var(--app-raised);
+  --secondary-foreground: var(--app-fg);
+  --muted: var(--app-raised);
+  --muted-foreground: var(--app-dim);
+  --accent: var(--app-raised);
+  --accent-foreground: var(--app-fg);
+  --destructive: var(--app-down);
+  --border: var(--app-line);
+  --input: var(--app-line);
+  --ring: var(--app-faint);
+  --chart-1: var(--app-cat1);
+  --chart-2: var(--app-cat2);
+  --chart-3: var(--app-cat3);
+  --chart-4: var(--app-cat4);
+  --chart-5: var(--app-cat5);
+  --radius: 0.625rem;
+  --sidebar: var(--app-card);
+  --sidebar-foreground: var(--app-fg);
+  --sidebar-primary: var(--app-brand);
+  --sidebar-primary-foreground: var(--app-on-brand);
+  --sidebar-accent: var(--app-raised);
+  --sidebar-accent-foreground: var(--app-fg);
+  --sidebar-border: var(--app-line);
+  --sidebar-ring: var(--app-faint);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button,
+  a,
+  [role="button"],
+  summary,
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
+  }
+}
+
+@layer utilities {
+  .scroll-contain {
+    overscroll-behavior: contain;
+  }
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .no-callout {
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  .pb-safe {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+}
+
+/* View transitions: only a change of screen crossfades; search-param changes stay in place. */
+@media (prefers-reduced-motion: no-preference) {
+  :root:active-view-transition-type(route)::view-transition-old(root) {
+    animation: 120ms ease-out both vt-out;
+  }
+  :root:active-view-transition-type(route)::view-transition-new(root) {
+    animation: 180ms ease-in both vt-in;
+  }
+}
+@keyframes vt-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes vt-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The markdown reader. A shadcn CodeBlock inside it (its parts carry data-slot) keeps its own look. */
+.prose-drawer {
+  @apply text-[15px] leading-7 text-fg;
+  overflow-wrap: anywhere;
+}
+.prose-drawer > * + * {
+  @apply mt-4;
+}
+.prose-drawer h1 {
+  @apply mt-8 border-b border-line pb-2 text-2xl font-semibold tracking-tight first:mt-0;
+}
+.prose-drawer h2 {
+  @apply mt-8 text-xl font-semibold tracking-tight;
+}
+.prose-drawer h3 {
+  @apply mt-6 text-lg font-semibold;
+}
+.prose-drawer h4,
+.prose-drawer h5,
+.prose-drawer h6 {
+  @apply mt-5 font-semibold;
+}
+.prose-drawer a {
+  @apply text-brand underline underline-offset-2;
+}
+.prose-drawer ul {
+  @apply list-disc pl-6;
+}
+.prose-drawer ol {
+  @apply list-decimal pl-6;
+}
+.prose-drawer ul.contains-task-list {
+  @apply list-none pl-1;
+}
+.prose-drawer li + li {
+  @apply mt-1.5;
+}
+.prose-drawer li:has(> [data-fact], > p > [data-fact]) {
+  list-style: none;
+  margin-left: -1.25rem;
+}
+.prose-drawer blockquote {
+  @apply border-l-2 border-line pl-4 text-dim;
+}
+.prose-drawer code:not([data-slot]) {
+  @apply rounded bg-raised px-1 py-0.5 font-mono text-[0.9em];
+}
+.prose-drawer pre:not([data-slot]) {
+  @apply overflow-x-auto rounded-lg border border-line bg-card p-3 text-sm;
+}
+.prose-drawer pre code {
+  @apply bg-transparent p-0;
+}
+.prose-drawer table {
+  @apply block w-full overflow-x-auto text-sm;
+}
+.prose-drawer th,
+.prose-drawer td {
+  @apply border border-line px-3 py-1.5 text-left;
+}
+.prose-drawer th {
+  @apply bg-raised font-medium;
+}
+.prose-drawer img {
+  @apply max-w-full rounded-lg;
+}
+.prose-drawer hr {
+  @apply border-line;
+}
+
+/* CodeMirror fills its pane. */
+.cm-editor {
+  height: 100%;
+}
+.cm-editor .cm-scroller {
+  overscroll-behavior: contain;
+}

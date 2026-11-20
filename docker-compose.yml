@@ -1,0 +1,27 @@
+# Pulls the published image (ghcr.io/spyrosbazios/drawer, amd64 and arm64), never builds: DRAWER_VERSION pins a
+# release, unset it is the latest. Building from source: docker-compose.build.yml.
+# Loopback only by default: there is no sign-in, so other devices reach it through a private network (SECURITY.md).
+# Every setting is an environment variable with a default: .env.example lists them.
+# Deployment-specific additions (labels, extra networks) go in docker-compose.override.yml, see the .example beside this file.
+name: drawer
+services:
+  drawer:
+    image: ghcr.io/spyrosbazios/drawer:${DRAWER_VERSION:-latest}   # the server, the web app, OpenSCAD with BOSL2 and MCAD
+    ports: ["${DRAWER_BIND:-127.0.0.1}:${DRAWER_PORT:-3050}:3050"]
+    environment:
+      TZ: ${TZ:-UTC}
+      DRAWER_ALLOWED_HOSTS: ${DRAWER_ALLOWED_HOSTS:-}
+      THINGIVERSE_TOKEN: ${THINGIVERSE_TOKEN:-}
+      MAKERWORLD_TOKEN: ${MAKERWORLD_TOKEN:-}
+      CULTS3D_USER: ${CULTS3D_USER:-}
+      CULTS3D_KEY: ${CULTS3D_KEY:-}
+      MYMINIFACTORY_KEY: ${MYMINIFACTORY_KEY:-}
+    volumes:
+      - ./data:/data   # every project, session and note: the only copy
+    # A model is untrusted text: a runaway render is stopped by the server after 120 s, and these keep it from
+    # taking the host down before that.
+    mem_limit: ${DRAWER_MEMORY:-4g}
+    pids_limit: 512
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped

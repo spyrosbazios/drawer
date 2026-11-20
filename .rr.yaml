@@ -1,0 +1,11 @@
+# Remote runs via rr (https://github.com/rileyhilliard/rr). Hosts come from each machine's
+# ~/.rr/config.yaml; nothing machine-specific belongs here.
+version: 1
+local_fallback: false
+lock:
+  enabled: false        # the caller (heavy) limits concurrency per host
+defaults:
+  setup: bun install --frozen-lockfile --silent
+sync:
+  exclude: [.git, node_modules, dist, data, .env, ".env.*", "*.key", "*.pem", docker-compose.override.yml]
+  preserve: [node_modules, "**/node_modules"]

@@ -1,0 +1,12 @@
+# An example of a deployment-specific override. Copy it to `docker-compose.override.yml` beside docker-compose.yml
+# (gitignored); `docker compose` merges that file over the base on its own. This one registers the service with a
+# dashboard that discovers containers by their `glance.*` labels (Glance-style). The base compose carries no labels.
+# Delete what you do not use, or put anything else a deployment needs here (extra networks, other limits, labels).
+services:
+  drawer:
+    labels:
+      glance.id: drawer
+      glance.name: Drawer
+      glance.icon: favicon
+      glance.url: http://${DRAWER_BIND:-127.0.0.1}:${DRAWER_PORT:-3050}
+      glance.description: Agent-only CAD workspace

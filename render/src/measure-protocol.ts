@@ -1,0 +1,23 @@
+/** Messages between the renderer and measure-worker.ts. */
+import type { Axis, ProbeResult, SliceContour, Vec3 } from "@drawer/shared/api";
+import type { AnalysisResult, DeviationResult } from "./measure";
+
+type Ask =
+  | { op: "analyse"; mesh: string; overhangDeg: number }
+  | { op: "slice"; mesh: string; axis: Axis; at: number }
+  | { op: "probe"; mesh: string; from: Vec3; axis: Axis }
+  | { op: "deviation"; a: string; b: string }
+  | { op: "gap"; a: { mesh: string; matrix: number[] }; b: { mesh: string; matrix: number[] } };
+
+export type WorkerRequest = Ask & { id: number };
+
+export type WorkerAnswer =
+  | { op: "analyse"; analysis: AnalysisResult; thickness: Float32Array }
+  | { op: "slice"; contours: SliceContour[] }
+  | { op: "probe"; probe: ProbeResult }
+  | { op: "deviation"; result: DeviationResult }
+  | { op: "gap"; gapMm: number; disjoint: boolean };
+
+export type WorkerReply = ({ id: number; ok: true } & WorkerAnswer) | { id: number; ok: false; error: string };
+
+export type { Ask };

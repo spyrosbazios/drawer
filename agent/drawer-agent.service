@@ -1,0 +1,23 @@
+# systemd user unit for the drawer agent runner. Install: see agent/README.md.
+[Unit]
+Description=drawer agent runner (modelling agents for drawer sessions)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The checkout of this repository: the runner runs its source.
+WorkingDirectory=%h/drawer
+ExecStart=%h/.bun/bin/bun agent/src/main.ts
+# The drawer server this runner serves: the address its port is published on (DRAWER_BIND in the server's .env).
+Environment=DRAWER_URL=http://127.0.0.1:3050
+# Optional: Environment=DRAWER_AGENT_ID=workshop DRAWER_AGENT_CONCURRENCY=2 DRAWER_AGENT_STATE=... (models and providers: Settings in the web app)
+# Optional, absolute paths to each provider's CLI (unset: found on the PATH and per-user install dirs):
+#   Environment=DRAWER_AGENT_CLAUDE_BIN=... DRAWER_AGENT_CODEX_BIN=... DRAWER_AGENT_PI_BIN=... DRAWER_AGENT_GEMINI_BIN=...
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

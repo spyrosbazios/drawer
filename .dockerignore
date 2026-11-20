@@ -1,0 +1,21 @@
+# The build context is the repo root, which holds the live data (data/), any .env and gigabytes of
+# node_modules: send only what docker/Dockerfile reads.
+*
+!package.json
+!bun.lock
+!tsconfig.base.json
+!shared
+!server
+!render
+!importers
+!web
+!assets
+!cli/package.json
+!agent/package.json
+!site/package.json
+**/node_modules
+**/dist
+**/.env*
+server/test
+render/test
+importers/test

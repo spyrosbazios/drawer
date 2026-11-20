@@ -1,0 +1,6 @@
+node_modules/
+dist/
+public/pwa-*.png
+public/apple-touch-icon-*.png
+public/maskable-icon-*.png
+public/favicon.ico

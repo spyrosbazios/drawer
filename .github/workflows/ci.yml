@@ -1,0 +1,158 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same ref cancels the run it supersedes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The version docker/Dockerfile ships (BUN_VERSION), which wrote bun.lock.
+  BUN_VERSION: "1.3.9"
+
+jobs:
+  packages:
+    name: ${{ matrix.package }} - typecheck, tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [server, render, importers, cli, agent]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ env.BUN_VERSION }}-
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd ${{ matrix.package }} typecheck
+      # Without OpenSCAD the tests that need it are skipped here; the `openscad` job runs them.
+      - run: bun run --cwd ${{ matrix.package }} test
+
+  web:
+    name: web - typecheck, lint, tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ env.BUN_VERSION }}-
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd web typecheck
+      - run: bun run --cwd web lint
+      - run: bun run --cwd web test
+      - run: bun run --cwd web build
+
+  site:
+    name: site - typecheck, lint, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ env.BUN_VERSION }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ env.BUN_VERSION }}-
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd site typecheck
+      - run: bun run --cwd site lint
+      - run: bun run --cwd site build
+        env:
+          SITE_BASE: /drawer/
+
+  # The render and server tests that need a real OpenSCAD, run through docker/openscad-dev against the image's own
+  # render-base stage (OpenSCAD nightly, BOSL2, MCAD), as AGENTS.md describes for development.
+  openscad:
+    name: render, server - tests with OpenSCAD
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: render-base
+          load: true
+          tags: drawer-render-base
+          cache-from: type=gha,scope=render-base
+          cache-to: type=gha,mode=max,scope=render-base
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd render test
+        env:
+          DRAWER_OPENSCAD: ${{ github.workspace }}/docker/openscad-dev
+      - run: bun run --cwd server test
+        env:
+          DRAWER_OPENSCAD: ${{ github.workspace }}/docker/openscad-dev
+
+  # The image as it is published (amd64 only here), started the way docker-compose.yml starts it.
+  image:
+    name: image - build, start, health
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          load: true
+          tags: drawer:ci
+          build-args: |
+            DRAWER_VERSION=0.0.0-ci
+          cache-from: type=gha,scope=image
+          cache-to: type=gha,mode=max,scope=image
+      - name: Start
+        run: |
+          mkdir data && sudo chown 1000:1000 data
+          docker run -d --name drawer -p 127.0.0.1:3050:3050 -v "$PWD/data:/data" \
+            --cap-drop ALL --security-opt no-new-privileges:true --memory 4g --pids-limit 512 drawer:ci
+      - name: Health
+        run: |
+          for i in $(seq 1 30); do
+            if health=$(curl -fsS http://127.0.0.1:3050/api/health); then break; fi
+            sleep 2
+          done
+          echo "$health"
+          # The version the image was built with, and an OpenSCAD the server can run.
+          echo "$health" | jq -e '.ok == true and .version == "0.0.0-ci" and (.openscad | type == "string")'
+      - name: The web app is served
+        run: curl -fsS http://127.0.0.1:3050/ | grep -qi '<!doctype html'
+      - name: A request from another site is refused
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'origin: https://example.com' \
+            -H 'content-type: application/json' -d '{}' http://127.0.0.1:3050/api/projects)
+          test "$code" = 403
+      - name: Logs
+        if: always()
+        run: docker logs drawer

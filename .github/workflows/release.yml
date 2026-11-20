@@ -1,0 +1,41 @@
+name: Release
+
+# A tag vX.Y.Z on main is the release (CONTRIBUTING.md, Versioning): the tag is the repo's one version, read by
+# scripts/version.sh. This makes the GitHub release, whose notes are CHANGELOG.md's section for the version.
+# The image is docker.yml's.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - id: v
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::tag $TAG is not vMAJOR.MINOR.PATCH"; exit 1 ;;
+          esac
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+      # The notes are CHANGELOG.md's "## X.Y.Z - date" section, without its heading; a tag with none fails the release.
+      - name: Release notes
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          awk -v v="$VERSION" '/^## /{ if (p) exit; p = ($2 == v); next } p' CHANGELOG.md > notes.md
+          grep -q '[^[:space:]]' notes.md || { echo "::error::CHANGELOG.md has no ## $VERSION section"; exit 1; }
+      - uses: softprops/action-gh-release@v3
+        with:
+          body_path: notes.md
+          prerelease: ${{ contains(steps.v.outputs.version, '-') }}

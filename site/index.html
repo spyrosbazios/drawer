@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>drawer: a CAD workspace where an agent models and a server checks the parts</title>
+    <meta name="description" content="Self-hosted workspace for 3D-printed parts. You say what you need, an agent writes the OpenSCAD model, and the server measures every model against its spec and decides when a part is done." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="drawer" />
+    <meta property="og:url" content="https://spyrosbazios.github.io/drawer/" />
+    <meta property="og:title" content="drawer: an agent models, the server measures" />
+    <meta property="og:description" content="Self-hosted CAD workspace for 3D printing. An agent writes OpenSCAD; the server measures every part against its spec and decides when it is done." />
+    <meta property="og:image" content="https://spyrosbazios.github.io/drawer/social.webp" />
+    <meta property="og:image:width" content="2880" />
+    <meta property="og:image:height" content="1800" />
+    <meta property="og:image:alt" content="drawer showing a cable clip in the 3D viewer beside its spec and gates, one gate failing." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="drawer: an agent models, the server measures" />
+    <meta name="twitter:description" content="Self-hosted CAD workspace for 3D printing. An agent writes OpenSCAD; the server measures every part against its spec and decides when it is done." />
+    <meta name="twitter:image" content="https://spyrosbazios.github.io/drawer/social.webp" />
+    <!-- The visitor's theme choice, applied before the first paint (src/theme.ts owns the key). -->
+    <script>
+      try { var t = localStorage.getItem("drawer-site.theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

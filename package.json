@@ -1,0 +1,14 @@
+{
+  "name": "drawer",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "server",
+    "render",
+    "importers",
+    "cli",
+    "agent",
+    "web",
+    "site"
+  ]
+}

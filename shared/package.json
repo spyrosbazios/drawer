@@ -1,0 +1,9 @@
+{
+  "name": "@drawer/shared",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./api": "./src/api.ts",
+    "./contracts": "./src/contracts.ts"
+  }
+}

@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import type { QuestionItem, Row } from "./model";
 import ThreadMarkdown from "./markdown";
 import { Question } from "./question";
+import { StandaloneThought } from "./thinking";
 import { ToolSteps } from "./tool-steps";
 import { UserMessage } from "./user-message";
 
@@ -13,6 +14,8 @@ import { UserMessage } from "./user-message";
 export interface RowEnv {
   /** Seqs of the person's messages the agent has not read yet. */
   queued: ReadonlySet<number>;
+  /** The thought being thought right now (`liveThought`), the one live row; every other thought is drawn as done. */
+  liveSeq: number | null;
   /** An answer is being sent. */
   answering: boolean;
   onAnswer: (question: QuestionItem, answer: string) => void;
@@ -41,11 +44,12 @@ function Notice({ level, text }: { level: "info" | "error"; text: string }) {
 }
 
 /**
- * THE place an item type gets its renderer: one case per `SessionItem` type. A new type (reasoning) is
- * a new case here; the exhaustive switch makes the compiler ask for it.
+ * THE place an item type gets its renderer: one case per `SessionItem` type. A new type is a new case here
+ * (reasoning is drawn by `thinking.tsx`, in a steps group or alone); the exhaustive switch makes the compiler ask for it.
  */
 export function RowView({ row, env }: { row: Row; env: RowEnv }): ReactNode {
-  if (row.kind === "steps") return <ToolSteps items={row.items} />;
+  if (row.kind === "steps") return <ToolSteps items={row.items} liveSeq={env.liveSeq} />;
+  if (row.kind === "thought") return <StandaloneThought item={row.item} running={row.item.seq === env.liveSeq} />;
   const item = row.item;
   switch (item.type) {
     case "user":

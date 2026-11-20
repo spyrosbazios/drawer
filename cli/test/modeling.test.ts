@@ -650,13 +650,14 @@ describe("sessions", () => {
     expect((await sb.run(["sessions"])).json<{ sessions: Session[] }>().sessions).toHaveLength(2);
   });
 
-  test("session prints the items compactly: who, tool summaries, questions with their options", async () => {
+  test("session prints the items compactly: who, tool summaries, thoughts, questions with their options", async () => {
     const id = (await sb.run(["ask", "box", "make a lid"])).json<Session>().id;
     fake.modeling.addSessionItem(id, { type: "assistant", text: "I will\nmeasure the tray first." });
     fake.modeling.addSessionItem(id, { type: "tool", callId: "c1", name: "measure", summary: "measure refs/tray.stl", status: "ok", result: "ok", images: [] });
     fake.modeling.addSessionItem(id, { type: "tool", callId: "c2", name: "write", summary: "write parts/lid.scad", status: "error", result: "conflict:\nrev is stale", images: [] });
     fake.modeling.addSessionItem(id, { type: "question", questionId: "q1", text: "Which fit?", options: ["sliding", "press"], answer: null });
     fake.modeling.addSessionItem(id, { type: "question", questionId: "q2", text: "Colour?", options: [], answer: "black" });
+    fake.modeling.addSessionItem(id, { type: "reasoning", reasoningId: "r1", text: "The tray is\n60 mm wide.", status: "done", seconds: 7 });
     fake.modeling.addSessionItem(id, { type: "notice", level: "error", text: "the runner went away" });
     const r = await sb.run(["session", id, "--text"]);
     expect(r.code).toBe(0);
@@ -667,12 +668,13 @@ describe("sessions", () => {
       "#4 tool error: write parts/lid.scad  -> conflict: rev is stale",
       "#5 question q1: Which fit?  options: 1) sliding  2) press  (unanswered)",
       "#6 question q2: Colour?  answer: black",
-      "#7 error: the runner went away",
+      "#7 thought (7s): The tray is 60 mm wide.",
+      "#8 error: the runner went away",
     ]);
     expect(r.out.split("\n")[0]).toMatch(new RegExp(`^${id} {2}queued {2}box `));
     const after = await sb.run(["session", id, "--since", "5", "--json"]);
     expect(fake.requests.at(-1)?.query.since).toBe("5");
-    expect(after.json<SessionDetail>().items.map((i) => i.seq)).toEqual([6, 7]);
+    expect(after.json<SessionDetail>().items.map((i) => i.seq)).toEqual([6, 7, 8]);
     expect((await sb.run(["session", "s999"])).code).toBe(3);
     expect((await sb.run(["session"])).code).toBe(1);
   });

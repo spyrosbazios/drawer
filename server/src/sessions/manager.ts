@@ -41,6 +41,13 @@ const DEFAULT_RUNNER_TTL_MS = 60_000;
 const DEFAULT_SWEEP_MS = 5_000;
 const TITLE_MAX = 80;
 
+/** Items a later append of the same thing replaces: a tool call by its callId, a thought by its reasoningId. */
+type Replaceable = Extract<NewSessionItem, { type: "tool" | "reasoning" }>;
+
+const isReplaceable = (item: NewSessionItem): item is Replaceable => item.type === "tool" || item.type === "reasoning";
+
+const replaceKey = (item: Replaceable): string => (item.type === "tool" ? `tool:${item.callId}` : `reasoning:${item.reasoningId}`);
+
 /** An item before the server gives it its `seq` and `at`. */
 type ItemBody = SessionItem extends infer T ? (T extends unknown ? Omit<T, "seq" | "version" | "at"> : never) : never;
 
@@ -48,8 +55,8 @@ interface Rec {
   session: Session;
   /** Ordered by seq. */
   items: SessionItem[];
-  /** callId of a tool item → its index in `items`. */
-  calls: Map<string, number>;
+  /** Items a later append replaces (tool calls, reasoning) by `replaceKey` → their index in `items`. */
+  replaceable: Map<string, number>;
   resume: string | null;
   /**
    * The runner process that claimed the latest turn. It stays after the turn ends or is stopped (a
@@ -161,9 +168,9 @@ export class SessionManager implements Sessions {
     session.version = items.reduce((max, item) => Math.max(max, item.version), 0);
     session.pending = items.filter((i) => i.type === "user" && i.seq > stored.handedSeq).length;
     this.lastStamp = Math.max(this.lastStamp, Date.parse(session.updatedAt) || 0);
-    const calls = new Map<string, number>();
-    for (const [index, item] of items.entries()) if (item.type === "tool") calls.set(item.callId, index);
-    return { session, items, calls, resume: stored.resume, holder: null, claims: 0, handedSeq: stored.handedSeq, queueOrder: 0, chain: Promise.resolve() };
+    const replaceable = new Map<string, number>();
+    for (const [index, item] of items.entries()) if (item.type === "tool" || item.type === "reasoning") replaceable.set(replaceKey(item), index);
+    return { session, items, replaceable, resume: stored.resume, holder: null, claims: 0, handedSeq: stored.handedSeq, queueOrder: 0, chain: Promise.resolve() };
   }
 
   // ---- for people ---------------------------------------------------------------------------
@@ -203,7 +210,7 @@ export class SessionManager implements Sessions {
         updatedAt: now,
       },
       items: [],
-      calls: new Map(),
+      replaceable: new Map(),
       resume: null,
       holder: null,
       claims: 0,
@@ -460,8 +467,8 @@ export class SessionManager implements Sessions {
     const rec = this.held(id, by);
     const at = this.stamp();
     let stored: SessionItem;
-    if (item.type === "tool" && rec.calls.has(item.callId)) {
-      const index = rec.calls.get(item.callId) as number;
+    if (isReplaceable(item) && rec.replaceable.has(replaceKey(item))) {
+      const index = rec.replaceable.get(replaceKey(item)) as number;
       const old = rec.items[index] as SessionItem;
       stored = { ...item, seq: old.seq, version: this.nextVersion(rec), at: old.at };
       rec.items[index] = stored;
@@ -470,10 +477,8 @@ export class SessionManager implements Sessions {
         throw invalid(`question ${item.questionId} already exists`);
       }
       stored = this.pushItem(rec, item.type === "question" ? { ...item, answer: null } : item, at);
-      if (item.type === "tool") {
-        rec.calls.set(item.callId, rec.items.length - 1);
-        rec.session.toolCalls += 1;
-      }
+      if (isReplaceable(item)) rec.replaceable.set(replaceKey(item), rec.items.length - 1);
+      if (item.type === "tool") rec.session.toolCalls += 1;
       if (item.type === "question" && rec.session.status === "working") rec.session.status = "waiting";
     }
     this.changed(rec);

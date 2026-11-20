@@ -74,8 +74,8 @@ function recorder() {
 
 const quiet = { info: () => {}, error: () => {} };
 
-function runnerWith(provider: Provider, client: RunnerClient, concurrency = 2) {
-  return new Runner({ client, toolClient: fakeClient({}), identity, providers: [provider], concurrency, log: quiet });
+function runnerWith(provider: Provider, client: RunnerClient, concurrency = 2, extra: { reasoningIntervalMs?: number } = {}) {
+  return new Runner({ client, toolClient: fakeClient({}), identity, providers: [provider], concurrency, log: quiet, ...extra });
 }
 
 const READY: ProviderCheck = { state: "ready", version: "1.2.3", models: ["m1"], message: null, binary: "/host/claude" };
@@ -172,6 +172,54 @@ describe("turn lifecycle", () => {
 
     const last = log.at(-1);
     expect(last).toEqual({ kind: "patch", id: "s1", body: { resume: "claude-1", status: "idle", activity: null, error: null } });
+  });
+
+  test("reasoning: opens in place, streams at most once per interval, closes as done, and never moves other items", async () => {
+    const { log, client } = recorder();
+    const provider = scripted(async (t) => {
+      t.onEvent({ type: "reasoning", id: "t1", text: "", done: false });
+      t.onEvent({ type: "reasoning", id: "t1", text: "Look", done: false });
+      t.onEvent({ type: "reasoning", id: "t1", text: "Look at", done: false });
+      t.onEvent({ type: "reasoning", id: "t1", text: "Look at the overview", done: false });
+      t.onEvent({ type: "assistant_text", text: "Reading." });
+      await Bun.sleep(120);
+      t.onEvent({ type: "reasoning", id: "t1", text: "Look at the overview, then answer", done: true });
+      t.onEvent({ type: "reasoning", id: "t1", text: "ignored: already closed", done: false });
+      t.onEvent({ type: "reasoning", id: "t2", text: "   ", done: true });
+      t.onEvent({ type: "assistant_text", text: "Done." });
+    });
+    const runner = runnerWith(provider, client, 2, { reasoningIntervalMs: 50 });
+    runner.dispatch(turn("s1"));
+    await runner.idle();
+    const items = log.filter((r) => r.kind === "item").map((r) => (r as { item: NewSessionItem }).item);
+    expect(items.map((i) => (i.type === "reasoning" ? `${i.reasoningId}:${i.status}:${i.text}` : i.type))).toEqual([
+      "t1:running:Look",
+      "assistant",
+      "t1:running:Look at the overview",
+      "t1:done:Look at the overview, then answer",
+      "assistant",
+    ]);
+  });
+
+  test("reasoning: a long thought keeps its tail, and an open one is closed when the turn ends or fails", async () => {
+    const { log, client } = recorder();
+    const long = `${"a".repeat(5000)}END`;
+    const provider = scripted(async (t) => {
+      t.onEvent({ type: "reasoning", id: "t1", text: long, done: false });
+      t.onEvent({ type: "reasoning", id: "t2", text: "never closed by the provider", done: false });
+      throw new Error("boom");
+    });
+    const runner = runnerWith(provider, client);
+    runner.dispatch(turn("s1"));
+    await runner.idle();
+    const items = log.filter((r) => r.kind === "item").map((r) => (r as { item: Extract<NewSessionItem, { type: "reasoning" }> }).item);
+    const closing = items.filter((i) => i.status === "done");
+    expect(closing.map((i) => i.reasoningId).sort()).toEqual(["t1", "t2"]);
+    const t1 = closing.find((i) => i.reasoningId === "t1");
+    expect(t1?.text.length).toBe(4000);
+    expect(t1?.text.startsWith("…")).toBe(true);
+    expect(t1?.text.endsWith("END")).toBe(true);
+    expect(log.at(-1)).toMatchObject({ kind: "patch", body: { status: "failed" } });
   });
 
   test("a provider error marks the session failed", async () => {

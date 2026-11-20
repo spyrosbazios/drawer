@@ -87,6 +87,10 @@ All three families are shadcn registry items on the Radix base (`radix-nova`), i
   Never store a default agent in the browser. `/settings` is one `SettingsSection` per area.
 - Session items live in the query cache merged by `seq` (`core/sessions.ts`); a `session` event fetches only
   `?since=<cached version>`. Never refetch a whole session on an event.
+- The thread folds a run of tool calls and the thoughts between them into one "N steps" group (`groupRows`); a
+  thought with no tool call in its run stays its own row. The thread has ONE live row: a running thought
+  (the newest item, session working: `liveThought`) shimmers with the line it is on and the activity tail
+  gives way to it; in a folded group it is shown below the line like a running step.
 - Picks for the next message live in `lib/pointing.ts`, outside React, per project; the composer clears them. Unsent text
   and attached files live in `session/composer-drafts.ts` (uploads start at once and run on while the panel is away).
 - Thumbnails (`Project.thumbnail`) and render PNGs are addressed by their content and immutable: never add a cache-buster.

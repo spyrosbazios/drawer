@@ -19,6 +19,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { startMcpToolServer, MCP_SERVER_NAME } from "../mcp-server.ts";
 import { ForeignToolError, type Provider, type ProviderCheck, type Turn } from "../provider.ts";
+import { Thoughts } from "./thoughts.ts";
 import { abortable, capture, findBinary, isRecord, literalPrompt, readJsonLines, str, versionOf, withScratchDir } from "./process.ts";
 
 export const PI_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`;
@@ -219,6 +220,10 @@ export class PiProvider implements Provider {
         failed.catch(() => undefined);
         const race = <T>(p: Promise<T>) => Promise.race([p, failed]);
         let modelError: string | null = null;
+        const thoughts = new Thoughts((e) => turn.onEvent(e));
+        // A content index repeats in every message of the turn: number the thoughts instead.
+        const openThoughts = new Map<number, string>();
+        let thoughtCount = 0;
         const rpc = new PiRpc(proc, (ev) => {
           switch (ev.type) {
             case "tool_execution_start": {
@@ -226,6 +231,20 @@ export class PiProvider implements Provider {
               if (!name.startsWith(PI_TOOL_PREFIX)) {
                 rpc.write({ type: "abort" });
                 fail(new ForeignToolError(`tried to use ${name || "an unknown tool"}`));
+              }
+              break;
+            }
+            case "message_update": {
+              const update = isRecord(ev.assistantMessageEvent) ? ev.assistantMessageEvent : {};
+              const index = typeof update.contentIndex === "number" ? update.contentIndex : -1;
+              if (update.type === "thinking_start") openThoughts.set(index, `t${thoughtCount++}`);
+              else if (update.type === "thinking_delta") {
+                const key = openThoughts.get(index);
+                if (key !== undefined) thoughts.append(key, str(update.delta) ?? "");
+              } else if (update.type === "thinking_end") {
+                const key = openThoughts.get(index);
+                if (key !== undefined) thoughts.end(key, str(update.content) ?? undefined);
+                openThoughts.delete(index);
               }
               break;
             }
@@ -259,6 +278,7 @@ export class PiProvider implements Provider {
           await race(settled);
         } finally {
           turn.signal.removeEventListener("abort", onAbort);
+          thoughts.endAll();
           await rpc.stop();
         }
       } finally {

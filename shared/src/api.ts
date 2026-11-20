@@ -897,6 +897,8 @@ export type SessionItem = { seq: number; version: number; at: string } & (
   | { type: "assistant"; text: string }
   | { type: "tool"; callId: string; name: string; summary: string; status: "running" | "ok" | "error"; result: string | null; images: string[] }
   | { type: "question"; questionId: string; text: string; options: string[]; answer: string | null }
+  /** What the model reported thinking, display only: never sent back to a model, never searched. `seconds` is how long the thought has run. */
+  | { type: "reasoning"; reasoningId: string; text: string; status: "running" | "done"; seconds: number }
   | { type: "notice"; level: "info" | "error"; text: string }
 );
 
@@ -995,13 +997,15 @@ export type RunnerWork =
 
 /**
  * The items a runner appends (POST /sessions/:id/items?runner=&boot=); the server assigns seq and at. A `tool`
- * item with a known callId replaces the earlier one. Only the runner that holds the session may append or
+ * item with a known callId replaces the earlier one, and so does a `reasoning` item with a known reasoningId
+ * (a thought streams as a few coarse updates, then closes as `done`). Only the runner that holds the session may append or
  * patch: anyone else gets `409 conflict`.
  */
 export type NewSessionItem =
   | { type: "assistant"; text: string }
   | { type: "tool"; callId: string; name: string; summary: string; status: "running" | "ok" | "error"; result: string | null; images: string[] }
   | { type: "question"; questionId: string; text: string; options: string[] }
+  | { type: "reasoning"; reasoningId: string; text: string; status: "running" | "done"; seconds: number }
   | { type: "notice"; level: "info" | "error"; text: string };
 
 /** PATCH /sessions/:id?runner=&boot= by the runner that holds the session. */

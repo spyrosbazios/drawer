@@ -21,6 +21,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { startMcpToolServer, MCP_SERVER_NAME } from "../mcp-server.ts";
 import { ForeignToolError, type Provider, type ProviderCheck, type Turn } from "../provider.ts";
+import { Thoughts } from "./thoughts.ts";
 import { capture, compareVersions, findBinary, isRecord, JsonRpcPeer, literalPrompt, readJsonLines, RpcError, str, versionOf, withScratchDir } from "./process.ts";
 
 /** `--acp` (not the older `--experimental-acp`) and the settings above are from this release on. */
@@ -132,6 +133,14 @@ export class GeminiProvider implements Provider {
       // `session/load` replays the history as updates; they are not this turn's.
       let replaying = false;
       let text = "";
+      // Consecutive thought chunks are one thought; the first message chunk, tool call or end of turn closes it.
+      const thoughts = new Thoughts((e) => turn.onEvent(e));
+      let thoughtCount = 0;
+      let thinking = false;
+      const closeThought = () => {
+        if (thinking) thoughts.end(`t${thoughtCount++}`);
+        thinking = false;
+      };
       const flush = () => {
         const t = text.trim();
         text = "";
@@ -158,13 +167,23 @@ export class GeminiProvider implements Provider {
               return;
             }
             if (!isRecord(update)) return;
-            if (update.sessionUpdate === "agent_message_chunk") {
+            if (update.sessionUpdate === "agent_thought_chunk") {
+              const content = update.content;
+              if (isRecord(content) && content.type === "text" && str(content.text)) {
+                thinking = true;
+                thoughts.append(`t${thoughtCount}`, str(content.text) as string);
+              }
+            } else if (update.sessionUpdate === "agent_message_chunk") {
+              closeThought();
               const meta = isRecord(update._meta) ? update._meta : {};
               // A retried or reset response replaces what came before.
               if (meta.retry === true || meta.reset === true) text = "";
               const content = update.content;
               if (isRecord(content) && content.type === "text") text += str(content.text) ?? "";
-            } else if (update.sessionUpdate === "tool_call") flush();
+            } else if (update.sessionUpdate === "tool_call") {
+              closeThought();
+              flush();
+            }
           },
         },
       );
@@ -200,6 +219,7 @@ export class GeminiProvider implements Provider {
         turn.onEvent({ type: "resume", handle: sessionId });
         turn.onEvent({ type: "activity", text: "thinking" });
         const result = await race(peer.request<unknown>("session/prompt", { sessionId, prompt: [{ type: "text", text: literalPrompt(turn.messages.map((m) => m.text).join("\n\n")) }, ...turn.messages.flatMap((m) => supportsImages ? m.images.map((i) => ({ type: "image", mimeType: i.mediaType, data: Buffer.from(i.data).toString("base64") })) : [])] }));
+        closeThought();
         flush();
         const stop = isRecord(result) ? str(result.stopReason) : null;
         if (stop === "cancelled") throw new Error("aborted");
@@ -207,6 +227,7 @@ export class GeminiProvider implements Provider {
         if (stop !== "end_turn") throw new Error(`Gemini ended the turn: ${stop ?? "no stop reason"}`);
       } finally {
         turn.signal.removeEventListener("abort", onAbort);
+        thoughts.endAll();
         proc.stdin.end();
         proc.kill();
         await Promise.allSettled([proc.exited, reading]);

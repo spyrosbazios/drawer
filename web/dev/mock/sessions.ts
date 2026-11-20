@@ -2,7 +2,7 @@
  * Agent sessions and a scripted fake agent. A message queues the session; the fake runner picks it up,
  * goes `working`, writes assistant text and tool calls (`running`, then `ok` under the same callId),
  * every other turn asks a question (`waiting` until answered), fixes the first draft part it finds, and
- * goes `idle`. Messages sent meanwhile stay pending and start another turn. Stop interrupts it.
+ * goes `idle`. It also thinks aloud: `reasoning` items that grow, then close under the same reasoningId. Messages sent meanwhile stay pending and start another turn. Stop interrupts it.
  */
 import type { FileAttachmentResult, NewSessionItem, ProviderKind, RunnerInfo, Session, SessionAttachment, SessionItem, SessionRef } from "../../../shared/src/api";
 import { isModelId, MAX_ATTACHMENTS } from "../../../shared/src/api";
@@ -70,9 +70,9 @@ function touch(s: StoredSession): number {
 type UserBody = { type: "user"; text: string; refs: SessionRef[]; attachments: SessionAttachment[]; author: string };
 
 function append(s: StoredSession, item: NewSessionItem | UserBody): SessionItem {
-  // A tool item with a known callId replaces the earlier one, keeping its seq.
-  if (item.type === "tool") {
-    const i = s.items.findIndex((x) => x.type === "tool" && x.callId === item.callId);
+  // A tool item with a known callId (a reasoning item with a known reasoningId) replaces the earlier one, keeping its seq.
+  if (item.type === "tool" || item.type === "reasoning") {
+    const i = s.items.findIndex((x) => (item.type === "tool" ? x.type === "tool" && x.callId === item.callId : x.type === "reasoning" && x.reasoningId === item.reasoningId));
     const old = s.items[i];
     if (old) {
       const next: SessionItem = { ...item, seq: old.seq, version: touch(s), at: old.at };
@@ -80,7 +80,7 @@ function append(s: StoredSession, item: NewSessionItem | UserBody): SessionItem 
       emit(s);
       return next;
     }
-    s.session.toolCalls++;
+    if (item.type === "tool") s.session.toolCalls++;
   }
   // A new question has no answer yet; the runner never sends that field.
   const full = { ...item, ...(item.type === "question" ? { answer: null } : {}), seq: ++s.session.seq, version: touch(s), at: now() } as SessionItem;
@@ -116,8 +116,27 @@ async function runTurn(s: StoredSession): Promise<void> {
     return true;
   };
 
+  // A thought grows paragraph by paragraph (the runner streams coarse updates), then closes as done.
+  let thoughts = 0;
+  const think = async (paragraphs: string[]) => {
+    if (!alive()) return false;
+    const reasoningId = `think-${s.session.id}-${turn}-${++thoughts}`;
+    const started = Date.now();
+    const seconds = () => Math.round((Date.now() - started) / 1000);
+    let text = "";
+    for (const p of paragraphs) {
+      text = text === "" ? p : `${text}\n\n${p}`;
+      append(s, { type: "reasoning", reasoningId, text, status: "running", seconds: seconds() });
+      await sleep(STEP_MS * 1.5);
+      if (!alive()) return false;
+    }
+    append(s, { type: "reasoning", reasoningId, text, status: "done", seconds: seconds() });
+    return true;
+  };
+
   await sleep(STEP_MS / 2);
   const parts = listParts(slug);
+  if (!(await think(["The request is about the project's parts. Read the overview first to see which are drafts.", `${parts.length} part(s) to look at, so measure before changing anything.`]))) return;
   if (!(await tool("overview", `overview: ${parts.length} part(s)`, parts.map((p) => `${p.id}: ${p.status} ${p.passed}/${p.total}`).join("\n") || "No parts yet.", "reading the project"))) return;
   if (!alive()) return;
   append(s, { type: "assistant", text: "I read the brief, the project memory and the library profile. Measuring the parts first." });
@@ -160,6 +179,7 @@ async function runTurn(s: StoredSession): Promise<void> {
     });
     if (!alive()) return;
     patch(s, { status: "working", activity: "applying your answer" });
+    if (!(await think(["The answer settles it. Apply the change to the one parameter that drives the failing gate, then measure again."]))) return;
     append(s, { type: "assistant", text: answer === "Agree" ? "Thanks. Going ahead." : `Noted: "${answer}". Adjusting the plan.` });
   }
 
@@ -271,8 +291,11 @@ export function stop(id: string): Session {
   if (s.session.status === "working" || s.session.status === "waiting" || s.session.status === "queued") {
     s.turn++;
     s.waiting = null;
-    // A tool call left running is interrupted.
-    for (const [i, item] of s.items.entries()) if (item.type === "tool" && item.status === "running") s.items[i] = { ...item, status: "error", result: "interrupted", version: touch(s) };
+    // A tool call left running is interrupted; a thought left running is closed.
+    for (const [i, item] of s.items.entries()) {
+      if (item.type === "tool" && item.status === "running") s.items[i] = { ...item, status: "error", result: "interrupted", version: touch(s) };
+      else if (item.type === "reasoning" && item.status === "running") s.items[i] = { ...item, status: "done", version: touch(s) };
+    }
     append(s, { type: "notice", level: "info", text: "Stopped by a person." });
     patch(s, { status: "stopped", activity: null });
   }

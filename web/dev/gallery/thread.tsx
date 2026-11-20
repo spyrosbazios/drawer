@@ -2,7 +2,7 @@ import type { SessionItem } from "@drawer/shared/api";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { MessageScroller, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from "@/components/ui/message-scroller";
 import { Spinner } from "@/components/ui/spinner";
-import { groupRows, pinnedQuestion } from "@/components/session/model";
+import { groupRows, liveThought, pinnedQuestion, rowKey } from "@/components/session/model";
 import { RowView } from "@/components/session/thread-items";
 
 const at = "2026-11-20T10:00:00Z";
@@ -23,6 +23,7 @@ module clip(wall = 1.6, gap = 3.2) {
 
 The \`gap\` parameter stays at 3.2 mm so it still fits the 3 mm shelf.`;
 
+const think = (seq: number, text: string, status: "running" | "done", seconds: number): SessionItem => ({ seq, version: seq, at, type: "reasoning", reasoningId: `r${seq}`, text, status, seconds });
 const tool = (seq: number, summary: string, status: "running" | "ok" | "error", result: string | null): SessionItem => ({ seq, version: seq, at, type: "tool", callId: `c${seq}`, name: "t", summary, status, result, images: [] });
 
 /** The thread as drawer stores it: `SessionItem[]` from shared/src/api.ts, drawn by the app's own row renderers. */
@@ -40,18 +41,33 @@ const ITEMS: SessionItem[] = [
     ],
     author: "web",
   },
-  tool(2, "Read parts/clip.scad", "ok", "module clip(wall = 1.2, gap = 3.2) { … }"),
-  tool(3, "Rendered clip", "error", "ERROR: Parser error in file clip.scad, line 7: syntax error"),
-  tool(4, "Evaluating clip", "running", null),
-  { seq: 5, version: 5, at, type: "assistant", text: REPLY },
-  { seq: 6, version: 6, at, type: "notice", level: "info", text: "Session resumed on runner dev" },
-  { seq: 7, version: 7, at, type: "question", questionId: "q1", text: "Should the gap stay at 3.2 mm?", options: ["Keep 3.2 mm", "Widen to 3.4 mm"], answer: null },
+  think(2, "The photo shows the arm cracked where it meets the body.\n\nThat points at a thin root: read the part before changing anything.", "done", 6),
+  tool(3, "Read parts/clip.scad", "ok", "module clip(wall = 1.2, gap = 3.2) { … }"),
+  tool(4, "Rendered clip", "error", "ERROR: Parser error in file clip.scad, line 7: syntax error"),
+  think(5, "The render failed on a missing semicolon. Fix it, thicken the root to 1.6 mm, render again.", "done", 3),
+  tool(6, "Evaluated clip", "ok", "9/10 gates pass; the wall gate was the only failure."),
+  { seq: 7, version: 7, at, type: "assistant", text: REPLY },
+  { seq: 8, version: 8, at, type: "notice", level: "info", text: "Session resumed on runner dev" },
+  think(9, "The gap could stay at 3.2 mm, but widening it helps a thicker arm snap on.\n\nWorth asking.", "done", 8),
+  { seq: 10, version: 10, at, type: "question", questionId: "q1", text: "Should the gap stay at 3.2 mm?", options: ["Keep 3.2 mm", "Widen to 3.4 mm"], answer: null },
+];
+
+/** The same thread mid-turn (`?thread=live`): the agent is thinking, the thought is the one live row. */
+const LIVE_ITEMS: SessionItem[] = [
+  ITEMS[0] as SessionItem,
+  think(2, "The photo shows the arm cracked where it meets the body.", "done", 6),
+  tool(3, "Read parts/clip.scad", "ok", "module clip(wall = 1.2, gap = 3.2) { … }"),
+  tool(4, "Evaluated clip", "ok", "9/10 gates pass; the wall gate was the only failure."),
+  think(5, "The wall gate fails at the root.\n\nThicken it to 1.6 mm and keep the slot at 3.2 mm, so the clip still grips the 3 mm shelf.", "running", 4),
 ];
 
 export function Thread() {
-  const pinned = pinnedQuestion(ITEMS);
-  const rows = groupRows(ITEMS, pinned?.seq);
-  const env = { queued: new Set<number>(), answering: false, onAnswer: () => undefined };
+  const live = new URLSearchParams(location.search).get("thread") === "live";
+  const items = live ? LIVE_ITEMS : ITEMS;
+  const pinned = pinnedQuestion(items);
+  const rows = groupRows(items, pinned?.seq);
+  const liveSeq = liveThought(items, { status: "working" });
+  const env = { queued: new Set<number>(), liveSeq, answering: false, onAnswer: () => undefined };
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">
       <MessageScrollerProvider>
@@ -59,7 +75,7 @@ export function Thread() {
           <MessageScrollerViewport>
             <MessageScrollerContent className="gap-4 p-3">
               {rows.map((row) => (
-                <MessageScrollerItem key={row.kind === "steps" ? `s${row.key}` : row.item.seq}>
+                <MessageScrollerItem key={rowKey(row)}>
                   <RowView row={row} env={env} />
                 </MessageScrollerItem>
               ))}
@@ -68,16 +84,18 @@ export function Thread() {
                   <RowView row={{ kind: "item", item: pinned }} env={env} />
                 </MessageScrollerItem>
               )}
-              <MessageScrollerItem>
-                <Marker asChild className="text-xs">
-                  <output>
-                    <MarkerIcon>
-                      <Spinner />
-                    </MarkerIcon>
-                    <MarkerContent className="shimmer">evaluating clip</MarkerContent>
-                  </output>
-                </Marker>
-              </MessageScrollerItem>
+              {liveSeq === null && (
+                <MessageScrollerItem>
+                  <Marker asChild className="text-xs">
+                    <output>
+                      <MarkerIcon>
+                        <Spinner />
+                      </MarkerIcon>
+                      <MarkerContent className="shimmer">evaluating clip</MarkerContent>
+                    </output>
+                  </Marker>
+                </MessageScrollerItem>
+              )}
             </MessageScrollerContent>
           </MessageScrollerViewport>
         </MessageScroller>

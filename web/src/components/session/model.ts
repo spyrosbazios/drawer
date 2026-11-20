@@ -6,9 +6,24 @@ import type { Session, SessionItem } from "@drawer/shared/api";
 
 export type ToolItem = Extract<SessionItem, { type: "tool" }>;
 export type QuestionItem = Extract<SessionItem, { type: "question" }>;
+export type ReasoningItem = Extract<SessionItem, { type: "reasoning" }>;
+/** What a "steps" group folds: tool calls, and the thoughts between them. */
+export type StepItem = ToolItem | ReasoningItem;
 
-/** A row of the log: one item, or a run of consecutive tool calls drawn tightly as "steps". */
-export type Row = { kind: "item"; item: Exclude<SessionItem, ToolItem> } | { kind: "steps"; key: number; items: ToolItem[] };
+/**
+ * A row of the log: one item; a thought on its own; or a run of consecutive tool calls and thoughts drawn
+ * tightly as "steps". A run with a tool call in it is one group (a lone call stands alone); a run of
+ * thoughts only (the model thought, then answered) stays as thought rows, so a turn reads: steps, answer.
+ */
+export type Row =
+  | { kind: "item"; item: Exclude<SessionItem, StepItem> }
+  | { kind: "thought"; item: ReasoningItem }
+  | { kind: "steps"; key: number; items: StepItem[] };
+
+/** The row's stable key: the item's seq, or `s<seq of its first item>` for a group. */
+export function rowKey(row: Row): string {
+  return row.kind === "steps" ? `s${row.key}` : String(row.item.seq);
+}
 
 /** The question the person still has to answer: the newest unanswered one, if any. */
 export function pinnedQuestion(items: readonly SessionItem[]): QuestionItem | undefined {
@@ -19,18 +34,46 @@ export function pinnedQuestion(items: readonly SessionItem[]): QuestionItem | un
   return undefined;
 }
 
-/** Items in order, consecutive tool calls grouped; the pinned question is left out (it is drawn above the composer). */
+/** Items in order, runs of tool calls and thoughts grouped; the pinned question is left out (it is drawn above the composer). */
 export function groupRows(items: readonly SessionItem[], pinnedSeq?: number): Row[] {
   const rows: Row[] = [];
+  let run: StepItem[] = [];
+  const endRun = () => {
+    if (run.some((i) => i.type === "tool")) rows.push({ kind: "steps", key: (run[0] as StepItem).seq, items: run });
+    else for (const item of run) if (item.type === "reasoning") rows.push({ kind: "thought", item });
+    run = [];
+  };
   for (const item of items) {
     if (item.seq === pinnedSeq) continue;
-    if (item.type === "tool") {
-      const last = rows.at(-1);
-      if (last?.kind === "steps") last.items.push(item);
-      else rows.push({ kind: "steps", key: item.seq, items: [item] });
-    } else rows.push({ kind: "item", item });
+    if (item.type === "tool" || item.type === "reasoning") run.push(item);
+    else {
+      endRun();
+      rows.push({ kind: "item", item });
+    }
   }
+  endRun();
   return rows;
+}
+
+/**
+ * The seq of the thought the agent is thinking right now: the newest item, still running, in a session that
+ * is working. It is the thread's one live row, and the generic activity tail gives way to it.
+ */
+export function liveThought(items: readonly SessionItem[] | undefined, session: Pick<Session, "status">): number | null {
+  const last = items?.at(-1);
+  return session.status === "working" && last?.type === "reasoning" && last.status === "running" ? last.seq : null;
+}
+
+/** "Thinking" while it runs; afterwards "Thought for 7s" (just "Thought" under a second). */
+export function thoughtLabel(item: Pick<ReasoningItem, "seconds">, running: boolean): string {
+  if (running) return "Thinking";
+  if (item.seconds < 1) return "Thought";
+  return item.seconds < 60 ? `Thought for ${item.seconds}s` : `Thought for ${Math.floor(item.seconds / 60)}m ${item.seconds % 60}s`;
+}
+
+/** The last non-empty line of a thought, without markdown emphasis: what it is on right now. */
+export function lastLine(text: string): string {
+  return firstLine(text.split("\n").filter((l) => l.trim() !== "").at(-1) ?? "");
 }
 
 /** The first non-empty line of a text, without markdown emphasis or heading marks. */
@@ -79,7 +122,13 @@ export function pendingSeqs(items: readonly SessionItem[], session: Pick<Session
   return out;
 }
 
-/** What a group of tool calls needs to show while folded: the steps still running and the ones that failed. */
-export function visibleSteps(items: readonly ToolItem[]): ToolItem[] {
-  return items.filter((t) => t.status !== "ok");
+/** What a folded group still shows: the tool calls that are running or failed, and the live thought. */
+export function visibleSteps(items: readonly StepItem[], liveSeq: number | null): StepItem[] {
+  return items.filter((i) => (i.type === "tool" ? i.status !== "ok" : i.seq === liveSeq));
+}
+
+/** How a group is titled: by its tool calls, since the thoughts are what happened between them. */
+export function stepsTitle(items: readonly StepItem[]): string {
+  const calls = items.filter((i) => i.type === "tool").length;
+  return `${calls} ${calls === 1 ? "step" : "steps"}`;
 }

@@ -36,6 +36,11 @@ prompt-input`; older versions are reported `unavailable`. Gemini is built from i
 Pi runs without your own `models.json`/custom providers (it sees the providers you are logged in to),
 so a custom default model in your pi settings is not offered; pick a model in Settings.
 
+Each provider's own thinking becomes `reasoning` items (`src/reasoning.ts` throttles and caps them):
+Claude asks the SDK for adaptive thinking with summarized display and streams the thinking blocks, Codex asks
+for reasoning summaries (`summary: "auto"`), Pi and Gemini report their thinking events and thought chunks
+as they are. Nothing a provider does not report is shown.
+
 A provider gets each message as text plus the attached images (`TurnMessage` in `src/provider.ts`). The
 text names every attachment on its own. Claude sends SDK image blocks, Codex data URLs, Pi RPC images,
 and Gemini ACP image blocks when its prompt capabilities allow them; otherwise Gemini sends text only.

@@ -480,6 +480,7 @@ export const sessionItemSchema = z.discriminatedUnion("type", [
     images: z.array(z.string()),
   }),
   z.object({ ...itemBase, type: z.literal("question"), questionId: z.string(), text: z.string(), options: z.array(z.string()), answer: z.string().nullable() }),
+  z.object({ ...itemBase, type: z.literal("reasoning"), reasoningId: z.string(), text: z.string(), status: z.enum(["running", "done"]), seconds: z.number() }),
   z.object({ ...itemBase, type: z.literal("notice"), level: z.enum(["info", "error"]), text: z.string() }),
 ]) satisfies z.ZodType<SessionItem>;
 

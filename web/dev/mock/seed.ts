@@ -133,6 +133,7 @@ function deskOrganiser(): void {
           { kind: "point", part: "cable-clip", position: [12, 4, 6], normal: null },
         ],
       },
+      { type: "reasoning", reasoningId: "k1", text: "The photo shows the arm cracked right where it meets the body.\n\nThat is a thin root, so check the wall gate before touching anything else.", status: "done", seconds: 6 },
       { type: "tool", callId: "s1", name: "overview", summary: "overview: 3 parts, assembly draft", status: "ok", result: "tray passed, cable-clip draft, pen-cup no model", images: [] },
       { type: "tool", callId: "s2", name: "file_attachment", summary: "file_attachment tray-mount.stl refs/tray-mount.stl", status: "ok", result: 'Filed "tray-mount.stl" as refs/tray-mount.stl.', images: [] },
       { type: "tool", callId: "s3", name: "write_model", summary: "cable-clip.scad r3", status: "error", result: "ERROR: Parser error in file cable-clip.scad, line 7: syntax error", images: [] },
@@ -143,6 +144,7 @@ function deskOrganiser(): void {
         text: "The clip builds and fits the edge, but the **snap arm is 1.2 mm**; the library says PETG arms under 1.6 mm crack.\n\n- Wall at the root: 1.2 mm (needs 1.6 mm)\n- Everything else passes\n\n```openscad\nmodule arm(arm_t = 1.2, height = 12) {\n  cube([24, arm_t, height]);\n}\n```\n\nThe slot stays at 4.2 mm so it still grips the 4 mm edge.",
       },
       { type: "notice", level: "info", text: "Session resumed on runner mock-runner" },
+      { type: "reasoning", reasoningId: "k2", text: "Going from 1.2 to 1.8 mm makes the arm stiffer, but it must still flex enough to snap onto the 4 mm edge.\n\nWorth confirming before changing the model.", status: "done", seconds: 9 },
       { type: "question", questionId: "q-seed", text: "Before I change it: raise arm_t from 1.2 to 1.8 mm? It stays openable by hand.", options: ["Agree", "Change something"] },
     ],
     "waiting",
@@ -154,13 +156,15 @@ function deskOrganiser(): void {
     "Spacer for the pen cup",
     [
       { type: "user", text: "Add a 3 mm spacer under the pen cup." },
+      { type: "reasoning", reasoningId: "w-k1", text: "A spacer is a plain block. Spec first, then measure it against the pen cup's base.", status: "done", seconds: 3 },
       { type: "tool", callId: "w1", name: "overview", summary: "overview: 3 parts, assembly draft", status: "ok", result: "tray passed", images: [] },
       { type: "tool", callId: "w2", name: "set_part_spec", summary: "spec spacer", status: "ok", result: "Spec of spacer saved.", images: [] },
-      { type: "tool", callId: "w3", name: "evaluate", summary: "measure spacer", status: "running", result: null, images: [] },
+      { type: "tool", callId: "w3", name: "evaluate", summary: "measure spacer", status: "ok", result: "Evaluation queued.", images: [] },
+      { type: "reasoning", reasoningId: "w-k2", text: "The spacer measures 3.0 mm.\n\nNext: check that the pen cup still sits flat on it, and that the assembly clearance to the tray stays above 1 mm.", status: "running", seconds: 4 },
     ],
     "working",
     40,
-    "measuring spacer",
+    "thinking",
   );
 }
 

@@ -232,6 +232,22 @@ describe("a turn", () => {
     expect(second.session).toMatchObject({ id: s.id, status: "working" });
   });
 
+  test("a reasoning item is replaced by its reasoningId and does not count as a tool call", async () => {
+    const api = await makeApi();
+    const s = await api.start("think");
+    await api.work("r1");
+    const thought = (text: string, status: "running" | "done", seconds: number) => ({ type: "reasoning", reasoningId: "t1", text, status, seconds });
+    const first = await api.item<SessionItem>(s.id, thought("Looking", "running", 0));
+    expect(first.json).toMatchObject({ type: "reasoning", reasoningId: "t1", status: "running", seq: 2 });
+    await api.item(s.id, { type: "assistant", text: "between" });
+    const done = await api.item<SessionItem>(s.id, thought("Looking at the tray", "done", 4));
+    expect(done.json).toMatchObject({ seq: 2, status: "done", text: "Looking at the tray", seconds: 4 });
+    await api.item(s.id, { ...thought("Next", "running", 0), reasoningId: "t2" });
+    const detail = (await api.get<SessionDetail>(`/sessions/${s.id}`)).json;
+    expect(detail.items.map((i) => i.seq)).toEqual([1, 2, 3, 4]);
+    expect(detail.session.toolCalls).toBe(0);
+  });
+
   test("the first turn carries the pending messages, the guide and no resume handle", async () => {
     const api = await makeApi();
     const s = await api.start("one");
@@ -536,6 +552,10 @@ describe("validation", () => {
       { type: "question", text: "?", options: [] },
       { type: "question", questionId: "q", text: "?", options: [1] },
       { type: "notice", level: "loud", text: "x" },
+      { type: "reasoning", text: "x", status: "running", seconds: 0 },
+      { type: "reasoning", reasoningId: "t", text: "x", status: "weird", seconds: 0 },
+      { type: "reasoning", reasoningId: "t", text: "x", status: "done", seconds: -1 },
+      { type: "reasoning", reasoningId: "t", text: "x", status: "done" },
     ];
     for (const body of bad) expect((await api.item(s.id, body)).status).toBe(400);
     expect((await api.item(s.id, "[]")).status).toBe(400);

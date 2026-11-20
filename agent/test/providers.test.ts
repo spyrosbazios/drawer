@@ -279,6 +279,34 @@ describe.each(providers)("%s against a fake CLI", (kind, make) => {
     expect(results.toolResult.result.content.map((c) => c.type)).toEqual(["text", "image"]);
   });
 
+  test("reasoning the provider reports: growing text, then one closing event per thought, before the answer", async () => {
+    process.env.FAKE_SCENARIO = "think";
+    const events: ProviderEvent[] = [];
+    await make(join(dir, "state"), await fakeBin(kind)).run(turnFor(events));
+    const thoughts = events.flatMap((e, at) => (e.type === "reasoning" ? [{ at, ...e }] : []));
+    const finals = thoughts.filter((t) => t.done);
+    const byKind: Record<string, string[]> = { codex: ["Check the overview\n\nThen answer"], pi: ["Check the overview first."], gemini: ["Check the overview", "Now answer"] };
+    const expected = byKind[kind] ?? [];
+    expect(finals.map((t) => t.text)).toEqual(expected);
+    expect(new Set(thoughts.map((t) => t.id)).size).toBe(expected.length);
+    // What streams is the whole text so far, and nothing follows a closing event of the same thought.
+    for (const final of finals) {
+      const own = thoughts.filter((t) => t.id === final.id);
+      expect(own.at(-1)).toBe(final);
+      expect(own.filter((t) => t.done)).toHaveLength(1);
+      for (const [i, t] of own.slice(1).entries()) if (!t.done) expect(t.text.startsWith((own[i] as { text: string }).text)).toBe(true);
+    }
+    const firstText = events.findIndex((e) => e.type === "assistant_text");
+    expect((finals[0] as { at: number }).at).toBeLessThan(firstText);
+  });
+
+  test("a turn without thinking reports no reasoning", async () => {
+    process.env.FAKE_SCENARIO = "ok";
+    const events: ProviderEvent[] = [];
+    await make(join(dir, "state"), await fakeBin(kind)).run(turnFor(events));
+    expect(events.filter((e) => e.type === "reasoning")).toEqual([]);
+  });
+
   test("a built-in tool fails the turn", async () => {
     process.env.FAKE_SCENARIO = "foreign";
     const run = make(join(dir, "state"), await fakeBin(kind)).run(turnFor([]));

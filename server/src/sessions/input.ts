@@ -27,6 +27,7 @@ export const LIMITS = {
   toolSummary: 300,
   toolResult: 20_000,
   toolImages: 16,
+  reasoning: 8_000,
   options: 12,
   option: 200,
 } as const;
@@ -158,13 +159,20 @@ export function newItem(obj: Obj): NewSessionItem {
     }
     case "question":
       return { type: "question", questionId: nonEmpty(obj, "questionId"), text: capped(obj, "text", LIMITS.text), options: options(obj) };
+    case "reasoning": {
+      const status = obj.status;
+      if (status !== "running" && status !== "done") throw invalid("status must be running or done");
+      const seconds = obj.seconds;
+      if (typeof seconds !== "number" || !Number.isInteger(seconds) || seconds < 0) throw invalid("seconds must be a non-negative integer");
+      return { type: "reasoning", reasoningId: nonEmpty(obj, "reasoningId"), text: capped(obj, "text", LIMITS.reasoning), status, seconds };
+    }
     case "notice": {
       const level = obj.level;
       if (level !== "info" && level !== "error") throw invalid("level must be info or error");
       return { type: "notice", level, text: capped(obj, "text", LIMITS.text) };
     }
     default:
-      throw invalid("type must be assistant, tool, question or notice");
+      throw invalid("type must be assistant, tool, question, reasoning or notice");
   }
 }
 

@@ -7,6 +7,7 @@ import { ForeignToolError, type BoundTool, type Provider, type ProviderCheck, ty
 import { imageMediaType } from "../images.ts";
 import type { ToolOutput } from "../tools.ts";
 import { capture, isRecord, str, versionOf } from "./process.ts";
+import { Thoughts } from "./thoughts.ts";
 
 export const SERVER_NAME = "drawer";
 export const TOOL_PREFIX = `mcp__${SERVER_NAME}__`;
@@ -15,6 +16,10 @@ export const TOOL_PREFIX = `mcp__${SERVER_NAME}__`;
 export type SdkEvent =
   | { kind: "init"; sessionId: string; model: string; tools: string[] }
   | { kind: "text"; text: string }
+  /** Streamed thinking (`includePartialMessages`): a block of this index starts, grows, ends. */
+  | { kind: "thinking_start"; index: number }
+  | { kind: "thinking_delta"; index: number; text: string }
+  | { kind: "thinking_stop"; index: number }
   | { kind: "tool_use"; id: string; name: string; input: unknown }
   | { kind: "tool_result"; id: string; isError: boolean; text: string }
   | { kind: "result"; ok: boolean; error: string | null };
@@ -35,6 +40,18 @@ function resultText(content: unknown): string {
     .join("\n");
 }
 
+/** Thinking out of a Messages API streaming event; text and tool blocks arrive whole in their assistant message. */
+function mapStreamEvent(event: unknown): SdkEvent[] {
+  if (!isRecord(event) || typeof event.index !== "number") return [];
+  const index = event.index;
+  if (event.type === "content_block_start") return isRecord(event.content_block) && event.content_block.type === "thinking" ? [{ kind: "thinking_start", index }] : [];
+  if (event.type === "content_block_delta") {
+    const text = isRecord(event.delta) && event.delta.type === "thinking_delta" ? str(event.delta.thinking) : null;
+    return text ? [{ kind: "thinking_delta", index, text }] : [];
+  }
+  return event.type === "content_block_stop" ? [{ kind: "thinking_stop", index }] : [];
+}
+
 /** Pure: an SDK message (as received; typed loosely so tests can pass literals) → turn events. Subagent messages are ignored. */
 export function mapSdkMessage(msg: unknown): SdkEvent[] {
   if (!isRecord(msg)) return [];
@@ -43,6 +60,7 @@ export function mapSdkMessage(msg: unknown): SdkEvent[] {
     return [{ kind: "init", sessionId: str(msg.session_id) ?? "", model: str(msg.model) ?? "", tools }];
   }
   if (msg.parent_tool_use_id) return [];
+  if (msg.type === "stream_event") return mapStreamEvent(msg.event);
   if (msg.type === "assistant") {
     const events: SdkEvent[] = [];
     for (const b of blocks(msg.message)) {
@@ -219,6 +237,10 @@ export class ClaudeProvider implements Provider {
         strictMcpConfig: true,
         settingSources: [],
         permissionMode: "dontAsk",
+        // Adaptive is the SDK's own default where the model has it; asking for the summary is what makes
+        // the model's thinking come back as text, and the partial messages are how it arrives as it grows.
+        thinking: { type: "adaptive", display: "summarized" },
+        includePartialMessages: true,
         cwd,
         abortController: abort,
         ...(turn.resume ? { resume: turn.resume } : {}),
@@ -229,6 +251,10 @@ export class ClaudeProvider implements Provider {
     });
 
     const emit = (e: ProviderEvent) => turn.onEvent(e);
+    const thoughts = new Thoughts(emit);
+    // An index repeats in every API call of the turn: number the thoughts instead.
+    const openThoughts = new Map<number, string>();
+    let thoughtCount = 0;
     let finished = false;
     try {
       for await (const msg of q) {
@@ -240,6 +266,15 @@ export class ClaudeProvider implements Provider {
               throw new ForeignToolError(`would have tools other than drawer's (${foreign.join(", ")})`);
             }
             if (ev.sessionId) emit({ type: "resume", handle: ev.sessionId });
+          } else if (ev.kind === "thinking_start") {
+            openThoughts.set(ev.index, `t${thoughtCount++}`);
+          } else if (ev.kind === "thinking_delta") {
+            const key = openThoughts.get(ev.index);
+            if (key !== undefined) thoughts.append(key, ev.text);
+          } else if (ev.kind === "thinking_stop") {
+            const key = openThoughts.get(ev.index);
+            if (key !== undefined) thoughts.end(key);
+            openThoughts.delete(ev.index);
           } else if (ev.kind === "text") {
             emit({ type: "assistant_text", text: ev.text });
           } else if (ev.kind === "tool_use") {
@@ -261,6 +296,7 @@ export class ClaudeProvider implements Provider {
       if (!finished && !turn.signal.aborted) throw new Error("Claude ended the turn without a result");
     } finally {
       turn.signal.removeEventListener("abort", onAbort);
+      thoughts.endAll();
       q.close();
     }
   }

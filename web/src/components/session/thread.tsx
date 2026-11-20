@@ -5,7 +5,7 @@ import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { MessageScroller, MessageScrollerButton, MessageScrollerContent, MessageScrollerItem, MessageScrollerViewport, useMessageScroller } from "@/components/ui/message-scroller";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { groupRows, pendingSeqs, pinnedQuestion } from "./model";
+import { groupRows, liveThought, pendingSeqs, pinnedQuestion, rowKey } from "./model";
 import type { QuestionItem } from "./model";
 import { RowView } from "./thread-items";
 import { ThreadContext } from "./thread-context";
@@ -22,7 +22,9 @@ interface ThreadProps {
 }
 
 /** The end of the thread: what the agent is doing right now (the one place the activity text appears), or why it is not. */
-function Tail({ session, noRunner }: { session: Session; noRunner: boolean }) {
+function Tail({ session, noRunner, thinking }: { session: Session; noRunner: boolean; thinking: boolean }) {
+  // A running thought is the live row (it shimmers, with the line it is on), so the tail gives way to it.
+  if (session.status === "working" && thinking) return null;
   if (session.status === "working") {
     return (
       <Marker asChild className="text-xs">
@@ -66,7 +68,8 @@ export function Thread({ slug, session, items, noRunner, answering, onAnswer }: 
   const opener = useOpenPath(slug);
   const pinned = useMemo(() => (items ? pinnedQuestion(items) : undefined), [items]);
   const rows = useMemo(() => (items ? groupRows(items, pinned?.seq) : []), [items, pinned]);
-  const env = useMemo(() => ({ queued: items ? pendingSeqs(items, session) : new Set<number>(), answering, onAnswer }), [items, session, answering, onAnswer]);
+  const liveSeq = liveThought(items, session);
+  const env = useMemo(() => ({ queued: items ? pendingSeqs(items, session) : new Set<number>(), liveSeq, answering, onAnswer }), [items, session, liveSeq, answering, onAnswer]);
 
   // The scroller opens at the end by itself only for rows present at mount; ours arrive after the fetch.
   const { scrollToEnd } = useMessageScroller();
@@ -96,7 +99,7 @@ export function Thread({ slug, session, items, noRunner, answering, onAnswer }: 
                 </div>
               )}
               {rows.map((row) => (
-                <MessageScrollerItem key={row.kind === "steps" ? `s${row.key}` : row.item.seq} messageId={row.kind === "steps" ? `s${row.key}` : String(row.item.seq)}>
+                <MessageScrollerItem key={rowKey(row)} messageId={rowKey(row)}>
                   <RowView row={row} env={env} />
                 </MessageScrollerItem>
               ))}
@@ -106,7 +109,7 @@ export function Thread({ slug, session, items, noRunner, answering, onAnswer }: 
                 </MessageScrollerItem>
               )}
               <MessageScrollerItem messageId="tail" className="empty:hidden">
-                <Tail session={session} noRunner={noRunner} />
+                <Tail session={session} noRunner={noRunner} thinking={liveSeq !== null} />
               </MessageScrollerItem>
             </MessageScrollerContent>
           </MessageScrollerViewport>

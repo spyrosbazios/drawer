@@ -4,6 +4,7 @@
  */
 import { ApiFailure, type Client, type RunnerIdentity } from "@drawer/cli/client";
 import { isModelId, isResumeHandle, type NewSessionItem, type ProviderStatus, type RunnerSessionPatch, type RunnerWork, type SessionAttachment, type SessionItem, type Settings } from "@drawer/shared/api";
+import { ReasoningRecorder } from "./reasoning.ts";
 import { formatAttachment, formatRef, oneLine, truncate } from "./format.ts";
 import type { BoundTool, Provider, ProviderCheck, ProviderEvent, TurnImage, TurnMessage } from "./provider.ts";
 import { drawerTools, executeTool, MAX_IMAGE_BYTES, MAX_IMAGES, toolsSection, type DrawerTool, type ToolClient, type ToolContext } from "./tools.ts";
@@ -32,6 +33,8 @@ export interface RunnerOptions {
   tools?: readonly DrawerTool[];
   /** Seconds per work poll. */
   pollWait?: number;
+  /** Least time between two writes of one streaming thought. Default 1 second. */
+  reasoningIntervalMs?: number;
   /** Seconds per answer poll inside ask_user. */
   answerWait?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -39,6 +42,7 @@ export interface RunnerOptions {
 
 const RESULT_CHARS = 400;
 const CHECK_TTL_MS = 5 * 60_000;
+const REASONING_INTERVAL_MS = 1000;
 const MAX_BACKOFF_MS = 30_000;
 /** The server's limits on item fields (server/src/sessions/input.ts); the runner trims to fit. */
 const TEXT_CHARS = 99_000;
@@ -312,6 +316,7 @@ export class Runner {
       const messages = await turnMessages(work.messages, client, signal);
       if (messages.length === 0) messages.push({ text: "Continue.", images: [] });
 
+      const reasoning = new ReasoningRecorder((item) => void append(item), this.opts.reasoningIntervalMs ?? REASONING_INTERVAL_MS, this.opts.now ?? Date.now);
       const onEvent = (e: ProviderEvent) => {
         if (signal.aborted) return;
         switch (e.type) {
@@ -320,6 +325,9 @@ export class Runner {
             break;
           case "assistant_text":
             void append({ type: "assistant", text: truncate(e.text, TEXT_CHARS) });
+            break;
+          case "reasoning":
+            reasoning.update(e.id, e.text, e.done);
             break;
           case "tool_started":
             void append({ type: "tool", callId: e.callId, name: e.name, summary: callSummary(e.name, e.input), status: "running", result: null, images: [] });
@@ -341,16 +349,20 @@ export class Runner {
         }
       };
 
-      await provider.run({
-        sessionId: session.id,
-        systemPrompt: buildSystemPrompt(work.guide, session.project, this.tools),
-        messages,
-        resume: work.resume,
-        model: session.model,
-        tools,
-        signal,
-        onEvent,
-      });
+      try {
+        await provider.run({
+          sessionId: session.id,
+          systemPrompt: buildSystemPrompt(work.guide, session.project, this.tools),
+          messages,
+          resume: work.resume,
+          model: session.model,
+          tools,
+          signal,
+          onEvent,
+        });
+      } finally {
+        reasoning.finish();
+      }
       await queue.drain();
       entry.resume = resume;
       if (entry.lost) return;

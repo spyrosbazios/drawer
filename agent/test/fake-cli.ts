@@ -2,7 +2,8 @@
  * Stand-ins for the codex, pi and gemini CLIs, speaking each one's protocol over stdio. Run as
  * `bun fake-cli.ts <codex|pi|gemini> ...args`. FAKE_SCENARIO picks the behaviour: `ok` (text, one
  * drawer tool call through the real MCP server, done), `foreign` (a built-in tool shows up), `hang`
- * (the turn never ends until aborted), `permission` (gemini asks for permission).
+ * (the turn never ends until aborted), `permission` (gemini asks for permission), `think` (as `ok`, with the
+ * provider's own reasoning events around the tool call).
  * FAKE_LOG, when set, gets one JSON line per received message and per argv.
  */
 import { appendFileSync, readFileSync } from "node:fs";
@@ -77,6 +78,14 @@ async function codex(): Promise<void> {
         send({ method: "turn/started", params: { turn: { id: "tu-1" } } });
         if (scenario === "foreign") return send({ method: "item/started", params: { item: { type: "commandExecution", id: "x" } } });
         if (scenario === "hang") return;
+        if (scenario === "think") {
+          send({ method: "item/started", params: { item: { type: "reasoning", id: "r1", summary: [], content: [] } } });
+          send({ method: "item/reasoning/summaryPartAdded", params: { itemId: "r1", summaryIndex: 0 } });
+          send({ method: "item/reasoning/summaryTextDelta", params: { itemId: "r1", summaryIndex: 0, delta: "Check the " } });
+          send({ method: "item/reasoning/summaryTextDelta", params: { itemId: "r1", summaryIndex: 0, delta: "overview" } });
+          send({ method: "item/reasoning/summaryTextDelta", params: { itemId: "r1", summaryIndex: 1, delta: "Then answer" } });
+          send({ method: "item/completed", params: { item: { type: "reasoning", id: "r1", summary: ["Check the overview", "Then answer"], content: [] } } });
+        }
         send({ method: "item/completed", params: { item: { type: "agentMessage", id: "a1", text: "Looking." } } });
         send({ method: "item/started", params: { item: { type: "mcpToolCall", id: "m1", server: "drawer", tool: "overview" } } });
         log({ toolResult: await callTool(url, process.env.DRAWER_MCP_TOKEN ?? "", "overview") });
@@ -105,6 +114,13 @@ async function pi(): Promise<void> {
         if (scenario === "foreign") return send({ type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args: { command: "ls" } });
         if (scenario === "hang") return;
         const config = JSON.parse(readFileSync(join(agentDir, "mcp.json"), "utf8")) as { mcpServers: { drawer: { url: string } } };
+        if (scenario === "think") {
+          const update = (assistantMessageEvent: unknown) => send({ type: "message_update", assistantMessageEvent });
+          update({ type: "thinking_start", contentIndex: 0 });
+          update({ type: "thinking_delta", contentIndex: 0, delta: "Check the " });
+          update({ type: "thinking_delta", contentIndex: 0, delta: "overview" });
+          update({ type: "thinking_end", contentIndex: 0, content: "Check the overview first." });
+        }
         send({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Looking." }], stopReason: "toolUse" } });
         send({ type: "tool_execution_start", toolCallId: "t1", toolName: "mcp__drawer__overview", args: {} });
         log({ toolResult: await callTool(config.mcpServers.drawer.url, process.env.DRAWER_MCP_TOKEN ?? "", "overview") });
@@ -144,11 +160,16 @@ async function gemini(): Promise<void> {
         if (scenario === "foreign") return update({ sessionUpdate: "tool_call", toolCallId: "c1", title: "ls", kind: "execute", status: "pending" });
         if (scenario === "permission") return send({ jsonrpc: "2.0", id: 99, method: "session/request_permission", params: { sessionId: "gs-1", options: [{ optionId: "proceed_once", kind: "allow_once" }, { optionId: "cancel", kind: "reject_once" }] } });
         if (scenario === "hang") return;
+        if (scenario === "think") {
+          update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Check the " } });
+          update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "overview" } });
+        }
         update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Look" } });
         update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ing." } });
         update({ sessionUpdate: "tool_call", toolCallId: "c1", title: "overview (drawer MCP Server)", kind: "other", status: "in_progress" });
         log({ toolResult: await callTool(process.env.FAKE_URL ?? "", process.env.FAKE_TOKEN ?? "", "overview") });
         update({ sessionUpdate: "tool_call_update", toolCallId: "c1", status: "completed", kind: "other" });
+        if (scenario === "think") update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Now answer" } });
         update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } });
         return send({ jsonrpc: "2.0", id, result: { stopReason: "end_turn" } });
       }

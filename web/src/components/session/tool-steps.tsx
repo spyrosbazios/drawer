@@ -4,8 +4,9 @@ import type { ReactNode } from "react";
 import { CodeBlock, CodeBlockContent } from "@/components/ui/code-block";
 import { Trace, TraceCollapsible, TraceCollapsibleContent, TraceCollapsibleTrigger, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace";
 import { ZoomImage } from "./image-zoom";
-import type { ToolItem } from "./model";
-import { visibleSteps } from "./model";
+import type { StepItem, ToolItem } from "./model";
+import { stepsTitle, visibleSteps } from "./model";
+import { Thought } from "./thinking";
 
 type Status = ToolItem["status"];
 
@@ -52,20 +53,26 @@ function Step({ item }: { item: ToolItem }) {
   );
 }
 
+function StepRow({ item, liveSeq }: { item: StepItem; liveSeq: number | null }) {
+  return item.type === "tool" ? <Step item={item} /> : <Thought item={item} running={item.seq === liveSeq} />;
+}
+
 /**
- * Consecutive tool calls between two texts: one call stands alone; more fold into "N steps". Folded, the
- * step that is running and any that failed stay visible below the line; opened, every step is listed.
+ * Consecutive tool calls and the thoughts between them, between two texts: one call stands alone; more
+ * fold into "N steps". Folded, the step that is running, any that failed and the live thought stay visible
+ * below the line; opened, every step and thought is listed.
  */
-export function ToolSteps({ items }: { items: readonly ToolItem[] }) {
+export function ToolSteps({ items, liveSeq }: { items: readonly StepItem[]; liveSeq: number | null }) {
   const [open, setOpen] = useState(false);
-  if (items.length === 1 && items[0]) {
+  const only = items[0];
+  if (items.length === 1 && only?.type === "tool") {
     return (
       <Trace>
-        <Step item={items[0]} />
+        <Step item={only} />
       </Trace>
     );
   }
-  const shown = visibleSteps(items);
+  const shown = visibleSteps(items, liveSeq);
   return (
     <Trace className="gap-1.5">
       <TraceCollapsible open={open} onOpenChange={setOpen}>
@@ -74,16 +81,16 @@ export function ToolSteps({ items }: { items: readonly ToolItem[] }) {
             <TraceIcon>
               <ListChecksIcon />
             </TraceIcon>
-            <TraceTitle>{items.length} steps</TraceTitle>
+            <TraceTitle>{stepsTitle(items)}</TraceTitle>
           </TraceLine>
         </TraceCollapsibleTrigger>
         <TraceCollapsibleContent className="space-y-1.5">
           {items.map((t) => (
-            <Step key={t.seq} item={t} />
+            <StepRow key={t.seq} item={t} liveSeq={liveSeq} />
           ))}
         </TraceCollapsibleContent>
       </TraceCollapsible>
-      {!open && shown.map((t) => <Step key={t.seq} item={t} />)}
+      {!open && shown.map((t) => <StepRow key={t.seq} item={t} liveSeq={liveSeq} />)}
     </Trace>
   );
 }

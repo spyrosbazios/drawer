@@ -46,6 +46,8 @@ function itemText(item: SessionItem): string {
       const failure = item.status === "error" && item.result ? `  -> ${clip(item.result, 200)}` : "";
       return `${head} tool ${item.status}: ${clip(item.summary, 200)}${failure}`;
     }
+    case "reasoning":
+      return `${head} thought${item.status === "running" ? " (running)" : ` (${item.seconds}s)`}: ${clip(item.text, 160)}`;
     case "question": {
       const options = item.options.length > 0 ? `  options: ${item.options.map((o, i) => `${i + 1}) ${oneLine(o)}`).join("  ")}` : "";
       const answer = item.answer === null ? "  (unanswered)" : `  answer: ${clip(item.answer, 200)}`;
@@ -76,7 +78,7 @@ export const sessions: Command = {
 export const session: Command = {
   name: "session",
   usage: ["drawer session <id> [--since <version>]"],
-  summary: "one session's items: messages, tool calls, questions with their options",
+  summary: "one session's items: messages, tool calls, thoughts, questions with their options",
   details: "--since <version> prints only the items appended or changed after that session version.",
   flags: { string: ["since"] },
   async run(ctx, args) {

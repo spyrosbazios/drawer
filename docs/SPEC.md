@@ -301,14 +301,21 @@ the runner: `claude` (Claude Code through the Claude Agent SDK), `codex` (`codex
   in settings, while it is accepting: status `working`, the pending
   user messages go out as a `turn`, together with the guide (`GET /guide`) and the provider's resume
   handle from the last turn.
-- The runner appends items (`assistant` text, `tool` calls with a one-line summary, `question`,
-  `notice`) and patches `activity`. When the turn ends it sets `idle` (or `failed` with `error`). A
+- The runner appends items (`assistant` text, `tool` calls with a one-line summary, `reasoning`,
+  `question`, `notice`) and patches `activity`. When the turn ends it sets `idle` (or `failed` with `error`). A
   `resume` handle it patches must be a provider session id (`isResumeHandle`: letters, digits and
   `. _ : -`); the runner checks the model and the handle again before a turn.
 - An item's `seq` is its place and never changes. The session's `version` goes up with every item
-  appended or changed (a tool call finishing replaces its item; an answer fills its question), and the
+  appended or changed (a tool call finishing replaces its item, as does a thought growing or closing; an
+  answer fills its question), and the
   item carries that version, so `GET /sessions/:id?since=<version>` returns exactly what a client has
   not seen.
+- `reasoning` is what the model itself reports thinking (`reasoningId`, `text`, `status` running/done,
+  `seconds`), shown in the thread and nothing else: never sent back to a model, never searched. A later
+  append with the same `reasoningId` replaces the item in place, so a thought is one item that grows and
+  closes. The runner opens it at the first text, rewrites it at most once a second, keeps the last 4000
+  characters, and closes every open one when the turn ends. A provider or model that reports no thinking
+  leaves no item; nothing is made up.
 - A message sent while a turn runs stays pending; when the turn ends the session is `queued` again.
 - `ask`: the agent's question appears as a `question` item and the status is `waiting`;
   `POST /sessions/:id/answer` records the answer, which the runner's `GET /sessions/:id/answer` long

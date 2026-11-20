@@ -1,9 +1,11 @@
 import type { Session, SessionItem } from "@drawer/shared/api";
 import { describe, expect, test } from "bun:test";
-import { firstLine, groupRows, groupStrip, pendingSeqs, pinnedQuestion, visibleSteps } from "@/components/session/model";
+import type { StepItem } from "@/components/session/model";
+import { firstLine, groupRows, groupStrip, lastLine, liveThought, pendingSeqs, pinnedQuestion, stepsTitle, thoughtLabel, visibleSteps } from "@/components/session/model";
 
 const at = "2026-11-20T10:00:00Z";
 const tool = (seq: number, summary = "x"): SessionItem => ({ seq, version: seq, at, type: "tool", callId: `c${seq}`, name: "t", summary, status: "ok", result: null, images: [] });
+const think = (seq: number, status: "running" | "done" = "done", text = "Looking at it", seconds = 4): SessionItem => ({ seq, version: seq, at, type: "reasoning", reasoningId: `r${seq}`, text, status, seconds });
 const say = (seq: number): SessionItem => ({ seq, version: seq, at, type: "assistant", text: "hi" });
 const ask = (seq: number, answer: string | null): SessionItem => ({ seq, version: seq, at, type: "question", questionId: `q${seq}`, text: "Agree?", options: ["Agree"], answer });
 
@@ -28,6 +30,21 @@ describe("session rows", () => {
   test("consecutive tool calls group into one steps row", () => {
     const rows = groupRows([say(1), tool(2), tool(3), say(4), tool(5)]);
     expect(rows.map((r) => (r.kind === "steps" ? r.items.map((i) => i.seq) : r.item.seq))).toEqual([1, [2, 3], 4, [5]]);
+  });
+
+  test("thoughts fold into the run of tool calls they sit in; the group is titled by its tool calls", () => {
+    const rows = groupRows([think(1), tool(2), think(3), tool(4), think(5), say(6)]);
+    expect(rows.map((r) => r.kind)).toEqual(["steps", "item"]);
+    const group = rows[0];
+    expect(group?.kind === "steps" && group.items.map((i) => i.seq)).toEqual([1, 2, 3, 4, 5]);
+    expect(group?.kind === "steps" && stepsTitle(group.items)).toBe("2 steps");
+    const single = groupRows([think(1), tool(2)])[0];
+    expect(single?.kind === "steps" && stepsTitle(single.items)).toBe("1 step");
+  });
+
+  test("a thought with no tool call in its run stays its own row", () => {
+    const rows = groupRows([say(1), think(2), say(3), tool(4), say(5), think(6)]);
+    expect(rows.map((r) => r.kind)).toEqual(["item", "thought", "item", "steps", "item", "thought"]);
   });
 
   test("the pinned question is left out of the log", () => {
@@ -77,5 +94,30 @@ test("a folded group keeps the running and the failed steps in view", () => {
   const run: SessionItem = { ...tool(3), status: "running" } as SessionItem;
   const bad: SessionItem = { ...tool(4), status: "error" } as SessionItem;
   const steps = [tool(2), run, bad].filter((i) => i.type === "tool");
-  expect(visibleSteps(steps).map((t) => t.seq)).toEqual([3, 4]);
+  expect(visibleSteps(steps, null).map((t) => t.seq)).toEqual([3, 4]);
+});
+
+test("a folded group shows the live thought, and no other", () => {
+  const items = [think(1), tool(2), think(3, "running")].filter((i): i is StepItem => i.type === "tool" || i.type === "reasoning");
+  expect(visibleSteps(items, 3).map((t) => t.seq)).toEqual([3]);
+  expect(visibleSteps(items, null).map((t) => t.seq)).toEqual([]);
+});
+
+describe("the live thought", () => {
+  test("only the newest item, still running, in a working session", () => {
+    expect(liveThought([say(1), think(2, "running")], { status: "working" })).toBe(2);
+    expect(liveThought([think(1, "running"), say(2)], { status: "working" })).toBeNull();
+    expect(liveThought([think(1)], { status: "working" })).toBeNull();
+    expect(liveThought([think(1, "running")], { status: "failed" })).toBeNull();
+    expect(liveThought(undefined, { status: "working" })).toBeNull();
+  });
+
+  test("label and last line", () => {
+    expect(thoughtLabel({ seconds: 0 }, true)).toBe("Thinking");
+    expect(thoughtLabel({ seconds: 0 }, false)).toBe("Thought");
+    expect(thoughtLabel({ seconds: 7 }, false)).toBe("Thought for 7s");
+    expect(thoughtLabel({ seconds: 65 }, false)).toBe("Thought for 1m 5s");
+    expect(lastLine("**Reading the brief**\n\nThe clip needs a thicker root.\n")).toBe("The clip needs a thicker root.");
+    expect(lastLine("")).toBe("");
+  });
 });

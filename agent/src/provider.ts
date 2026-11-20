@@ -19,6 +19,8 @@ export type ProviderEvent =
   /** The provider's handle for this conversation, for resuming it next turn. */
   | { type: "resume"; handle: string }
   | { type: "assistant_text"; text: string }
+  /** What the model reports thinking. `text` is everything so far (not a delta); `done` closes thought `id`. Only what the provider really reports. */
+  | { type: "reasoning"; id: string; text: string; done: boolean }
   | { type: "tool_started"; callId: string; name: string; input: unknown }
   | { type: "tool_finished"; callId: string; name: string; ok: boolean; summary: string; text: string; images: string[] }
   | { type: "activity"; text: string };

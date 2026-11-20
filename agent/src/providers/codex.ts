@@ -23,6 +23,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startMcpToolServer, MCP_SERVER_NAME } from "../mcp-server.ts";
 import { ForeignToolError, type Provider, type ProviderCheck, type Turn } from "../provider.ts";
+import { Thoughts } from "./thoughts.ts";
 import { abortable, capture, compareVersions, findBinary, isRecord, JsonRpcPeer, readJsonLines, str, versionOf } from "./process.ts";
 
 /** The lockdown above was verified on this version; an older Codex may not know every switch. */
@@ -32,6 +33,14 @@ const TOKEN_ENV = "DRAWER_MCP_TOKEN";
 
 /** Items a drawer turn may produce. Anything else is a tool drawer did not give. */
 const ALLOWED_ITEMS = new Set(["userMessage", "agentMessage", "reasoning", "plan", "contextCompaction", "mcpToolCall"]);
+
+/** The text of a reasoning item: its summary parts, or the raw reasoning text of a model that has no summaries. */
+export function reasoningText(summary: readonly string[], content: readonly string[]): string {
+  const parts = summary.some((p) => p.trim() !== "") ? summary : content;
+  return parts.filter((p) => p.trim() !== "").join("\n\n");
+}
+
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((p): p is string => typeof p === "string") : []);
 
 /** Codex's model catalog (`codex debug models`) with every built-in tool switched off in each model. */
 export function lockCatalog(raw: unknown): unknown {
@@ -203,6 +212,17 @@ export class CodexProvider implements Provider {
     let threadId: string | null = null;
     let turnId: string | null = null;
     let lastError: string | null = null;
+    // Reasoning items by id: the summary parts (or raw reasoning text) as they stream.
+    const thoughts = new Thoughts((e) => turn.onEvent(e));
+    const parts = new Map<string, { summary: string[]; content: string[] }>();
+    const growThought = (itemId: string, kind: "summary" | "content", index: number, delta: string) => {
+      const entry = parts.get(itemId) ?? { summary: [], content: [] };
+      parts.set(itemId, entry);
+      const list = entry[kind];
+      while (list.length <= index) list.push("");
+      list[index] = (list[index] ?? "") + delta;
+      thoughts.set(itemId, reasoningText(entry.summary, entry.content));
+    };
     const { promise: completed, resolve } = Promise.withResolvers<void>();
     const { promise: failed, reject: fail } = Promise.withResolvers<never>();
     // A failure before anyone awaits is not an unhandled rejection; the first outcome wins.
@@ -227,7 +247,21 @@ export class CodexProvider implements Provider {
             if (isRecord(item) && item.type === "agentMessage") {
               const text = (str(item.text) ?? "").trim();
               if (text) turn.onEvent({ type: "assistant_text", text });
+            } else if (isRecord(item) && item.type === "reasoning") {
+              const id = str(item.id) ?? "";
+              const streamed = parts.get(id);
+              const summary = strings(item.summary);
+              const content = strings(item.content);
+              const text = summary.length + content.length > 0 ? reasoningText(summary, content) : streamed ? reasoningText(streamed.summary, streamed.content) : "";
+              parts.delete(id);
+              thoughts.end(id, text);
             }
+          } else if (method === "item/reasoning/summaryTextDelta") {
+            const delta = str(params.delta);
+            if (str(params.itemId) && delta) growThought(str(params.itemId) as string, "summary", typeof params.summaryIndex === "number" ? params.summaryIndex : 0, delta);
+          } else if (method === "item/reasoning/textDelta") {
+            const delta = str(params.delta);
+            if (str(params.itemId) && delta) growThought(str(params.itemId) as string, "content", typeof params.contentIndex === "number" ? params.contentIndex : 0, delta);
           } else if (method === "turn/started") {
             if (isRecord(params.turn)) turnId = str(params.turn.id) ?? turnId;
           } else if (method === "error") {
@@ -273,12 +307,13 @@ export class CodexProvider implements Provider {
       if (threadId === null) throw new Error("Codex started no thread");
       turn.onEvent({ type: "resume", handle: threadId });
       turn.onEvent({ type: "activity", text: "thinking" });
-      const res = await race(peer.request<unknown>("turn/start", { threadId, input: turn.messages.flatMap((m) => [{ type: "text", text: m.text, text_elements: [] }, ...m.images.map((i) => ({ type: "image", url: `data:${i.mediaType};base64,${Buffer.from(i.data).toString("base64")}` }))]) }));
+      const res = await race(peer.request<unknown>("turn/start", { threadId, summary: "auto", input: turn.messages.flatMap((m) => [{ type: "text", text: m.text, text_elements: [] }, ...m.images.map((i) => ({ type: "image", url: `data:${i.mediaType};base64,${Buffer.from(i.data).toString("base64")}` }))]) }));
       if (isRecord(res) && isRecord(res.turn)) turnId = str(res.turn.id) ?? turnId;
       if (turn.signal.aborted) onAbort();
       await race(completed);
     } finally {
       turn.signal.removeEventListener("abort", onAbort);
+      thoughts.endAll();
       // Give an interrupt a moment to reach Codex, then end the process.
       if (turn.signal.aborted) await Bun.sleep(200);
       proc.stdin.end();

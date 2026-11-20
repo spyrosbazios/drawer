@@ -37,6 +37,18 @@ describe("mapSdkMessage", () => {
     ]);
   });
 
+  test("streamed thinking: a thinking block starts, grows and ends; text and tool blocks stream nothing", () => {
+    const stream = (event: unknown, parent: string | null = null) => ({ type: "stream_event", parent_tool_use_id: parent, uuid: "u", session_id: "abc", event });
+    expect(mapSdkMessage(stream({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } }))).toEqual([{ kind: "thinking_start", index: 0 }]);
+    expect(mapSdkMessage(stream({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "Look at " } }))).toEqual([{ kind: "thinking_delta", index: 0, text: "Look at " }]);
+    expect(mapSdkMessage(stream({ type: "content_block_stop", index: 0 }))).toEqual([{ kind: "thinking_stop", index: 0 }]);
+    expect(mapSdkMessage(stream({ type: "content_block_start", index: 1, content_block: { type: "text", text: "" } }))).toEqual([]);
+    expect(mapSdkMessage(stream({ type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Hi" } }))).toEqual([]);
+    expect(mapSdkMessage(stream({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "x" } }))).toEqual([]);
+    expect(mapSdkMessage(stream({ type: "message_start", message: {} }))).toEqual([]);
+    expect(mapSdkMessage(stream({ type: "content_block_start", index: 0, content_block: { type: "thinking" } }, "toolu_sub"))).toEqual([]);
+  });
+
   test("tool results from user messages", () => {
     const msg = {
       type: "user",

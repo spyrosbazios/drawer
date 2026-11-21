@@ -165,7 +165,7 @@ describe("turn lifecycle", () => {
 
     const items = log.filter((r) => r.kind === "item").map((r) => (r as { item: NewSessionItem }).item);
     expect(items.map((i) => i.type)).toEqual(["assistant", "tool", "tool", "assistant"]);
-    expect(items[1]).toMatchObject({ callId: "c1", status: "running", summary: "write_model cable-clip" });
+    expect(items[1]).toMatchObject({ callId: "c1", status: "running", summary: "writing cable-clip" });
     const finished = items[2] as Extract<NewSessionItem, { type: "tool" }>;
     expect(finished).toMatchObject({ callId: "c1", status: "ok", images: ["/api/renders/k/sheet.png"] });
     expect((finished.result ?? "").length).toBeLessThan(500);

@@ -185,3 +185,77 @@ export function formatAttachment(a: SessionAttachment, shown: boolean): string {
   const image = shown ? ", shown below" : "";
   return `[attached ${a.id}: "${a.name}", ${a.kind}, ${a.mediaType.split(";")[0]}, ${size(a.size)}${where}${image}]`;
 }
+
+const text = (input: Record<string, unknown>, key: string): string | undefined => {
+  const v = input[key];
+  return typeof v === "string" && v.trim() !== "" ? v : undefined;
+};
+
+/**
+ * What a call says while it runs, before its result is known: a verb and the thing it works on, in a
+ * person's words. Ids and hashes never appear (an attachment is "an attachment", a revision "a revision");
+ * the finished call replaces this line with its tool's own summary.
+ */
+export function summarizeCall(name: string, input: unknown): string {
+  const i = typeof input === "object" && input !== null ? (input as Record<string, unknown>) : {};
+  const part = text(i, "part");
+  const path = text(i, "path");
+  const on = (verb: string, subject: string | undefined): string => oneLine(subject ? `${verb} ${subject}` : verb, 120);
+  switch (name) {
+    case "overview":
+      return "reading the project";
+    case "list_files":
+      return on("listing files", text(i, "prefix") ? `under ${text(i, "prefix")}` : undefined);
+    case "read_file":
+      return on("reading", path);
+    case "search":
+      return on("searching for", text(i, "query") ? `"${text(i, "query")}"` : undefined);
+    case "write_note":
+      return on("writing", path);
+    case "add_fact":
+      return on("adding a fact to", path ?? "the project memory");
+    case "set_library_profile":
+      return "updating the library profile";
+    case "import_reference":
+      return on("importing", text(i, "url"));
+    case "set_part_spec":
+      return on("writing the spec of", part);
+    case "write_model":
+      return on("writing", part);
+    case "edit_model":
+      return on("editing", part);
+    case "evaluate_part":
+      return on("measuring", part);
+    case "set_params":
+      return on("setting the parameters of", part);
+    case "view_part":
+      return on("looking at", part ?? path);
+    case "measure_file":
+      return on("measuring", path);
+    case "slice":
+    case "section":
+      return on("cutting", path);
+    case "probe":
+      return on("probing", path);
+    case "compare":
+      return "comparing two models";
+    case "attempts":
+      return on("listing the attempts of", part);
+    case "restore_attempt":
+      return on("restoring an earlier attempt of", part);
+    case "set_assembly":
+      return on("writing the assembly", text(i, "title") ? `"${text(i, "title")}"` : undefined);
+    case "evaluate_assembly":
+      return "measuring the assembly";
+    case "ask_user":
+      return on("asking", text(i, "question") ? `"${text(i, "question")}"` : undefined);
+    case "list_attachments":
+      return "listing the attachments";
+    case "view_attachment":
+      return "looking at an attachment";
+    case "file_attachment":
+      return path ? `filing an attachment as ${path}` : "filing an attachment";
+    default:
+      return name;
+  }
+}

@@ -21,7 +21,7 @@ export default function MeshViewer({ url, format, wireframe, grid, onScene }: Me
   const [scene, setScene] = useState<MeshScene | null>(null);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [failure, setFailure] = useState<{ key: string; message: string } | null>(null);
-  const viewportKeys = useViewportKeys(scene);
+  useViewportKeys(scene);
 
   // What is being shown, as one key: the state below is derived from it, never set from an effect body.
   const key = `${format}:${url}`;
@@ -65,7 +65,7 @@ export default function MeshViewer({ url, format, wireframe, grid, onScene }: Me
   useEffect(() => scene?.setGrid(grid), [scene, grid]);
 
   return (
-    <div className="relative size-full overflow-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset" {...viewportKeys}>
+    <div className="relative size-full overflow-hidden">
       <div ref={host} className="absolute inset-0" />
       {state === "ready" && <ViewCube view={scene} />}
       {state === "loading" && <Skeleton className="pointer-events-none absolute inset-0 rounded-none" aria-label="Loading model" />}

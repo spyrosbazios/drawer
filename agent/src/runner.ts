@@ -5,7 +5,7 @@
 import { ApiFailure, type Client, type RunnerIdentity } from "@drawer/cli/client";
 import { isModelId, isResumeHandle, type NewSessionItem, type ProviderStatus, type RunnerSessionPatch, type RunnerWork, type SessionAttachment, type SessionItem, type Settings } from "@drawer/shared/api";
 import { ReasoningRecorder } from "./reasoning.ts";
-import { formatAttachment, formatRef, oneLine, truncate } from "./format.ts";
+import { formatAttachment, formatRef, oneLine, summarizeCall, truncate } from "./format.ts";
 import type { BoundTool, Provider, ProviderCheck, ProviderEvent, TurnImage, TurnMessage } from "./provider.ts";
 import { drawerTools, executeTool, MAX_IMAGE_BYTES, MAX_IMAGES, toolsSection, type DrawerTool, type ToolClient, type ToolContext } from "./tools.ts";
 
@@ -125,14 +125,6 @@ async function fetchImage(client: Pick<RunnerClient, "attachmentBytes">, a: Sess
 
 export function buildSystemPrompt(guide: string, project: string, tools: readonly DrawerTool[]): string {
   return `${guide.trim()}\n\n${toolsSection(tools)}\n\nYou are working on the drawer project \`${project}\`.\n`;
-}
-
-/** A short description of a call for the session's record. */
-function callSummary(name: string, input: unknown): string {
-  if (typeof input !== "object" || input === null) return name;
-  const record = input as Record<string, unknown>;
-  const subject = ["part", "path", "query", "url", "title", "question", "id"].map((k) => record[k]).find((v) => typeof v === "string");
-  return typeof subject === "string" ? oneLine(`${name} ${subject}`, 120) : name;
 }
 
 export class Runner {
@@ -330,7 +322,7 @@ export class Runner {
             reasoning.update(e.id, e.text, e.done);
             break;
           case "tool_started":
-            void append({ type: "tool", callId: e.callId, name: e.name, summary: callSummary(e.name, e.input), status: "running", result: null, images: [] });
+            void append({ type: "tool", callId: e.callId, name: e.name, summary: summarizeCall(e.name, e.input), status: "running", result: null, images: [] });
             break;
           case "tool_finished":
             void append({

@@ -1,18 +1,17 @@
 import { BRIEF_FILE, LIBRARY_SLUG } from "@drawer/shared/api";
 import type { TreeEntry } from "@drawer/shared/api";
 import { useQuery } from "@tanstack/react-query";
-import { BoxIcon, DownloadIcon, ImageIcon, LibraryIcon, ListChecksIcon, MessagesSquareIcon, SendIcon, UnplugIcon } from "lucide-react";
+import { getRouteApi } from "@tanstack/react-router";
+import { BotIcon, BoxIcon, DownloadIcon, ImageIcon, LibraryIcon, ListChecksIcon, MessagesSquareIcon, SendIcon, UnplugIcon } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group";
 import { sectionOf } from "@/core/parts";
-import { newestSession } from "@/core/sessions";
 import { fileTextQuery } from "@/hooks/files";
-import { useCreateSession, useSendMessage, useSessions } from "@/hooks/sessions";
+import { useStartAgent } from "@/hooks/start-agent";
 import { useIsDesktop } from "@/hooks/use-media";
-import { useAgentOptions } from "@/hooks/agents";
 import { useProjectNav } from "@/lib/nav";
+import { PROJECT_DEFAULTS } from "@/lib/route-search";
 import { briefHasContent, kickstartActions, kickstartPrompt } from "./kickstart";
 import type { KickstartId } from "./kickstart";
 
@@ -25,40 +24,46 @@ const ICON: Record<KickstartId, typeof BoxIcon> = {
   library: LibraryIcon,
 };
 
-/**
- * Sends the first message of a kickstart: into the project's newest session while one is running, else a new
- * session with the agent the person picked. Then opens the agent panel (the phone's session sheet).
- * The one place the workspace starts a session.
- */
-function useStartAgent(slug: string) {
-  const nav = useProjectNav(slug);
-  const desktop = useIsDesktop();
-  const sessions = useSessions(slug);
-  const agent = useAgentOptions();
-  const latest = newestSession(sessions.data, slug);
-  const running = latest && latest.status !== "stopped" && latest.status !== "failed" ? latest : undefined;
-  const send = useSendMessage(running?.id ?? "");
-  const create = useCreateSession();
-  const noRunner = agent.noRunner;
-
-  const start = (message: string) => {
-    const opened = { onSuccess: (s: { id: string }) => nav.openSession(s.id, { reveal: !desktop }), onError: (err: Error) => toast.error(err.message) };
-    if (running) send.mutate({ text: message }, opened);
-    else create.mutate({ slug, message, ...agent.request }, { ...opened, onSuccess: (s) => { agent.pick(null); opened.onSuccess(s); } });
-  };
-  return { start, pending: send.isPending || create.isPending, noRunner };
-}
-
 interface KickstartProps {
   slug: string;
   entries: readonly TreeEntry[] | undefined;
   onImport: () => void;
 }
 
-/** The centre of a project with nothing to look at yet: a few ways to get the agent going, and a free text field. */
+const route = getRouteApi("/p/$slug");
+
+/** One calm line while a session of the project is on it: the agent panel owns the state and the activity. */
+function AgentOnIt({ slug, session, library }: { slug: string; session: string; library: boolean }) {
+  const nav = useProjectNav(slug);
+  const desktop = useIsDesktop();
+  const search = route.useSearch();
+  const shown = desktop ? (search.panel ?? PROJECT_DEFAULTS.panel) === "session" : search.sheet === "session";
+  return (
+    <div className="flex h-full overflow-y-auto scroll-contain">
+      <div className="m-auto flex w-full max-w-lg flex-col items-start gap-4 p-6">
+        <h2 className="text-lg font-medium">{library ? "The agent is setting up the library." : "The agent is on it."}</h2>
+        {!shown && (
+          <Button variant="outline" onClick={() => nav.openSession(session, { reveal: !desktop })}>
+            <BotIcon /> Open the agent panel
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The centre of a project with nothing to look at yet: a few ways to get the agent going, and a free text
+ * field. While a session is on it, a single line instead: the actions would only start a second one.
+ */
 export function Kickstart({ slug, entries, onImport }: KickstartProps) {
-  const library = slug === LIBRARY_SLUG;
   const agent = useStartAgent(slug);
+  if (agent.ongoing) return <AgentOnIt slug={slug} session={agent.ongoing.id} library={slug === LIBRARY_SLUG} />;
+  return <StartActions slug={slug} entries={entries} onImport={onImport} agent={agent} />;
+}
+
+function StartActions({ slug, entries, onImport, agent }: KickstartProps & { agent: ReturnType<typeof useStartAgent> }) {
+  const library = slug === LIBRARY_SLUG;
   const [text, setText] = useState("");
   const briefExists = (entries ?? []).some((e) => e.path === BRIEF_FILE);
   const brief = useQuery({ ...fileTextQuery(slug, BRIEF_FILE), enabled: briefExists });

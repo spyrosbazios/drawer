@@ -115,7 +115,11 @@ async function handle(req: Request): Promise<Response> {
   if (route === "/library/profile") return json(libraryProfile());
   if (route === "/runners") return json({ runners: sessions.RUNNERS.map((r) => ({ ...r, lastSeen: now() })) });
   if (route === "/settings" && method === "GET") return json(settings.getSettings());
-  if (route === "/settings" && method === "PATCH") return json(settings.patchSettings(await body<PatchSettingsBody>(req), author));
+  if (route === "/settings" && method === "PATCH") {
+    const next = settings.patchSettings(await body<PatchSettingsBody>(req), author);
+    sessions.reportAfterPoll(next);
+    return json(next);
+  }
 
   // ---- projects ----
   if (route === "/projects" && method === "GET") return json({ projects: listProjects() });

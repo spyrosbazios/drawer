@@ -2,7 +2,7 @@ import type { SessionItem } from "@drawer/shared/api";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { MessageScroller, MessageScrollerContent, MessageScrollerItem, MessageScrollerProvider, MessageScrollerViewport } from "@/components/ui/message-scroller";
 import { Spinner } from "@/components/ui/spinner";
-import { groupRows, liveThought, pinnedQuestion, rowKey } from "@/components/session/model";
+import { groupRows, liveRow, pinnedQuestion, rowKey } from "@/components/session/model";
 import { RowView } from "@/components/session/thread-items";
 
 const at = "2026-11-20T10:00:00Z";
@@ -66,7 +66,7 @@ export function Thread() {
   const items = live ? LIVE_ITEMS : ITEMS;
   const pinned = pinnedQuestion(items);
   const rows = groupRows(items, pinned?.seq);
-  const liveSeq = liveThought(items, { status: "working" });
+  const liveSeq = liveRow(items, { status: "working" });
   const env = { queued: new Set<number>(), liveSeq, answering: false, onAnswer: () => undefined };
   return (
     <div className="flex h-full min-h-0 flex-col bg-card">

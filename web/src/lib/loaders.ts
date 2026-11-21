@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { assemblyQuery } from "@/hooks/assembly";
+import { assemblyQuery, hasAssembly } from "@/hooks/assembly";
 import { fileTextQuery, infoQuery, treeQuery } from "@/hooks/files";
 import { partReportQuery, partsQuery } from "@/hooks/parts";
 import { projectQuery, projectsQuery } from "@/hooks/projects";
@@ -17,9 +17,9 @@ export function homeLoader(qc: QueryClient): Promise<unknown> {
 export async function projectLoader(qc: QueryClient, slug: string, search: Pick<ProjectSearch, "part" | "file" | "at">): Promise<void> {
   void qc.prefetchQuery(partsQuery(slug));
   void qc.prefetchQuery(sessionsQuery(slug));
-  void qc.prefetchQuery(assemblyQuery(slug));
   if (search.part) void qc.prefetchQuery(partReportQuery(slug, search.part, search.at));
   const [, tree] = await Promise.all([qc.ensureQueryData(projectQuery(slug)), qc.ensureQueryData(treeQuery(slug))]);
+  if (hasAssembly(tree)) void qc.prefetchQuery(assemblyQuery(slug));
   const file = search.file;
   if (!file) return;
   void qc.prefetchQuery(infoQuery(slug, file));

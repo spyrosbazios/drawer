@@ -7,7 +7,6 @@
     },
     "agent": {
       "name": "@drawer/agent",
-      "version": "0.1.0",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "^0.3.329",
         "@drawer/cli": "workspace:*",
@@ -21,7 +20,6 @@
     },
     "cli": {
       "name": "@drawer/cli",
-      "version": "0.1.0",
       "bin": {
         "drawer": "./drawer.ts",
       },
@@ -35,7 +33,6 @@
     },
     "importers": {
       "name": "@drawer/importers",
-      "version": "0.1.0",
       "dependencies": {
         "@drawer/shared": "workspace:*",
         "turndown": "^7.2.5",
@@ -48,7 +45,6 @@
     },
     "render": {
       "name": "@drawer/render",
-      "version": "0.1.0",
       "dependencies": {
         "@drawer/shared": "workspace:*",
         "fast-png": "^8.0.0",
@@ -61,7 +57,6 @@
     },
     "server": {
       "name": "@drawer/server",
-      "version": "0.1.0",
       "dependencies": {
         "@drawer/importers": "workspace:*",
         "@drawer/render": "workspace:*",
@@ -74,7 +69,6 @@
     },
     "shared": {
       "name": "@drawer/shared",
-      "version": "0.1.0",
     },
     "site": {
       "name": "@drawer/site",
@@ -99,7 +93,6 @@
     },
     "web": {
       "name": "@drawer/web",
-      "version": "0.1.0",
       "dependencies": {
         "@animate-ui/react": "^2.4.6",
         "@codemirror/commands": "^6.11.1",
@@ -118,7 +111,6 @@
         "@tanstack/react-table": "^9.3.1",
         "axios": "^1.21.1",
         "class-variance-authority": "^0.7.1",
-        "cmdk": "^1.1.1",
         "cn": "^0.5.2",
         "codemirror": "^6.0.2",
         "lucide-react": "^1.77.0",
@@ -1086,8 +1078,6 @@
     "cli-spinners": ["cli-spinners@2.9.2", "", {}, "sha512-ywqV+5MmyL4E7ybXgKys4DugZbX0FC6LnwrhjuykIjnK9k8OQacQ7axGKnjDXWNhns0xot3bZI5h55H8yo9cJg=="],
 
     "clsx": ["clsx@2.1.1", "", {}, "sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA=="],
-
-    "cmdk": ["cmdk@1.1.1", "", { "dependencies": { "@radix-ui/react-compose-refs": "^1.1.1", "@radix-ui/react-dialog": "^1.1.6", "@radix-ui/react-id": "^1.1.0", "@radix-ui/react-primitive": "^2.0.2" }, "peerDependencies": { "react": "^18 || ^19 || ^19.0.0-rc", "react-dom": "^18 || ^19 || ^19.0.0-rc" } }, "sha512-Vsv7kFaXm+ptHDMZ7izaRsP70GgrW9NBNGswt9OZaVBLlE0SNpDq8eu/VGXyF9r7M0azK3Wy7OlYXsuyYLFzHg=="],
 
     "cn": ["cn@0.5.2", "", { "bin": { "cn": "bin/cn.mjs" } }, "sha512-wm10E6iuJ37rALOw3D+3cfaXXZSLNMh2uxpQn3dNICqfJM59yXqgbA9/9Iiz155j5kYNLdK6WreNdW3NQtx3OQ=="],
 

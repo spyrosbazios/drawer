@@ -10,8 +10,9 @@ import { formatGates, formatLength, formatMass } from "@/core/format";
 import { useAssembly, useEvaluateAssembly } from "@/hooks/assembly";
 import { useLibraryParts } from "@/hooks/library";
 import { useParts } from "@/hooks/parts";
+import { useStartAgent } from "@/hooks/start-agent";
 import { cn } from "@/lib/utils";
-import { useAskAgent, useOpenPart } from "./assembly-actions";
+import { useOpenPart } from "./assembly-actions";
 import { bomCsv, clashingPairs, formatOverlap, isPressFit, partHome, partSlots, sendBackMessage } from "./assembly-model";
 import { assemblySelection, useAssemblySelection } from "./assembly-selection";
 
@@ -31,8 +32,8 @@ export interface AssemblyPanelProps {
 
 export function AssemblyPanel({ slug }: AssemblyPanelProps) {
   const q = useAssembly(slug);
-  if (q.isPending) return <Skeleton className="m-3 h-40" aria-label="Loading assembly" />;
-  if (q.isError) return <p className="p-3 text-sm text-down">{q.error.message}</p>;
+  if (q.status === "pending") return <Skeleton className="m-3 h-40" aria-label="Loading assembly" />;
+  if (q.status === "error") return <p className="p-3 text-sm text-down">{q.error.message}</p>;
   if (q.data === null) return <p className="p-3 text-sm text-dim">No assembly yet.</p>;
   return <PanelBody slug={slug} report={q.data} />;
 }
@@ -48,7 +49,7 @@ function download(name: string, text: string): void {
 
 function PanelBody({ slug, report }: { slug: string; report: AssemblyReport }) {
   const evaluate = useEvaluateAssembly(slug);
-  const agent = useAskAgent(slug);
+  const agent = useStartAgent(slug);
   const openPart = useOpenPart(slug);
   const parts = useParts(slug);
   const library = useLibraryParts();
@@ -64,7 +65,7 @@ function PanelBody({ slug, report }: { slug: string; report: AssemblyReport }) {
   const printed = report.bom.filter((b) => b.source === "printed");
   const bought = report.bom.filter((b) => b.source === "bought");
   const printedPieces = printed.reduce((n, b) => n + b.count, 0);
-  const error = agent.error ?? evaluate.error;
+  const error = evaluate.error;
 
   const failing = { kind: "gate", status: "fail" } as const;
   const defaults = { verdict: report.status !== "passed", next: report.next.length > 0, parts: true, gates: failingGates.length > 0, pairs: clashes.length > 0, bom: false };
@@ -172,7 +173,7 @@ function PanelBody({ slug, report }: { slug: string; report: AssemblyReport }) {
 
       {error && <p className="shrink-0 border-t border-line px-3 py-1.5 text-xs text-down">{error.message}</p>}
       <PanelFooter>
-        <Button size="sm" onClick={() => agent.ask(sendBackMessage(report))} disabled={agent.pending}>
+        <Button size="sm" onClick={() => agent.start(sendBackMessage(report))} disabled={agent.pending}>
           {agent.pending ? <LoaderCircleIcon className="animate-spin" /> : <SendIcon />} Send back
         </Button>
         <MoreMenu

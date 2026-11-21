@@ -1,5 +1,5 @@
 import type { Session } from "@drawer/shared/api";
-import { ChevronsUpDownIcon, PlayIcon, PlusIcon, SettingsIcon, SquareIcon, Trash2Icon } from "lucide-react";
+import { ChevronsUpDownIcon, PlayIcon, PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { StatusChip } from "@/components/status/status-chip";
@@ -17,8 +17,7 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatRelative } from "@/core/format";
-import { isActive, needsYou } from "@/core/sessions";
-import { useDeleteSession, useSendMessage, useSessions, useStopSession } from "@/hooks/sessions";
+import { useDeleteSession, useSendMessage, useSessions } from "@/hooks/sessions";
 import { agentLabel } from "@/lib/agent-choice";
 import { useProjectNav } from "@/lib/nav";
 import { cn } from "@/lib/utils";
@@ -72,26 +71,15 @@ function Switcher({ slug, current, onSwitched, onNew }: { slug: string; current:
   );
 }
 
-/** Stop a session that is on a turn or waiting; Resume one that stopped or failed. */
-function RunControl({ session }: { session: Session }) {
-  const stop = useStopSession(session.id);
+/** Resume a session that stopped or failed. Stopping lives in the composer, where the send button turns into Stop. */
+function ResumeControl({ session }: { session: Session }) {
   const send = useSendMessage(session.id);
-  const onError = (err: Error) => toast.error(err.message);
-  if (isActive(session) || needsYou(session)) {
-    return (
-      <Button variant="outline" size="icon-sm" aria-label="Stop" title="Stop" disabled={stop.isPending} onClick={() => stop.mutate(undefined, { onError })}>
-        <SquareIcon className="size-3 fill-current" />
-      </Button>
-    );
-  }
-  if (session.status === "stopped" || session.status === "failed") {
-    return (
-      <Button variant="outline" size="icon-sm" aria-label="Resume" title="Resume" disabled={send.isPending} onClick={() => send.mutate({ text: "Continue." }, { onError })}>
-        <PlayIcon />
-      </Button>
-    );
-  }
-  return null;
+  if (session.status !== "stopped" && session.status !== "failed") return null;
+  return (
+    <Button variant="outline" size="icon-sm" aria-label="Resume" title="Resume" disabled={send.isPending} onClick={() => send.mutate({ text: "Continue." }, { onError: (err) => toast.error(err.message) })}>
+      <PlayIcon />
+    </Button>
+  );
 }
 
 function Settings({ session, onDelete }: { session: Session | undefined; onDelete: () => void }) {
@@ -147,7 +135,7 @@ export function PanelHeader({ slug, session, onSwitched, onNew }: HeaderProps) {
     <header className="flex items-center gap-1.5 border-b border-line py-1.5 pr-2 pl-1.5">
       <Switcher slug={slug} current={session} onSwitched={onSwitched} onNew={onNew} />
       {session && <StatusChip kind="session" status={session.status} />}
-      {session && <RunControl session={session} />}
+      {session && <ResumeControl session={session} />}
       <Settings session={session} onDelete={() => setDeleting(true)} />
       {session && (
         <AlertDialog open={deleting} onOpenChange={setDeleting}>

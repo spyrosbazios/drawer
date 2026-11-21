@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { MessageScrollerProvider, useMessageScroller } from "@/components/ui/message-scroller";
-import { isActive, needsYou } from "@/core/sessions";
+import { isOngoing } from "@/core/sessions";
 import { useAgentOptions } from "@/hooks/agents";
 import { useAnswerQuestion, useCreateSession, useRunners, useSendMessage, useSession, useStopSession } from "@/hooks/sessions";
 import { useProjectNav } from "@/lib/nav";
@@ -147,7 +147,7 @@ function LiveBody({ slug, id, onNew }: { slug: string; id: string; onNew: () => 
           placeholder="Message the agent"
           attachments={attachments}
           busy={send.isPending}
-          stoppable={session !== undefined && (isActive(session) || needsYou(session))}
+          stoppable={session !== undefined && isOngoing(session)}
           onStop={() => stop.mutate(undefined, { onError: (e) => toast.error(e.message) })}
           onSend={sendMessage}
         />

@@ -46,7 +46,7 @@ export function FileDrop({ files, onFilesChange }: FileDropProps) {
       >
         <UploadIcon className="size-5" />
         <span>Drop a model, a photo or a scan, or choose files</span>
-        <span className="text-xs text-faint">STL, 3MF, STEP, photos, flatbed scans, PDFs. The agent measures them; it does not guess.</span>
+        <span className="text-xs text-faint">STL, 3MF, STEP, photos, scans, PDFs</span>
       </button>
       <input
         ref={input}

@@ -14,7 +14,7 @@ import { UserMessage } from "./user-message";
 export interface RowEnv {
   /** Seqs of the person's messages the agent has not read yet. */
   queued: ReadonlySet<number>;
-  /** The thought being thought right now (`liveThought`), the one live row; every other thought is drawn as done. */
+  /** The thought or tool call that is live right now (`liveRow`), the one live row; every other row is drawn as it is. */
   liveSeq: number | null;
   /** An answer is being sent. */
   answering: boolean;

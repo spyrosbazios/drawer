@@ -14,8 +14,10 @@ export interface ProviderView {
   kind: ProviderKind;
   enabled: boolean;
   isDefault: boolean;
-  /** The state to show: `disabled` when off, else the best a runner found; null with no runner reporting it. */
+  /** The state to show: `disabled` when off, else the best a runner found; null while no runner has reported it. */
   state: ProviderState | null;
+  /** On, with a runner connected, but none has reported it yet: the runner picks a change up on its next poll. */
+  awaitingRunner: boolean;
   version: string | null;
   findings: RunnerFinding[];
   /** Models to pick a default from: what the runners offer, plus the current default. */
@@ -26,8 +28,11 @@ const RANK: Record<ProviderState, number> = { ready: 0, signed_out: 1, unavailab
 
 export function providerView(kind: ProviderKind, settings: Settings, runners: readonly RunnerInfo[]): ProviderView {
   const own = settings.providers[kind];
+  // A runner reports `disabled` for a provider that was off at its last poll: once it is on, that is stale.
   const findings: RunnerFinding[] = runners.flatMap((r) =>
-    r.providers.filter((p) => p.kind === kind).map((p) => ({ runner: r.id, state: p.state, version: p.version, message: p.message, binary: p.binary })),
+    r.providers
+      .filter((p) => p.kind === kind && (!own.enabled || p.state !== "disabled"))
+      .map((p) => ({ runner: r.id, state: p.state, version: p.version, message: p.message, binary: p.binary })),
   );
   const best = [...findings].sort((a, b) => RANK[a.state] - RANK[b.state])[0];
   const offered = runners.flatMap((r) => r.providers.filter((p) => p.kind === kind).flatMap((p) => p.models));
@@ -37,6 +42,7 @@ export function providerView(kind: ProviderKind, settings: Settings, runners: re
     enabled: own.enabled,
     isDefault: settings.defaultProvider === kind,
     state: own.enabled ? (best?.state ?? null) : "disabled",
+    awaitingRunner: own.enabled && runners.length > 0 && findings.length === 0,
     version: best?.version ?? null,
     findings,
     models,

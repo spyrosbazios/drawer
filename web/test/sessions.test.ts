@@ -1,6 +1,6 @@
 import type { Session, SessionItem } from "@drawer/shared/api";
 import { describe, expect, test } from "bun:test";
-import { mergeDetail, mergeItems, newestSession } from "@/core/sessions";
+import { isOngoing, mergeDetail, mergeItems, newestSession } from "@/core/sessions";
 
 const tool = (seq: number, version: number, status: "running" | "ok"): SessionItem => ({
   seq,
@@ -59,5 +59,12 @@ describe("session items", () => {
     const list = [session("a", "p", "2026-01-01"), session("b", "p", "2026-02-01"), session("c", "q", "2026-03-01")];
     expect(newestSession(list, "p")?.id).toBe("b");
     expect(newestSession(list, "z")).toBeUndefined();
+  });
+});
+
+describe("a turn in progress", () => {
+  test("queued, working and waiting are in progress; the rest are not", () => {
+    for (const status of ["queued", "working", "waiting"] as const) expect(isOngoing({ status })).toBeTrue();
+    for (const status of ["idle", "stopped", "failed"] as const) expect(isOngoing({ status })).toBeFalse();
   });
 });

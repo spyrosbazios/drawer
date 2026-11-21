@@ -10,7 +10,7 @@ import { pointing, usePointed } from "@/lib/pointing";
 import { PART_MODES } from "@/lib/route-search";
 import type { PartMode } from "@/lib/route-search";
 import { RenderProgressPanel } from "@/components/viewers/render-progress";
-import { StatusPill, ViewerMenubar, cameraMenu } from "@/components/viewers/viewer-menubar";
+import { PlainViewer, StatusPill, ViewerMenubar, cameraMenu } from "@/components/viewers/viewer-menubar";
 import type { MenuEntry, MenuSpec } from "@/components/viewers/viewer-menubar";
 import { layoutAttempts } from "./attempt-tree";
 import type { TreeNode } from "./attempt-tree";
@@ -90,9 +90,11 @@ export function PartView({ slug, part, mode, at, compare }: PartViewProps) {
 
   if (parts.isSuccess && !summary) {
     return (
-      <Centered icon={<SearchXIcon className="size-6 text-dim" />} title={`No part “${part}”`}>
-        It may have been renamed or deleted. Pick a part from the outline.
-      </Centered>
+      <PlainViewer label="Part viewer">
+        <Centered icon={<SearchXIcon className="size-6 text-dim" />} title={`No part “${part}”`}>
+          It may have been renamed or deleted. Pick a part from the outline.
+        </Centered>
+      </PlainViewer>
     );
   }
 

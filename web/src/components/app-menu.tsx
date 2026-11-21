@@ -1,6 +1,6 @@
 import { LIBRARY_SLUG } from "@drawer/shared/api";
 import { Link } from "@tanstack/react-router";
-import { DownloadIcon, InfoIcon, LibraryIcon, MonitorIcon, MoonIcon, RefreshCwIcon, SettingsIcon, SunIcon } from "lucide-react";
+import { DownloadIcon, InfoIcon, LibraryIcon, MonitorIcon, MoonIcon, RefreshCwIcon, SettingsIcon, SlidersHorizontalIcon, SunIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,14 +20,13 @@ import { isThemeChoice } from "@/core/theme";
 
 /** Theme, library, settings, install and update controls. */
 export function AppMenu() {
-  const { choice, resolved, setChoice } = useAppearance();
+  const { choice, setChoice } = useAppearance();
   const { install } = useInstall();
-  const Icon = resolved === "dark" ? MoonIcon : SunIcon;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon" aria-label="App menu" className="size-10 md:size-8">
-          <Icon />
+          <SettingsIcon />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
@@ -51,7 +50,7 @@ export function AppMenu() {
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
           <Link to="/settings">
-            <SettingsIcon /> Settings
+            <SlidersHorizontalIcon /> Settings
           </Link>
         </DropdownMenuItem>
         {install && (

@@ -5,7 +5,8 @@ import { useEditableFile } from "@/hooks/use-editable-file";
 import { fileUrl } from "@/services/files";
 import { ConflictBanner } from "./conflict-banner";
 import { SaveButton } from "./save-button";
-import { CodeEditor, DownloadButton, ViewerSkeleton } from "./viewer-parts";
+import { ViewerMenubar, downloadMenu } from "./viewer-menubar";
+import { CodeEditor, ViewerSkeleton } from "./viewer-parts";
 
 interface Common {
   slug: string;
@@ -17,9 +18,7 @@ interface Common {
 export function ImageViewer({ slug, path, at, rev }: Common) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center justify-end border-b border-line bg-card px-3 py-1.5">
-        <DownloadButton href={fileUrl(slug, path, { at, download: true })} />
-      </div>
+      <ViewerMenubar label="Image viewer" menus={[downloadMenu(fileUrl(slug, path, { at, download: true }))]} />
       <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-card p-3">
         <img src={fileUrl(slug, path, { at, version: rev })} alt={path} className="max-h-full max-w-full object-contain" />
       </div>
@@ -30,9 +29,7 @@ export function ImageViewer({ slug, path, at, rev }: Common) {
 export function PdfViewer({ slug, path, at, rev }: Common) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center justify-end border-b border-line bg-card px-3 py-1.5">
-        <DownloadButton href={fileUrl(slug, path, { at, download: true })} />
-      </div>
+      <ViewerMenubar label="PDF viewer" menus={[downloadMenu(fileUrl(slug, path, { at, download: true }))]} />
       <iframe title={path} src={fileUrl(slug, path, { at, version: rev })} className="min-h-0 flex-1 border-0 bg-card" />
     </div>
   );
@@ -45,22 +42,23 @@ export function TextViewer({ slug, path, at, edit, onEdit }: Common & { edit: bo
   const save = () => void file.save();
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-line bg-card px-3 py-1.5">
-        {!file.readOnly && (
-          <ToggleGroup type="single" size="sm" variant="outline" value={editing ? "edit" : "view"} onValueChange={(v) => v && onEdit(v === "edit")} aria-label="Viewer or editor">
-            <ToggleGroupItem value="view" className="gap-1.5 px-2.5">
-              <EyeIcon /> View
-            </ToggleGroupItem>
-            <ToggleGroupItem value="edit" className="gap-1.5 px-2.5">
-              <PencilIcon /> Edit
-            </ToggleGroupItem>
-          </ToggleGroup>
-        )}
-        <div className="ml-auto flex items-center gap-2">
-          {!file.readOnly && <SaveButton dirty={file.dirty} saving={file.saving} onSave={save} />}
-          <DownloadButton href={fileUrl(slug, path, { at, download: true })} />
-        </div>
-      </div>
+      <ViewerMenubar
+        label="Text viewer"
+        menus={[downloadMenu(fileUrl(slug, path, { at, download: true }))]}
+        tools={
+          !file.readOnly && (
+            <ToggleGroup type="single" size="sm" variant="outline" value={editing ? "edit" : "view"} onValueChange={(v) => v && onEdit(v === "edit")} aria-label="Viewer or editor">
+              <ToggleGroupItem value="view" className="gap-1.5 px-2.5">
+                <EyeIcon /> View
+              </ToggleGroupItem>
+              <ToggleGroupItem value="edit" className="gap-1.5 px-2.5">
+                <PencilIcon /> Edit
+              </ToggleGroupItem>
+            </ToggleGroup>
+          )
+        }
+        status={file.readOnly ? null : <SaveButton dirty={file.dirty} saving={file.saving} onSave={save} />}
+      />
       {file.changedElsewhere && <ConflictBanner onReload={file.reload} onKeepMine={() => void file.keepMine()} />}
       <div className="min-h-0 flex-1">
         {file.query.isPending ? (

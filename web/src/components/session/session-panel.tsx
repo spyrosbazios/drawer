@@ -105,7 +105,7 @@ function LiveSession({ slug, id, onNew }: { slug: string; id: string; onNew: () 
     );
   }
   return (
-    <MessageScrollerProvider defaultScrollPosition="end">
+    <MessageScrollerProvider defaultScrollPosition="end" autoScroll>
       <LiveBody slug={slug} id={id} onNew={onNew} />
     </MessageScrollerProvider>
   );

@@ -11,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { useRunners, useRunnersCatchUp } from "@/hooks/sessions";
 import { usePatchSettings, useSettings } from "@/hooks/settings";
 import { PROVIDER_LABELS } from "@/lib/agent-choice";
+import { cn } from "@/lib/utils";
 import { codeSpans, providerView, type ProviderView } from "./model";
 import { SettingsSection } from "./settings-section";
 
@@ -36,9 +37,9 @@ export function AgentsSection() {
   const views = settings.data === undefined ? [] : PROVIDER_KINDS.map((k) => providerView(k, settings.data, runners.data ?? []));
   useRunnersCatchUp(views.some((v) => v.awaitingRunner));
   return (
-    <SettingsSection id="agents" icon={<BotIcon className="size-4 text-dim" />} title="Agents" description="Each agent uses its own CLI login on the runner's host; drawer stores no keys.">
+    <SettingsSection id="agents" flush icon={<BotIcon className="size-4 text-dim" />} title="Agents" description="Each agent uses its own CLI login on the runner's host; drawer stores no keys.">
       {settings.data === undefined || runners.isPending ? (
-        <Skeleton className="h-48 w-full rounded-xl" />
+        <Skeleton className="h-64 w-full rounded-none" />
       ) : (
         <Agents settings={settings.data} noRunner={runners.isSuccess && runners.data.length === 0} views={views} />
       )}
@@ -46,20 +47,27 @@ export function AgentsSection() {
   );
 }
 
+/**
+ * The default on top, then the providers as a list beside the one picked: the list says which are on and how
+ * each stands (its switch and its status), the pane holds everything else about the picked one.
+ */
 function Agents({ settings, views, noRunner }: { settings: Settings; views: ProviderView[]; noRunner: boolean }) {
   const patch = usePatchSettings();
+  const save = useSave();
+  const [picked, setPicked] = useState<ProviderKind>(settings.defaultProvider);
   const enabled = PROVIDER_KINDS.filter((k) => settings.providers[k].enabled);
+  const shown = views.find((v) => v.kind === picked);
   return (
-    <div className="space-y-3">
+    <div>
       {noRunner && (
-        <p className="flex items-start gap-2 rounded-lg border border-warn/50 bg-warn/10 px-3 py-2 text-xs text-warn">
+        <p className="flex items-start gap-2 border-b border-warn/40 bg-warn/10 px-4 py-2.5 text-xs text-warn">
           <UnplugIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
           <span>
             No agent runner connected, so nothing is checked. Start <code className="font-mono">drawer-agent</code> on the host.
           </span>
         </p>
       )}
-      <div className="flex flex-wrap items-center gap-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3 text-sm">
         <label htmlFor="default-provider" className="text-dim">
           New sessions use
         </label>
@@ -82,14 +90,49 @@ function Agents({ settings, views, noRunner }: { settings: Settings; views: Prov
           </SelectContent>
         </Select>
       </div>
-      <ul className="grid gap-3 md:grid-cols-2">
-        {views.map((v) => (
-          <li key={v.kind}>
-            <ProviderCard view={v} own={settings.providers[v.kind]} />
-          </li>
-        ))}
-      </ul>
+      <div className="md:grid md:min-h-72 md:grid-cols-[15rem_minmax(0,1fr)]">
+        <nav aria-label="Providers" className="border-b border-line bg-raised/40 md:border-r md:border-b-0">
+          <ul className="divide-y divide-line border-line md:border-b">
+            {views.map((v) => (
+              <ProviderRow key={v.kind} view={v} active={v.kind === picked} onPick={() => setPicked(v.kind)} onToggle={(on) => void save(v.kind, { enabled: on })} />
+            ))}
+          </ul>
+        </nav>
+        {shown && <ProviderPane key={shown.kind} view={shown} own={settings.providers[shown.kind]} />}
+      </div>
     </div>
+  );
+}
+
+function ProviderState({ view }: { view: ProviderView }) {
+  return view.state ? <StatusChip kind="provider" status={view.state} /> : <span className="text-xs text-faint">{view.awaitingRunner ? "waiting for the runner" : "unknown"}</span>;
+}
+
+/** One provider in the list: picking it shows its pane, its switch turns it on or off without picking it. */
+function ProviderRow({ view, active, onPick, onToggle }: { view: ProviderView; active: boolean; onPick: () => void; onToggle: (on: boolean) => void }) {
+  const label = PROVIDER_LABELS[view.kind];
+  return (
+    <li className={cn("flex items-center gap-2 pr-3 transition-colors", active ? "bg-card shadow-[inset_2px_0_0_var(--app-brand)]" : "hover:bg-raised/60")}>
+      <button
+        type="button"
+        aria-current={active ? "true" : undefined}
+        onClick={onPick}
+        className="flex min-w-0 flex-1 flex-col items-start gap-1 py-2.5 pl-4 text-left focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none focus-visible:ring-inset"
+      >
+        <span className={cn("flex items-center gap-1.5 text-sm font-medium", active ? "text-fg" : "text-dim")}>
+          {label}
+          {view.isDefault && <span className="text-[11px] font-normal text-faint">default</span>}
+        </span>
+        <ProviderState view={view} />
+      </button>
+      <Switch
+        checked={view.enabled}
+        disabled={view.isDefault}
+        title={view.isDefault ? "The default agent stays on" : undefined}
+        aria-label={`Use ${label}`}
+        onCheckedChange={onToggle}
+      />
+    </li>
   );
 }
 
@@ -109,29 +152,26 @@ function Message({ text }: { text: string }) {
   );
 }
 
-function ProviderCard({ view, own }: { view: ProviderView; own: ProviderSettings }) {
+/** Everything about the picked provider but its switch: what the runners found, where its CLI is, its models. */
+function ProviderPane({ view, own }: { view: ProviderView; own: ProviderSettings }) {
   const save = useSave();
   const label = PROVIDER_LABELS[view.kind];
   return (
-    <div className="space-y-3 border-t border-line pt-4">
-      <div className="flex items-center gap-2">
+    <div className="min-w-0 space-y-4 p-4">
+      <div className="flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-medium">{label}</h3>
-        {view.state ? <StatusChip kind="provider" status={view.state} /> : <span className="text-xs text-faint">{view.awaitingRunner ? "waiting for the runner" : "unknown"}</span>}
+        <ProviderState view={view} />
         {view.version && <span className="text-xs text-faint tabular-nums">v{view.version}</span>}
-        <Switch
-          className="ml-auto"
-          checked={own.enabled}
-          disabled={view.isDefault}
-          title={view.isDefault ? "The default agent stays on" : undefined}
-          aria-label={`Use ${label}`}
-          onCheckedChange={(on) => void save(view.kind, { enabled: on })}
-        />
       </div>
-      {own.enabled && view.findings.map((f) => (
-        <p key={f.runner} className="text-xs text-dim">
-          <span className="text-faint">{f.runner}:</span> {f.message ? <Message text={f.message} /> : f.state === "ready" ? "ready" : f.state.replace("_", " ")}
-        </p>
-      ))}
+      {own.enabled && view.findings.length > 0 && (
+        <div className="space-y-1">
+          {view.findings.map((f) => (
+            <p key={f.runner} className="text-xs text-dim">
+              <span className="text-faint">{f.runner}:</span> {f.message ? <Message text={f.message} /> : f.state === "ready" ? "ready" : f.state.replace("_", " ")}
+            </p>
+          ))}
+        </div>
+      )}
       {view.findings.some((f) => f.binary !== null) && (
         <div className="space-y-0.5 text-xs">
           {view.findings.map((f) =>

@@ -45,6 +45,20 @@ const COMPONENTS: Components = {
   ),
 };
 
+const INLINE = ["strong", "em", "del", "code", "a"];
+
+/**
+ * Markdown where only a line of text fits (a choice, a one-line record): emphasis, code and links are drawn,
+ * every block is unwrapped to its text.
+ */
+export function InlineMarkdown({ text }: { text: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} allowedElements={INLINE} unwrapDisallowed components={{ a: COMPONENTS.a }}>
+      {text}
+    </ReactMarkdown>
+  );
+}
+
 /** The agent's text: GitHub-flavoured markdown at thread size. */
 export default function ThreadMarkdown({ text }: { text: string }) {
   return (

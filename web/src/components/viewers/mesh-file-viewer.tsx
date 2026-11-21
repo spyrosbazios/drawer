@@ -5,7 +5,7 @@ import { useRender } from "@/hooks/render";
 import { formatOf } from "@/lib/mesh-scene";
 import type { MeshScene } from "@/lib/mesh-scene";
 import { fileUrl } from "@/services/files";
-import { ViewerMenubar, cameraMenu } from "./viewer-menubar";
+import { PlainViewer, ViewerMenubar, cameraMenu } from "./viewer-menubar";
 import type { MenuSpec } from "./viewer-menubar";
 import { BinaryCard, MeshViewer } from "./viewer-parts";
 
@@ -66,7 +66,13 @@ export function MeshFileViewer({ slug, path, rev, at }: Props) {
     [view, wireframe, grid, scene, at, render, download],
   );
 
-  if (!format) return <BinaryCard name={path} size={undefined} href={download} />;
+  if (!format) {
+    return (
+      <PlainViewer label="Mesh viewer">
+        <BinaryCard name={path} size={undefined} href={download} />
+      </PlainViewer>
+    );
+  }
 
   const status = render.isFetching ? "Rendering…" : null;
 

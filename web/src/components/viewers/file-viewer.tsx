@@ -5,6 +5,7 @@ import { MeshFileViewer } from "./mesh-file-viewer";
 import { RevisionBanner } from "./revision-banner";
 import { ScadViewer } from "./scad-viewer";
 import { ImageViewer, PdfViewer, TextViewer } from "./simple-viewers";
+import { PlainViewer } from "./viewer-menubar";
 import { BinaryCard, FileMissing } from "./viewer-parts";
 
 interface Props {
@@ -21,7 +22,13 @@ interface Props {
 /** Picks the viewer from the file's kind. */
 export function FileViewer({ slug, entry, path, at, edit, onEdit, onBackToCurrent, onOpenLink }: Props) {
   // A file at an old revision may no longer exist in the tree; the revision is still readable, so only the head needs the entry.
-  if (!entry && !at) return <FileMissing path={path} />;
+  if (!entry && !at) {
+    return (
+      <PlainViewer label="File viewer">
+        <FileMissing path={path} />
+      </PlainViewer>
+    );
+  }
   const kind = entry?.kind ?? "text";
   const rev = entry?.rev;
   const common = { slug, path, at, rev };
@@ -47,7 +54,11 @@ export function FileViewer({ slug, entry, path, at, edit, onEdit, onBackToCurren
       body = <TextViewer key={`${path}@${at ?? ""}`} {...common} edit={edit} onEdit={onEdit} />;
       break;
     case "binary":
-      body = <BinaryCard name={path} size={entry?.size} href={fileUrl(slug, path, { at, download: true })} />;
+      body = (
+        <PlainViewer label="File viewer">
+          <BinaryCard name={path} size={entry?.size} href={fileUrl(slug, path, { at, download: true })} />
+        </PlainViewer>
+      );
       break;
   }
 

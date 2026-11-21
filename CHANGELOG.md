@@ -5,6 +5,19 @@ version is one semver number for the whole repository, set by the git tag (see [
 
 ## Unreleased
 
+### Changed
+
+- Settings: the agents are a list beside the one you pick. The list shows each agent's status and its on/off switch;
+  the rest (what the runners found, the default model, extra models) is in the pane next to it.
+- Workspace: each side panel has its own fold button, and a folded one comes back from that end of the menubar.
+  Project settings moved from the header to a Project menu in the menubar, which every view now has; its menus carry
+  icons. The header keeps only add and the app menu, whose button is a gear.
+
+### Fixed
+
+- A question from the agent is drawn as markdown, like the rest of what it says.
+- The conversation follows the agent as it writes, until you scroll up.
+
 ## 0.1.1 - 2026-11-21
 
 ### Fixed

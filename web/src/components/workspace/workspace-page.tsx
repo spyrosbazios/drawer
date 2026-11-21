@@ -2,7 +2,7 @@ import { ASSEMBLY_FILE, LIBRARY_SLUG } from "@drawer/shared/api";
 import type { TreeEntry } from "@drawer/shared/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { Navigate, getRouteApi } from "@tanstack/react-router";
-import { BotIcon, ClipboardCheckIcon, EyeIcon, ListTreeIcon } from "lucide-react";
+import { BotIcon, ClipboardCheckIcon, EyeIcon, ListTreeIcon, PanelLeftOpenIcon, PanelRightOpenIcon, SettingsIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AssemblyPanel } from "@/components/assembly/assembly-panel";
@@ -13,6 +13,8 @@ import { SessionPanel } from "@/components/session/session-panel";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FileViewer } from "@/components/viewers/file-viewer";
+import { PlainViewer, ShellBarContext } from "@/components/viewers/viewer-menubar";
+import type { ShellBar } from "@/components/viewers/viewer-menubar";
 import { TEXT_EDITABLE } from "@/core/kinds";
 import { dirName, joinPath, remapMoved } from "@/core/paths";
 import { partIdOf } from "@/core/parts";
@@ -35,6 +37,7 @@ import { defaultSelection } from "./default-selection";
 import { DeleteEntryDialog, NewFileDialog, NewFolderDialog, RenameDialog } from "./entry-dialogs";
 import { ImportDialog } from "./import-dialog";
 import { Kickstart } from "./kickstart-view";
+import { PanelToggle } from "./panel-toggle";
 import { ProjectSettingsDialog } from "./project-settings";
 import { Sidebar } from "./sidebar";
 import { WorkspaceHeader } from "./workspace-header";
@@ -181,6 +184,7 @@ export function WorkspacePage() {
   const sidebar = (
     <Sidebar
       searchRef={searchField}
+      onCollapse={desktop ? () => outlineHidden.set(true) : undefined}
       onOpenHit={openFile}
       slug={slug}
       entries={entries}
@@ -218,7 +222,11 @@ export function WorkspacePage() {
       );
       break;
     case "none":
-      centre = <NoSelection slug={slug} entries={entries} onImport={() => setImporting(true)} />;
+      centre = (
+        <PlainViewer label="Project">
+          <NoSelection slug={slug} entries={entries} onImport={() => setImporting(true)} />
+        </PlainViewer>
+      );
       break;
   }
 
@@ -279,26 +287,33 @@ export function WorkspacePage() {
   );
 
   const panel: Panel = search.panel ?? PROJECT_DEFAULTS.panel;
-  const header = (
-    <WorkspaceHeader
-      slug={slug}
-      project={projectData}
-      desktop={desktop}
-      addMenu={addMenu}
-      onSettings={() => setSettings(true)}
-      outlineOpen={!hideSidebar}
-      onToggleOutline={() => outlineHidden.set(!hideSidebar)}
-      panelOpen={panel !== "none"}
-      onTogglePanel={() => nav.setPanel(panel === "none" ? PROJECT_DEFAULTS.panel : "none")}
-      activity={activity}
-    />
-  );
+  const header = <WorkspaceHeader slug={slug} project={projectData} desktop={desktop} addMenu={addMenu} />;
+
+  // What the shell adds to the centre's menubar: the Project menu, and the way back to a folded side panel.
+  const shellBar: ShellBar = {
+    menus: [{ id: "project", label: "Project", entries: [{ kind: "item", label: "Project settings", icon: SettingsIcon, disabled: !projectData, onSelect: () => setSettings(true) }] }],
+    leading:
+      desktop && hideSidebar ? (
+        <PanelToggle label="Show the sidebar" shortcut="Ctrl B" onClick={() => outlineHidden.set(false)}>
+          <PanelLeftOpenIcon />
+        </PanelToggle>
+      ) : null,
+    trailing:
+      desktop && panel === "none" ? (
+        <PanelToggle label="Show the side panel" onClick={() => nav.setPanel(PROJECT_DEFAULTS.panel)}>
+          <PanelRightOpenIcon />
+          <ActivityDot activity={activity} className="absolute top-0.5 right-0.5 ring-2 ring-card" />
+        </PanelToggle>
+      ) : null,
+  };
 
   if (desktop) {
     return (
       <div className="flex h-full flex-col bg-bg">
         {header}
-        <WorkspaceLayout sidebar={sidebar} centre={centre} panel={panel} onPanel={nav.setPanel} session={sessionPanel} review={reviewPanel} hideSidebar={hideSidebar} activity={activity} />
+        <ShellBarContext value={shellBar}>
+          <WorkspaceLayout sidebar={sidebar} centre={centre} panel={panel} onPanel={nav.setPanel} session={sessionPanel} review={reviewPanel} hideSidebar={hideSidebar} activity={activity} />
+        </ShellBarContext>
         {dialogs}
       </div>
     );
@@ -331,7 +346,9 @@ export function WorkspacePage() {
   return (
     <div className="flex h-full flex-col bg-bg">
       {header}
-      <main className="min-h-0 flex-1">{centre}</main>
+      <main className="min-h-0 flex-1">
+        <ShellBarContext value={shellBar}>{centre}</ShellBarContext>
+      </main>
       {bottomNav}
       <Drawer open={sheet !== undefined} onOpenChange={(o) => !o && nav.setSheet(undefined)}>
         <DrawerContent className="h-[85dvh] max-h-[85dvh]">

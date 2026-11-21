@@ -63,19 +63,24 @@ All three families are shadcn registry items on the Radix base (`radix-nova`), i
 - Slots: the shell renders `PartView({slug, part, mode, at, compare})`, `AssemblyView({slug})` (centre),
   `SessionPanel({slug, sessionId})`, `ReviewPanel({slug, part})`, `AssemblyPanel({slug})` (right / phone
   sheets). Props come from the URL only; each slot reads the cache itself. Contracts: the comment atop each file.
-- Centre viewers (part, assembly, mesh file, `.scad` file) share one `ViewerMenubar` (`viewers/viewer-menubar.tsx`:
-  menus described as data) and every 3D canvas wears the `ViewCube` (`viewers/view-cube.tsx`, CSS 3D synced to the
+- Every centre view wears one `ViewerMenubar` (`viewers/viewer-menubar.tsx`: menus described as data, each menu one
+  of `MENU_ICONS`, which gives it its icon; a narrow bar shows the icons alone). The shell adds to it through
+  `ShellBarContext`: the Project menu (project settings) and, while a side panel is folded, the button that brings it
+  back. So a view with nothing of its own (a notice, the kickstart, a binary file) is wrapped in `PlainViewer`, never
+  drawn bare, and a control that is not a menu (Read | Edit, Save) goes in the bar's `tools` / `status`, not in a
+  toolbar of its own. Every 3D canvas wears the `ViewCube` (`viewers/view-cube.tsx`, CSS 3D synced to the
   camera, no second WebGL context). "Go to view X" is `CameraRig` in `lib/camera-rig.ts`, behind `ViewControl`: the
   cube, the Camera menu and the 0-6 / F keys all call it. The keys answer anywhere while a viewer is mounted, never
   from a field, a menu or a dialog (`lib/camera-keys.ts`). Sliders and legends stay in the canvas; no loose
   toolbars around it.
-- Shell (`components/workspace/`): ONE header (logo, project, add, settings, side-panel toggles, app menu) with
-  nothing about the agent in it. Laptop: `WorkspaceLayout`, a resizable group sidebar | centre | right panel; the
+- Shell (`components/workspace/`): ONE header (logo, project, add, app menu) with nothing about the agent, the side
+  panels or the project's settings in it. Each side panel holds its own fold button (`PanelToggle`: the sidebar's
+  search row, the right panel's switch row). Laptop: `WorkspaceLayout`, a resizable group sidebar | centre | right panel; the
   right panel is 300-640 px, its only chrome is the Agent | Review switch, and the agent panel draws its own
   header under it. Open the agent panel with `nav.openSession(id, { reveal })`. The agent's state is shown once, as
   the status chip in the agent panel's header (state only), and what it is doing once, as the thread's tail; elsewhere
-  only an `ActivityDot` (agent tab, collapsed-panel toggle, phone Session tab). The agent choice lives in the header's
-  settings popover.
+  only an `ActivityDot` (agent tab, the menubar's button for the folded panel, phone Session tab). The agent choice
+  lives in the agent panel header's settings popover.
 - Per-viewer state is not URL state: panel sizes, sidebar hidden, which sections are folded (`lib/local-pref.ts`),
   and the sidebar's search text. The `panel` param stays the truth for the right panel, also when it is dragged shut.
   Only a drag on a separator writes either back (`isUserInteraction`), never a layout the window forced.
@@ -88,7 +93,8 @@ All three families are shadcn registry items on the Radix base (`radix-nova`), i
 - Statuses are drawn by `StatusChip` (report, gate, session, provider) and gates by `GateList`; never colour a status by hand.
 - The default agent for a new session is the server's settings; `useAgentOptions()` (`hooks/agents.ts`) gives the
   runnable provider/model pairs, the default, and a pick for the next session only (`lib/agent-choice.ts`).
-  Never store a default agent in the browser. `/settings` is one `SettingsSection` per area.
+  Never store a default agent in the browser. `/settings` is one `SettingsSection` per area; Agents is a list of the
+  providers (status and on/off switch) beside the pane of the one picked.
 - Session items live in the query cache merged by `seq` (`core/sessions.ts`); a `session` event fetches only
   `?since=<cached version>`. Never refetch a whole session on an event.
 - The thread folds a run of tool calls and the thoughts between them into one "N steps" group (`groupRows`); a
@@ -111,7 +117,8 @@ All three families are shadcn registry items on the Radix base (`radix-nova`), i
   its version past the item just sent, so `?since=` skipped that item and a sent message never showed. `patchSession`
   now patches lists only and delta-fetches the open session.
 - 2026-11-20: `MessageScroller` opens at the end only for rows present at mount; ours arrive after the fetch and
-  rows off screen are sized by estimate, so `Thread` scrolls to the end again after the first frames.
+  rows off screen are sized by estimate, so `Thread` scrolls to the end again after the first frames. 2026-11-21: it
+  follows new rows only with `autoScroll` on its provider (off by default), which lets go once the reader scrolls up.
 - 2026-11-20: a resizable panel that is *unmounted* when hidden loses its layout (react-resizable-panels brings it
   back at 0 wide from the saved layout) and remounts the centre viewer. Keep the panels mounted, collapse them with
   `panelRef`, reopen them with `resize` to the remembered px size (`openSizes`: written by a drag only, so a

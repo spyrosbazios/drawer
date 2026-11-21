@@ -1,6 +1,6 @@
-import { XIcon } from "lucide-react";
+import { CameraIcon, DownloadIcon, EyeIcon, FileIcon, FolderCogIcon, HistoryIcon, MousePointerClickIcon, XIcon } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useEffect } from "react";
+import { createContext, use, useEffect } from "react";
 import type { ReactNode } from "react";
 import {
   Menubar,
@@ -21,12 +21,14 @@ import {
 import { CAMERA_VIEWS, cameraCommand } from "@/lib/camera-keys";
 import { VIEW_DIRECTIONS } from "@/lib/camera-rig";
 import type { ViewControl } from "@/lib/camera-rig";
+import { cn } from "@/lib/utils";
 
 /**
- * The one menubar every centre viewer (part, assembly, mesh file, `.scad` file) wears, so they behave alike:
- * a row of menus on the left, short state text on the right. A viewer describes its menus as data
- * (`MenuSpec`); this file draws them. Continuous controls (sliders, legends) do not belong in a menu: they
- * stay in the canvas, in their mode.
+ * The one menubar every centre view wears, so they behave alike: a row of menus on the left, short state text
+ * on the right. A viewer describes its menus as data (`MenuSpec`); this file draws them. The workspace adds its
+ * own through `ShellBarContext` (the Project menu, a button for each side panel that is folded away), which is
+ * why a view with no menus of its own still wears the bar (`PlainViewer`). Continuous controls (sliders,
+ * legends) do not belong in a menu: they stay in the canvas, in their mode.
  */
 
 export type MenuEntry =
@@ -37,38 +39,81 @@ export type MenuEntry =
   | { kind: "separator" }
   | { kind: "sub"; label: string; icon?: LucideIcon; disabled?: boolean; entries: MenuEntry[] };
 
+/** Every menu the bar can hold, with its icon: a menu is one of these, so the same menu looks the same in every viewer. */
+const MENU_ICONS = {
+  project: FolderCogIcon,
+  view: EyeIcon,
+  camera: CameraIcon,
+  history: HistoryIcon,
+  point: MousePointerClickIcon,
+  file: FileIcon,
+} satisfies Record<string, LucideIcon>;
+
 export interface MenuSpec {
-  id: string;
+  id: keyof typeof MENU_ICONS;
   label: string;
-  icon?: LucideIcon;
   disabled?: boolean;
   entries: MenuEntry[];
 }
 
+/** What the workspace puts in the bar of whichever view is in the centre. */
+export interface ShellBar {
+  /** Menus ahead of the viewer's own. */
+  menus: MenuSpec[];
+  /** At the bar's left and right ends: the way back to a side panel that is folded away. */
+  leading?: ReactNode;
+  trailing?: ReactNode;
+}
+
+export const ShellBarContext = createContext<ShellBar>({ menus: [] });
+
 interface Props {
   menus: MenuSpec[];
+  /** Controls that are not a menu and must stay one click away (a Read | Edit switch), right after the menus. */
+  tools?: ReactNode;
   /** State that must stay visible at a glance: the mode, the attempt shown. Short text, right end of the row. */
   status?: ReactNode;
   label: string;
 }
 
-export function ViewerMenubar({ menus, status, label }: Props) {
+export function ViewerMenubar({ menus, tools, status, label }: Props) {
+  const shell = use(ShellBarContext);
+  const all = [...shell.menus, ...menus];
+  const hasStatus = status !== undefined && status !== null;
+  const hasTrailing = shell.trailing !== undefined && shell.trailing !== null;
   return (
-    <div className="flex shrink-0 items-center gap-2 border-b border-line bg-card px-1.5 py-1">
+    <div className="@container/bar flex shrink-0 items-center gap-2 border-b border-line bg-card px-1.5 py-1">
+      {shell.leading}
       <Menubar aria-label={label} className="h-auto min-w-0 gap-0 rounded-none border-0 bg-transparent p-0">
-        {menus.map((m) => (
-          <MenubarMenu key={m.id} value={m.id}>
-            <MenubarTrigger disabled={m.disabled} className="gap-1.5 px-2 py-1 text-[13px] disabled:opacity-50">
-              {m.icon && <m.icon className="size-3.5 text-dim" aria-hidden />}
-              {m.label}
-            </MenubarTrigger>
-            <MenubarContent className="max-h-[70vh] min-w-48 overflow-y-auto" sideOffset={4}>
-              <Entries entries={m.entries} />
-            </MenubarContent>
-          </MenubarMenu>
-        ))}
+        {all.map((m) => {
+          const Icon = MENU_ICONS[m.id];
+          return (
+            <MenubarMenu key={m.id} value={m.id}>
+              {/* A narrow bar (the phone, a squeezed centre) keeps the icons and drops the words. */}
+              <MenubarTrigger disabled={m.disabled} title={m.label} className="gap-1.5 px-2 py-1 text-[13px] disabled:opacity-50">
+                <Icon className="size-3.5 text-dim" aria-hidden />
+                <span className="sr-only @lg/bar:not-sr-only">{m.label}</span>
+              </MenubarTrigger>
+              <MenubarContent className="max-h-[70vh] min-w-48 overflow-y-auto" sideOffset={4}>
+                <Entries entries={m.entries} />
+              </MenubarContent>
+            </MenubarMenu>
+          );
+        })}
       </Menubar>
-      {status !== undefined && status !== null && <div className="ml-auto flex min-w-0 shrink items-center gap-2 text-xs text-dim tabular-nums">{status}</div>}
+      {tools}
+      {hasStatus && <div className="ml-auto flex min-w-0 shrink items-center gap-2 text-xs text-dim tabular-nums">{status}</div>}
+      {hasTrailing && <div className={cn("flex shrink-0 items-center", !hasStatus && "ml-auto")}>{shell.trailing}</div>}
+    </div>
+  );
+}
+
+/** A centre view with no menus of its own (a notice, an empty project, a file with nothing to offer): the bar, then the view. */
+export function PlainViewer({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <ViewerMenubar label={label} menus={[]} />
+      <div className="min-h-0 flex-1">{children}</div>
     </div>
   );
 }
@@ -173,6 +218,9 @@ export function useViewportKeys(view: ViewControl | null): void {
     return () => window.removeEventListener("keydown", onKey);
   }, [view]);
 }
+
+/** The File menu of a viewer whose file can only be taken away as it is. */
+export const downloadMenu = (href: string): MenuSpec => ({ id: "file", label: "File", entries: [{ kind: "item", label: "Download", icon: DownloadIcon, href }] });
 
 /** State text in the menubar's right end that can be dismissed: "Viewing A2" with a way back. */
 export function StatusPill({ children, onClear, clearLabel }: { children: ReactNode; onClear: () => void; clearLabel: string }) {

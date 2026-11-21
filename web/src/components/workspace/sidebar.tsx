@@ -1,5 +1,5 @@
 import type { SearchHit } from "@drawer/shared/api";
-import { SearchIcon, XIcon } from "lucide-react";
+import { PanelLeftCloseIcon, SearchIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 import type { Ref } from "react";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
@@ -7,19 +7,23 @@ import { Kbd } from "@/components/ui/kbd";
 import { useProjectSearch } from "@/hooks/search";
 import { Outline } from "./outline";
 import type { OutlineProps } from "./outline";
+import { PanelToggle } from "./panel-toggle";
 import { SearchHits } from "./search-hits";
 
 interface SidebarProps extends OutlineProps {
   /** Opens a hit the way the outline opens things. */
   onOpenHit: (path: string) => void;
   searchRef: Ref<HTMLInputElement>;
+  /** Folds the sidebar away (laptop). The phone shows it as a sheet, which closes by itself. */
+  onCollapse?: () => void;
 }
 
 /**
  * The left column: a search over this project's files on top, and below it the outline. While there is a query
- * the hits replace the outline. The query is a passing filter, so it lives here and not in the address.
+ * the hits replace the outline. The query is a passing filter, so it lives here and not in the address. On the
+ * laptop the search row ends with the sidebar's fold button.
  */
-export function Sidebar({ onOpenHit, searchRef, ...outline }: SidebarProps) {
+export function Sidebar({ onOpenHit, searchRef, onCollapse, ...outline }: SidebarProps) {
   const { slug } = outline;
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -35,8 +39,8 @@ export function Sidebar({ onOpenHit, searchRef, ...outline }: SidebarProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-line p-2">
-        <InputGroup className="h-9 md:h-8">
+      <div className="flex shrink-0 items-center gap-1 border-b border-line p-2">
+        <InputGroup className="h-9 min-w-0 flex-1 md:h-8">
           <InputGroupAddon>
             <SearchIcon />
           </InputGroupAddon>
@@ -77,6 +81,11 @@ export function Sidebar({ onOpenHit, searchRef, ...outline }: SidebarProps) {
             )}
           </InputGroupAddon>
         </InputGroup>
+        {onCollapse && (
+          <PanelToggle label="Hide the sidebar" shortcut="Ctrl B" onClick={onCollapse}>
+            <PanelLeftCloseIcon />
+          </PanelToggle>
+        )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto scroll-contain" data-scroll-restoration-id={`list|${searching ? "search" : "outline"}|${slug}`}>
         {searching ? (

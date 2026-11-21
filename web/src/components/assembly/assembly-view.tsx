@@ -11,7 +11,7 @@ import { useAssembly } from "@/hooks/assembly";
 import { useStartAgent } from "@/hooks/start-agent";
 import { ASSEMBLY_PROMPT } from "@/components/workspace/kickstart";
 import { ViewCube } from "@/components/viewers/view-cube";
-import { ViewerMenubar, cameraMenu, useViewportKeys } from "@/components/viewers/viewer-menubar";
+import { PlainViewer, ViewerMenubar, cameraMenu, useViewportKeys } from "@/components/viewers/viewer-menubar";
 import type { MenuSpec } from "@/components/viewers/viewer-menubar";
 import type { ViewControl } from "@/lib/camera-rig";
 import { AssemblyScene } from "@/lib/assembly-scene";
@@ -48,10 +48,18 @@ const isAxis = (v: string): v is Axis => v === "x" || v === "y" || v === "z";
 
 export function AssemblyView({ slug }: AssemblyViewProps) {
   const q = useAssembly(slug);
-  if (q.status === "pending") return <Skeleton className="m-4 h-[60%]" aria-label="Loading assembly" />;
-  if (q.status === "error") return <Notice icon={<TriangleAlertIcon />} title="The assembly could not be loaded">{q.error.message}</Notice>;
-  if (q.data === null) return <NoAssembly slug={slug} />;
-  return <AssemblyBody slug={slug} report={q.data} refreshing={q.refreshing} />;
+  if (q.status === "ready" && q.data !== null) return <AssemblyBody slug={slug} report={q.data} refreshing={q.refreshing} />;
+  return (
+    <PlainViewer label="Assembly viewer">
+      {q.status === "pending" ? (
+        <Skeleton className="m-4 h-[60%]" aria-label="Loading assembly" />
+      ) : q.status === "error" ? (
+        <Notice icon={<TriangleAlertIcon />} title="The assembly could not be loaded">{q.error.message}</Notice>
+      ) : (
+        <NoAssembly slug={slug} />
+      )}
+    </PlainViewer>
+  );
 }
 
 function Notice({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {

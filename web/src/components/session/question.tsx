@@ -1,12 +1,14 @@
 import { MessageCircleQuestionIcon } from "lucide-react";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Questionnaire, QuestionnaireActions, QuestionnaireChoice, QuestionnaireChoices, QuestionnaireInput, QuestionnaireItem, QuestionnaireSubmit, QuestionnaireTitle } from "@/components/ui/questionnaire";
+import ThreadMarkdown, { InlineMarkdown } from "./markdown";
 import type { QuestionItem } from "./model";
 import { firstLine } from "./model";
 
 /**
- * A question from the agent. Open: the one loud thing in the thread (the session waits for it): the
- * options as choices, or free text. Answered: a quiet two-line record.
+ * A question from the agent, its text drawn as markdown like the rest of what the agent says. Open: the one
+ * loud thing in the thread (the session waits for it): the options as choices, or free text. Answered: a quiet
+ * two-line record.
  */
 export function Question({ item, busy, onAnswer }: { item: QuestionItem; busy: boolean; onAnswer: (answer: string) => void }) {
   if (item.answer !== null) {
@@ -19,7 +21,9 @@ export function Question({ item, busy, onAnswer }: { item: QuestionItem; busy: b
           <span className="line-clamp-2 block" title={item.text}>
             {firstLine(item.text)}
           </span>
-          <span className="block text-foreground">{item.answer}</span>
+          <span className="block text-foreground">
+            <InlineMarkdown text={item.answer} />
+          </span>
         </MarkerContent>
       </Marker>
     );
@@ -35,11 +39,13 @@ export function Question({ item, busy, onAnswer }: { item: QuestionItem; busy: b
       }}
     >
       <QuestionnaireItem name={item.questionId} required disabled={busy} className="gap-3">
-        <QuestionnaireTitle className="mb-0! text-sm whitespace-pre-wrap">{item.text}</QuestionnaireTitle>
+        <QuestionnaireTitle className="mb-0! w-full font-sans text-sm font-normal">
+          <ThreadMarkdown text={item.text} />
+        </QuestionnaireTitle>
         <QuestionnaireChoices>
           {item.options.map((o) => (
             <QuestionnaireChoice key={o} value={o}>
-              {o}
+              <InlineMarkdown text={o} />
             </QuestionnaireChoice>
           ))}
           <QuestionnaireInput aria-label="Another answer" placeholder="Something else…" />

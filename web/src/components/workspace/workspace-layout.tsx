@@ -1,4 +1,4 @@
-import { BotIcon, ClipboardCheckIcon } from "lucide-react";
+import { BotIcon, ClipboardCheckIcon, PanelRightCloseIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import type { Layout, LayoutChangedMeta } from "react-resizable-panels";
@@ -9,6 +9,7 @@ import { PROJECT_DEFAULTS } from "@/lib/route-search";
 import type { Panel } from "@/lib/route-search";
 import { ActivityDot } from "./activity";
 import type { Activity } from "./activity";
+import { PanelToggle } from "./panel-toggle";
 
 /** Whether the sidebar is hidden: the viewer's own choice, so per browser and not in the address. */
 export const outlineHidden = localPref<boolean>("drawer.outline.hidden", false, parseBool);
@@ -64,8 +65,9 @@ const Handle = () => (
  * collapsed side stays mounted at zero width (the centre never remounts) and follows its source of truth: the
  * address (`panel`) for the right panel, the per-browser sidebar preference for the left. Only a drag (or a
  * key on a separator) writes that source back and remembers a size: every other layout change (a window too
- * narrow for the panels, the toggles) is the layout following the sources, never the viewer's choice. The
- * right panel's only chrome is the Agent | Review switch; the agent panel draws its own header below it.
+ * narrow for the panels, the fold buttons) is the layout following the sources, never the viewer's choice. The
+ * right panel's only chrome is the Agent | Review switch and its fold button; the agent panel draws its own
+ * header below it. The sidebar holds its own fold button, and the centre's menubar the way back to either.
  */
 export function WorkspaceLayout({ sidebar, centre, panel, onPanel, session, review, hideSidebar, activity }: LayoutProps) {
   const panelOpen = panel !== "none";
@@ -124,8 +126,11 @@ export function WorkspaceLayout({ sidebar, centre, panel, onPanel, session, revi
       >
         {panelOpen && (
           <aside aria-label={panel === "session" ? "Agent" : "Review"} className="flex h-full min-h-0 flex-col border-l border-line bg-card">
-            <div className="shrink-0 border-b border-line px-2 py-1.5">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-line px-2 py-1.5">
               <PanelSwitch panel={panel} onPanel={onPanel} activity={activity} />
+              <PanelToggle label="Hide the side panel" onClick={() => onPanel("none")}>
+                <PanelRightCloseIcon />
+              </PanelToggle>
             </div>
             <div className="min-h-0 flex-1">{panel === "session" ? session : review}</div>
           </aside>

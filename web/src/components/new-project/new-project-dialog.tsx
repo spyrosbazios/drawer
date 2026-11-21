@@ -130,7 +130,7 @@ function NewProjectForm({ onClose }: { onClose: () => void }) {
 
   return (
     <form
-      className="grid gap-6 pb-2"
+      className="grid grid-cols-1 gap-6 pb-2"
       onSubmit={(e) => {
         e.preventDefault();
         void form.handleSubmit();
@@ -236,7 +236,7 @@ function NewProjectForm({ onClose }: { onClose: () => void }) {
           </h3>
           <form.Field name="material">
             {(f) => (
-              <Field orientation="horizontal">
+              <Field orientation="horizontal" className="max-sm:flex-col max-sm:items-start">
                 <FieldLabel htmlFor="np-material" className="w-24 shrink-0">
                   Material
                 </FieldLabel>
@@ -258,7 +258,7 @@ function NewProjectForm({ onClose }: { onClose: () => void }) {
           </form.Field>
           <form.Field name="strictness">
             {(f) => (
-              <Field orientation="horizontal">
+              <Field orientation="horizontal" className="max-sm:flex-col max-sm:items-start">
                 <FieldLabel className="w-24 shrink-0">Strictness</FieldLabel>
                 <div className="min-w-0 space-y-1">
                   <ToggleGroup type="single" variant="outline" size="sm" value={f.state.value} onValueChange={(v) => isStrictness(v) && f.handleChange(v)} aria-label="Strictness">

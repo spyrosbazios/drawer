@@ -1,9 +1,9 @@
 # drawer site
 
-<!-- reviewed: 2026-11-20 -->
+<!-- reviewed: 2026-11-21 -->
 
-The public page for drawer: Vite, React 19, TypeScript, Tailwind 4, lucide icons, Geist fonts bundled (no request leaves
-the page). Its palette is the web app's (`../web/src/core/theme.ts`, read by `plugins.ts`), its favicon is
+The public page for drawer: Vite, React 19, TypeScript, Tailwind 4, lucide icons, `motion` (the hero background and `useReducedMotion`),
+Geist fonts bundled (no request leaves the page). Its palette is the web app's (`../web/src/core/theme.ts`, read by `plugins.ts`), its favicon is
 `../assets/icon.svg`, and its screenshots are `../docs/assets/*.webp`, so build with the repo checked out whole.
 
     bun run dev          # work on it
@@ -18,6 +18,23 @@ the page). Its palette is the web app's (`../web/src/core/theme.ts`, read by `pl
 - The repository address (`REPO`) lives in `src/lib.ts`.
 - Theme: follows the system until the visitor toggles it; the pick is `data-theme` on `<html>` plus localStorage
   (`src/theme.ts`, restored by the inline script in `index.html`).
+
+## Page
+
+Sections in order: hero, how it works (`Idea`), features (`Features`, a grid of tiles), tour (`Showcase`, screens as tabs
+and the phone), agents (`Agents`), a short closing line (`Closing`). The only repository links are the nav's and the
+footer's. Its pattern is the TEF Notes promo page's (`~/projects/tefteri/site`): scroll reveal, a hero that stands up as it
+scrolls in, cards that light under the pointer, small animated pieces drawn in JSX (`components/mocks.tsx`) next to real
+screenshots (`components/ui.tsx` `Crop` cuts a region out of one).
+
+- **Motion stops with `prefers-reduced-motion`.** CSS animations are cut in `index.css`; the JS ones (`useLoop` in
+  `mocks.tsx`, the tour's auto-advance, the topography) read `useReducedMotion` and show their last frame, still.
+- **The hero background is Animate UI's Topography Background**, copied to `components/topography.tsx` (its two
+  `@animate-ui/react` helpers replaced by `motion`'s `useReducedMotion` and a local page-visibility hook). It draws in the
+  container's text colour, so the hero sets `text-fg` and a low opacity per theme, and remounts it (a `key`) when the
+  theme changes so it redraws. It takes the pointer for its hill and ripples: the hero's content is
+  `pointer-events-none` except where it needs them.
+- Only `light` captures exist for `home`, `review`, `assembly` and `phone`, so those stay light on a dark page.
 
 ## Screenshots
 

@@ -1,11 +1,10 @@
 import { Agents } from "@/components/Agents";
+import { Closing } from "@/components/Closing";
+import { Features } from "@/components/Features";
 import { Footer } from "@/components/Footer";
-import { GetStarted } from "@/components/GetStarted";
 import { Hero } from "@/components/Hero";
 import { Idea } from "@/components/Idea";
-import { Imports } from "@/components/Imports";
 import { Nav } from "@/components/Nav";
-import { SelfHost } from "@/components/SelfHost";
 import { Showcase } from "@/components/Showcase";
 
 export function App() {
@@ -18,11 +17,10 @@ export function App() {
       <main id="main">
         <Hero />
         <Idea />
+        <Features />
         <Showcase />
         <Agents />
-        <Imports />
-        <SelfHost />
-        <GetStarted />
+        <Closing />
       </main>
       <Footer />
     </>

@@ -28,10 +28,26 @@
 
   --color-brand-wash: color-mix(in oklab, var(--app-brand) 10%, transparent);
   --color-brand-line: color-mix(in oklab, var(--app-brand) 35%, var(--app-line));
+  --color-glow: color-mix(in oklab, var(--app-brand) 28%, transparent);
+  --color-glow-soft: color-mix(in oklab, var(--app-brand) 11%, transparent);
+  --color-glass: color-mix(in oklab, var(--app-card) 66%, transparent);
+  --color-hair: color-mix(in oklab, var(--app-fg) 8%, transparent);
   --color-up-wash: color-mix(in oklab, var(--app-up) 12%, transparent);
   --color-down-wash: color-mix(in oklab, var(--app-down) 12%, transparent);
+  --color-warn-wash: color-mix(in oklab, var(--app-warn) 12%, transparent);
   --color-run-wash: color-mix(in oklab, var(--app-run) 12%, transparent);
   --color-shade: color-mix(in oklab, var(--app-fg) 14%, transparent);
+
+  --shadow-lift: 0 1px 2px var(--color-shade), 0 30px 80px -28px var(--color-shade);
+
+  --animate-float: float 7s ease-in-out infinite;
+  --animate-caret: caret 1s steps(2, start) infinite;
+  --animate-pulse-dot: pulse-dot 1.6s ease-in-out infinite;
+
+  @keyframes float { 50% { transform: translateY(-10px); } }
+  @keyframes caret { to { visibility: hidden; } }
+  @keyframes pulse-dot { 50% { opacity: 0.35; transform: scale(0.8); } }
+  @keyframes tour-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 }
 
 @layer base {
@@ -43,25 +59,67 @@
   :root[data-theme="light"] { color-scheme: light; }
   :root[data-theme="dark"] { color-scheme: dark; }
   body { @apply min-h-screen overflow-x-hidden bg-bg text-[17px] leading-relaxed; }
-  ::selection { background: var(--color-brand-wash); }
+  ::selection { background: var(--color-glow); }
   :focus-visible { @apply rounded-md outline-2 outline-offset-2 outline-brand; }
-  button:not(:disabled) { cursor: pointer; }
-  @media (prefers-reduced-motion: reduce) {
-    html { scroll-behavior: auto; }
-    *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; }
-  }
+  button:not(:disabled), [role="tab"] { cursor: pointer; }
 }
 
 @layer components {
-  /* The blueprint grid behind the hero, in the 3D viewer's own grid colour. */
-  .grid-paper {
-    background-image:
-      linear-gradient(to right, var(--app-grid) 1px, transparent 1px),
-      linear-gradient(to bottom, var(--app-grid) 1px, transparent 1px);
-    background-size: 32px 32px;
-    mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, black 30%, transparent 75%);
+  /* Scroll reveal (ui.tsx Reveal): a short rise and fade, once. */
+  .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.7s cubic-bezier(0.2, 0.7, 0.2, 1), transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1); }
+  .reveal[data-in] { opacity: 1; transform: none; }
+
+  /* The hero's stage (ui.tsx ScrollStage): --rise runs 0 to 1 as it scrolls in. The title lifts; the plane, seen in
+     perspective, tilts up from 20deg to flat and settles from 1.05 to 1 (0.8 to 1 on a phone). */
+  .stage { --rise: 0; perspective: 1000px; }
+  .stage-title { transform: translateY(calc(var(--rise) * -80px)); }
+  .stage-plane {
+    transform: rotateX(calc((1 - var(--rise)) * 20deg)) scale(calc(1.05 - var(--rise) * 0.05));
+    transform-origin: 50% 0;
+    will-change: transform;
   }
-  .shadow-frame {
-    box-shadow: 0 1px 2px var(--color-shade), 0 24px 60px -24px var(--color-shade);
+  @media (max-width: 767px) { .stage-plane { transform: rotateX(calc((1 - var(--rise)) * 20deg)) scale(calc(0.8 + var(--rise) * 0.2)); } }
+
+  /* A card that lights up under the pointer (--mx / --my set in ui.tsx Spotlight). */
+  .spot { position: relative; isolation: isolate; }
+  .spot::before {
+    content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; opacity: 0; transition: opacity 0.4s;
+    background: radial-gradient(340px circle at var(--mx, 50%) var(--my, 0%), var(--color-glow-soft), transparent 70%);
+  }
+  .spot:hover::before { opacity: 1; }
+  .spot::after {
+    content: ""; position: absolute; inset: -1px; z-index: -1; border-radius: inherit; padding: 1px; opacity: 0; transition: opacity 0.4s;
+    background: radial-gradient(260px circle at var(--mx, 50%) var(--my, 0%), var(--color-brand-line), transparent 70%);
+    mask: linear-gradient(var(--color-fg) 0 0) content-box exclude, linear-gradient(var(--color-fg) 0 0); mask-composite: exclude;
+    -webkit-mask: linear-gradient(var(--color-fg) 0 0) content-box, linear-gradient(var(--color-fg) 0 0); -webkit-mask-composite: xor;
+  }
+  .spot:hover::after { opacity: 1; }
+
+  /* A framed screen that leans toward the pointer (ui.tsx Tilt sets --rx / --ry). */
+  .tilt { transform: perspective(1200px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)); transition: transform 0.25s ease-out; will-change: transform; }
+
+  /* The hero's topography: faint in the light theme, a little stronger in the dark one, fading out toward the bottom. */
+  .topo-mask { mask-image: linear-gradient(to bottom, var(--color-fg) 35%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, var(--color-fg) 35%, transparent 100%); }
+
+  /* Feature tiles that play on hover (Features.tsx): a piece rests, then moves when its tile (.group) is hovered. */
+  .hov-rise { opacity: 0; transform: translateY(8px); transition: opacity 0.35s, transform 0.35s; }
+  .group:hover .hov-rise { opacity: 1; transform: none; }
+  .hov-zoom { transition: transform 0.6s cubic-bezier(0.2, 0.7, 0.2, 1); }
+  .group:hover .hov-zoom { transform: scale(1.06); }
+
+  @media (hover: none) {
+    .reveal[data-in] .hov-rise { opacity: 1; transform: none; }
+  }
+
+  /* Nothing moves when the visitor asks for no motion. */
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .reveal { opacity: 1; transform: none; transition: none; }
+    .stage-title, .stage-plane { transform: none; }
+    .tilt { transform: none; transition: none; }
+    .hov-rise { opacity: 1; transform: none; transition: none; }
+    .hov-zoom, .group:hover .hov-zoom { transform: none; transition: none; }
+    .animate-float, .animate-caret, .animate-pulse-dot { animation: none; }
+    *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; }
   }
 }

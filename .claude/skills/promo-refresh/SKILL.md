@@ -28,8 +28,8 @@ trust memory either.
 
 - **Missing:** a shipped feature worth a line that neither the README nor the site mentions.
 - **Stale:** a claim about something removed or renamed.
-- **Wrong numbers or names:** install commands, the image name, variable names, the sites imports support. Check
-  these against `docker-compose.yml`, `.env.example` and `importers/src/sites/`.
+- **Wrong numbers or names:** what the README states: install commands, the image name, variable names, the sites
+  imports support (the site carries none of these). Check them against `docker-compose.yml`, `.env.example` and `importers/src/sites/`.
 - **Screenshots:** anything under `web/src/` changed in the range and a shot shows that screen. The screenshots are
   real captures of the web app, so a redesign makes them wrong.
 

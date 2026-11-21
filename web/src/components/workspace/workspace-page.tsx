@@ -60,8 +60,8 @@ const PHONE_NAV: { sheet: Sheet | undefined; label: string; icon: typeof EyeIcon
 function NoSelection({ slug, entries, onImport }: { slug: string; entries: readonly TreeEntry[] | undefined; onImport: () => void }) {
   const parts = useParts(slug);
   const assembly = useAssembly(slug);
-  if (parts.isPending || assembly.isPending) return <Skeleton className="m-6 h-24" aria-label="Loading" />;
-  const target = defaultSelection(parts.data ?? [], assembly.data, slug === LIBRARY_SLUG);
+  if (parts.isPending || assembly.status === "pending") return <Skeleton className="m-6 h-24" aria-label="Loading" />;
+  const target = defaultSelection(parts.data ?? [], assembly.status === "ready" ? assembly.data : null, slug === LIBRARY_SLUG);
   if (!target) return <Kickstart slug={slug} entries={entries} onImport={onImport} />;
   return <Navigate from="/p/$slug" to="." search={(s) => withSelection(s, target)} replace />;
 }

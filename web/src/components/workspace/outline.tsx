@@ -79,7 +79,8 @@ export function Outline({ slug, entries, loading, selection, dirty, selectedFold
   const printed = (parts.data ?? []).filter((p) => p.source === "printed");
   const ownBought = (parts.data ?? []).filter((p) => p.source === "bought");
   const listed = isLibrary ? [...printed, ...ownBought] : printed;
-  const placed = boughtParts(assembly.data?.spec);
+  const assemblyReport = assembly.status === "ready" ? assembly.data : null;
+  const placed = boughtParts(assemblyReport?.spec);
   const libTitles = new Map((library.data ?? []).map((p) => [p.id, p]));
   const hasBrief = (entries ?? []).some((e) => e.path === BRIEF_FILE);
   const activeFile = selection.kind === "file" ? selection.path : undefined;
@@ -109,10 +110,10 @@ export function Outline({ slug, entries, loading, selection, dirty, selectedFold
                 icon={BoxesIcon}
                 label="Assembly"
                 trailing={
-                  assembly.isPending ? (
+                  assembly.status === "pending" ? (
                     <Skeleton className="h-5 w-12 rounded-full" />
-                  ) : assembly.data ? (
-                    <StatusChip kind="report" status={assembly.data.status} label={assembly.data.status === "passed" ? undefined : `${assembly.data.status} ${assembly.data.passed}/${assembly.data.total}`} />
+                  ) : assemblyReport ? (
+                    <StatusChip kind="report" status={assemblyReport.status} label={assemblyReport.status === "passed" ? undefined : `${assemblyReport.status} ${assemblyReport.passed}/${assemblyReport.total}`} />
                   ) : (
                     <span className="text-[11px] text-faint">none</span>
                   )

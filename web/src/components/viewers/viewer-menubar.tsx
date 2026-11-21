@@ -1,7 +1,7 @@
 import { XIcon } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useCallback } from "react";
-import type { KeyboardEvent, ReactNode } from "react";
+import { useEffect } from "react";
+import type { ReactNode } from "react";
 import {
   Menubar,
   MenubarCheckboxItem,
@@ -18,8 +18,9 @@ import {
   MenubarSubTrigger,
   MenubarTrigger,
 } from "@/components/ui/menubar";
+import { CAMERA_VIEWS, cameraCommand } from "@/lib/camera-keys";
 import { VIEW_DIRECTIONS } from "@/lib/camera-rig";
-import type { ViewControl, ViewName } from "@/lib/camera-rig";
+import type { ViewControl } from "@/lib/camera-rig";
 
 /**
  * The one menubar every centre viewer (part, assembly, mesh file, `.scad` file) wears, so they behave alike:
@@ -140,17 +141,6 @@ function Entries({ entries }: { entries: MenuEntry[] }) {
 
 // ---- camera: the one list of standard views, shared by the Camera menu, the shortcuts and the cube ----------------------
 
-const CAMERA_VIEWS: { view: ViewName; label: string; key: string }[] = [
-  { view: "iso", label: "Isometric", key: "0" },
-  { view: "front", label: "Front", key: "1" },
-  { view: "back", label: "Back", key: "2" },
-  { view: "right", label: "Right", key: "3" },
-  { view: "left", label: "Left", key: "4" },
-  { view: "top", label: "Top", key: "5" },
-  { view: "bottom", label: "Bottom", key: "6" },
-];
-const FIT_KEY = "f";
-
 /** The Camera menu, the same in every 3D viewer: it drives the scene that the view cube drives. */
 export function cameraMenu(view: ViewControl | null): MenuSpec {
   return {
@@ -166,28 +156,22 @@ export function cameraMenu(view: ViewControl | null): MenuSpec {
 }
 
 /**
- * Props for the element that holds a 3D canvas: it takes focus (click or Tab) and answers the camera
- * shortcuts the Camera menu lists. Typing in a field elsewhere never reaches it.
+ * Answers the camera shortcuts the Camera menu lists, anywhere in the workspace while a 3D viewer is
+ * mounted: a view needs no focus. Typing in a field, a menu or a dialog never moves the camera (`cameraCommand`).
  */
-export function useViewportKeys(view: ViewControl | null) {
-  const onKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLElement>) => {
-      if (!view || e.ctrlKey || e.metaKey || e.altKey || e.target !== e.currentTarget) return;
-      const key = e.key.toLowerCase();
-      if (key === FIT_KEY) {
-        e.preventDefault();
-        view.fit();
-        return;
-      }
-      const hit = CAMERA_VIEWS.find((v) => v.key === key);
-      if (hit) {
-        e.preventDefault();
-        view.goTo(VIEW_DIRECTIONS[hit.view]);
-      }
-    },
-    [view],
-  );
-  return { tabIndex: 0, role: "group", "aria-label": "3D view. Keys 0 to 6 pick a view, F fits.", onKeyDown } as const;
+export function useViewportKeys(view: ViewControl | null): void {
+  useEffect(() => {
+    if (!view) return;
+    const onKey = (e: KeyboardEvent) => {
+      const command = cameraCommand(e);
+      if (!command) return;
+      e.preventDefault();
+      if (command.kind === "fit") view.fit();
+      else view.goTo(VIEW_DIRECTIONS[command.view]);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [view]);
 }
 
 /** State text in the menubar's right end that can be dismissed: "Viewing A2" with a way back. */

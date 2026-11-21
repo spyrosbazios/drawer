@@ -50,7 +50,7 @@ export default function PartCanvas({ url, field = null, section = null, markers 
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
   const [failure, setFailure] = useState<{ url: string; message: string } | null>(null);
   const state = failure?.url === url ? "error" : loadedUrl === url ? "ready" : "loading";
-  const viewportKeys = useViewportKeys(scene);
+  useViewportKeys(scene);
 
   useEffect(() => {
     onSceneRef.current = onScene;
@@ -119,7 +119,7 @@ export default function PartCanvas({ url, field = null, section = null, markers 
 
   return (
     <div className={cn("relative flex h-full min-h-0 flex-col", className)}>
-      <div className="relative min-h-0 flex-1 overflow-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset" {...viewportKeys}>
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         <div ref={host} className={cn("absolute inset-0", onPick && "cursor-crosshair")} />
         <div ref={overlay} className="pointer-events-none absolute inset-0">
           {state === "ready" &&

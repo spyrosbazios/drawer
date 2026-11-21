@@ -110,7 +110,7 @@ as user 1000; if `id -u` prints something else, set `DRAWER_UID` and `DRAWER_GID
 
 - **From other devices**: set `DRAWER_BIND` in `.env` to a private address (a VPN or tailnet address), or put a
   private reverse proxy in front. If you reach it by a name rather than an IP address, list the name in
-  `DRAWER_ALLOWED_HOSTS`.
+  `DRAWER_ALLOWED_HOSTS`. To install the web app from another device, use [private HTTPS](INSTALL.md#install-the-web-app).
 - **The built-in agent** is not in the image, because it uses your provider logins: install the
   [runner](agent/README.md) on a machine that has Claude Code, Codex, Pi or Gemini signed in.
 - **Your own agent**: install the [CLI and the skill](skill/README.md), then `drawer server http://<host>:3050`.

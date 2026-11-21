@@ -79,5 +79,9 @@ export function kickstartPrompt(id: PromptId, { hasBrief, refs }: KickstartConte
   }
 }
 
+/** The assembly view's one action when the project has none: the agent drafts it from the parts. */
+export const ASSEMBLY_PROMPT =
+  "Draft the assembly of this project (assembly.json): place every part, add the library hardware it needs, and state how the parts meet as mates, so the server can check clashes and fits.";
+
 /** brief.md says something: anything beyond blank lines and headings. */
 export const briefHasContent = (text: string | undefined): boolean => (text ?? "").split("\n").some((l) => l.trim() !== "" && !l.trim().startsWith("#"));

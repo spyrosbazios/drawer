@@ -29,6 +29,9 @@ export const needsYou = (s: Pick<Session, "status">): boolean => s.status === "w
 /** The agent is busy (or about to be). */
 export const isActive = (s: Pick<Session, "status">): boolean => s.status === "working" || s.status === "queued";
 
+/** A turn is in progress: the agent is busy, or waits for an answer. The session can be stopped. */
+export const isOngoing = (s: Pick<Session, "status">): boolean => isActive(s) || needsYou(s);
+
 /** Whether a person can resume the session by sending a message. */
 export const canResume = (status: SessionStatus): boolean => status === "stopped" || status === "failed" || status === "idle";
 

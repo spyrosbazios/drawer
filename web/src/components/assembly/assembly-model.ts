@@ -159,10 +159,6 @@ export function sendBackMessage(report: Pick<AssemblyReport, "pairs" | "spec" | 
   return lines.join("\n");
 }
 
-/** The empty state's suggested request. */
-export const ASK_FOR_ASSEMBLY =
-  "Please put this project's parts together in an assembly (assembly.json): place every part, add the library hardware it needs, and state how the parts meet as mates, so the server can check clashes and fits.";
-
 /** Shared volume of a pair, in mm³: clash-sized overlaps vanish when written in cm³. */
 export function formatOverlap(cm3: number): string {
   return `${formatNumber(cm3 * 1000)} mm³`;

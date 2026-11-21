@@ -8,6 +8,8 @@ import { Slider } from "@/components/ui/slider";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatGates, formatLength } from "@/core/format";
 import { useAssembly } from "@/hooks/assembly";
+import { useStartAgent } from "@/hooks/start-agent";
+import { ASSEMBLY_PROMPT } from "@/components/workspace/kickstart";
 import { ViewCube } from "@/components/viewers/view-cube";
 import { ViewerMenubar, cameraMenu, useViewportKeys } from "@/components/viewers/viewer-menubar";
 import type { MenuSpec } from "@/components/viewers/viewer-menubar";
@@ -17,8 +19,8 @@ import type { AssemblyMode, ScenePick } from "@/lib/assembly-scene";
 import { webglAvailable } from "@/lib/mesh-scene";
 import { pointing } from "@/lib/pointing";
 import { cn } from "@/lib/utils";
-import { useAskAgent, useOpenPart } from "./assembly-actions";
-import { ASK_FOR_ASSEMBLY, clashingPairs, formatOverlap, failingInstances, failingPairs, mateRows, partSlots } from "./assembly-model";
+import { useOpenPart } from "./assembly-actions";
+import { clashingPairs, formatOverlap, failingInstances, failingPairs, mateRows, partSlots } from "./assembly-model";
 import { assemblySelection, useAssemblySelection } from "./assembly-selection";
 
 /**
@@ -46,10 +48,10 @@ const isAxis = (v: string): v is Axis => v === "x" || v === "y" || v === "z";
 
 export function AssemblyView({ slug }: AssemblyViewProps) {
   const q = useAssembly(slug);
-  if (q.isPending) return <Skeleton className="m-4 h-[60%]" aria-label="Loading assembly" />;
-  if (q.isError) return <Notice icon={<TriangleAlertIcon />} title="The assembly could not be loaded">{q.error.message}</Notice>;
+  if (q.status === "pending") return <Skeleton className="m-4 h-[60%]" aria-label="Loading assembly" />;
+  if (q.status === "error") return <Notice icon={<TriangleAlertIcon />} title="The assembly could not be loaded">{q.error.message}</Notice>;
   if (q.data === null) return <NoAssembly slug={slug} />;
-  return <AssemblyBody slug={slug} report={q.data} refreshing={q.isFetching} />;
+  return <AssemblyBody slug={slug} report={q.data} refreshing={q.refreshing} />;
 }
 
 function Notice({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
@@ -63,19 +65,16 @@ function Notice({ icon, title, children }: { icon: React.ReactNode; title: strin
 }
 
 function NoAssembly({ slug }: { slug: string }) {
-  const agent = useAskAgent(slug);
+  const agent = useStartAgent(slug);
   return (
     <Notice icon={<BoxesIcon />} title="No assembly yet">
-      <p>
-        An assembly places copies of this project&apos;s parts and library hardware together and states how they meet. The server then measures every
-        pair: clashes, clearances, floating parts, and a bill of materials.
-      </p>
-      <p className="mt-2">The agent writes it; you review it.</p>
-      <Button className="mt-4" onClick={() => agent.ask(ASK_FOR_ASSEMBLY)} disabled={agent.pending}>
-        {agent.pending ? <LoaderCircleIcon className="animate-spin" /> : <MessageSquarePlusIcon />}
-        Ask the agent for an assembly
-      </Button>
-      {agent.error && <p className="mt-2 text-down">{agent.error.message}</p>}
+      <p>The agent writes it from the parts.</p>
+      {!agent.noRunner && (
+        <Button className="mt-4" onClick={() => agent.start(ASSEMBLY_PROMPT)} disabled={agent.pending}>
+          {agent.pending ? <LoaderCircleIcon className="animate-spin" /> : <MessageSquarePlusIcon />}
+          Draft the assembly
+        </Button>
+      )}
     </Notice>
   );
 }
@@ -253,12 +252,12 @@ function Viewer({ slug, report, mode, explode, axis, at, selected, onPoint, view
   useEffect(() => scene.current?.setSelected(selected), [selected, loaded]);
 
   const hovered = hover ? instanceById.get(hover) : undefined;
-  const viewportKeys = useViewportKeys(view);
+  useViewportKeys(view);
   const state = failure?.key === key ? "error" : loaded === key ? "ready" : "loading";
 
   return (
     <>
-      <div ref={host} className="absolute inset-0 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset" {...viewportKeys} />
+      <div ref={host} className="absolute inset-0" />
       {state === "ready" && <ViewCube view={view} />}
       {state === "loading" && <Skeleton className="pointer-events-none absolute inset-0 rounded-none" aria-label="Loading models" />}
       {state === "error" && (

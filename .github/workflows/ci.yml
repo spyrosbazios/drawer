@@ -132,10 +132,11 @@ jobs:
             DRAWER_VERSION=0.0.0-ci
           cache-from: type=gha,scope=image
           cache-to: type=gha,mode=max,scope=image
+      # As docker-compose.yml starts it after a fresh clone: the data folder that comes with the checkout, and the
+      # checkout's owner as the user (DRAWER_UID, DRAWER_GID), which on this runner is not 1000.
       - name: Start
         run: |
-          mkdir data && sudo chown 1000:1000 data
-          docker run -d --name drawer -p 127.0.0.1:3050:3050 -v "$PWD/data:/data" \
+          docker run -d --name drawer --user "$(id -u):$(id -g)" -p 127.0.0.1:3050:3050 -v "$PWD/data:/data" \
             --cap-drop ALL --security-opt no-new-privileges:true --memory 4g --pids-limit 512 drawer:ci
       - name: Health
         run: |
@@ -153,11 +154,11 @@ jobs:
           code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'origin: https://example.com' \
             -H 'content-type: application/json' -d '{}' http://127.0.0.1:3050/api/projects)
           test "$code" = 403
-      # As docker-compose.yml starts it for a host user that is not 1000: OpenSCAD must still run.
-      - name: Another user id
+      # The image's own user (1000), when nothing names another.
+      - name: The default user
         run: |
-          mkdir data-other && chmod 777 data-other
-          docker run -d --name drawer-other --user 1234:1234 -p 127.0.0.1:3051:3050 -v "$PWD/data-other:/data" \
+          mkdir data-default && chmod 777 data-default
+          docker run -d --name drawer-default -p 127.0.0.1:3051:3050 -v "$PWD/data-default:/data" \
             --cap-drop ALL --security-opt no-new-privileges:true drawer:ci
           for i in $(seq 1 30); do
             if health=$(curl -fsS http://127.0.0.1:3051/api/health); then break; fi
@@ -167,4 +168,4 @@ jobs:
           echo "$health" | jq -e '.ok == true and (.openscad | type == "string")'
       - name: Logs
         if: always()
-        run: docker logs drawer; docker logs drawer-other || true
+        run: docker logs drawer; docker logs drawer-default || true

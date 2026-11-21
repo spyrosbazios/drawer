@@ -2,6 +2,7 @@ import type { PatchSettingsBody, Settings } from "@drawer/shared/api";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
 import { getSettings, patchSettings } from "@/services/settings";
+import { sessionKeys } from "./sessions";
 
 export const settingsKeys = {
   all: () => ["settings"] as const,
@@ -20,7 +21,8 @@ export function usePatchSettings() {
   });
 }
 
-/** A `settings` event: someone changed them. */
+/** A `settings` event: someone changed them. A runner reports what it found on its next poll, so what it said before is stale too. */
 export function applySettingsEvent(qc: QueryClient): void {
   void qc.invalidateQueries({ queryKey: settingsKeys.all() });
+  void qc.invalidateQueries({ queryKey: sessionKeys.runners() });
 }

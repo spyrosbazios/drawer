@@ -1,6 +1,7 @@
 import type { AnswerBody, CreateSessionBody, DrawerEvent, FileAttachmentBody, Session, SessionDetail, SessionMessageBody } from "@drawer/shared/api";
 import { keepPreviousData, queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { mergeDetail } from "@/core/sessions";
 import {
   answerQuestion,
@@ -36,6 +37,16 @@ export const useSessions = (project?: string) => useQuery({ ...sessionsQuery(pro
 export const useSession = (id: string | undefined) => useQuery({ ...sessionQuery(id ?? ""), enabled: id !== undefined });
 /** Runners poll the server; a runner is gone after a minute without polling, so this refreshes every 30 s. */
 export const useRunners = () => useQuery(runnersQuery());
+
+/** While a runner has not yet reported a change (a provider just turned on), asks again every few seconds instead of every 30. */
+export function useRunnersCatchUp(waiting: boolean): void {
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setInterval(() => void qc.invalidateQueries({ queryKey: sessionKeys.runners() }), 3000);
+    return () => clearInterval(timer);
+  }, [waiting, qc]);
+}
 
 /**
  * A mutation answered with the session. Lists take it as is; an open session fetches the items it has not

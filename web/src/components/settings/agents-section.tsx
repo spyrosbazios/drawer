@@ -1,4 +1,4 @@
-import { PROVIDER_KINDS, type ProviderKind, type ProviderSettings, type Settings } from "@drawer/shared/api";
+import { isModelId, PROVIDER_KINDS, type ProviderKind, type ProviderSettings, type Settings } from "@drawer/shared/api";
 import { BotIcon, PlusIcon, TerminalIcon, UnplugIcon, XIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { useRunners } from "@/hooks/sessions";
+import { useRunners, useRunnersCatchUp } from "@/hooks/sessions";
 import { usePatchSettings, useSettings } from "@/hooks/settings";
 import { PROVIDER_LABELS } from "@/lib/agent-choice";
 import { codeSpans, providerView, type ProviderView } from "./model";
@@ -33,12 +33,14 @@ function useSave() {
 export function AgentsSection() {
   const settings = useSettings();
   const runners = useRunners();
+  const views = settings.data === undefined ? [] : PROVIDER_KINDS.map((k) => providerView(k, settings.data, runners.data ?? []));
+  useRunnersCatchUp(views.some((v) => v.awaitingRunner));
   return (
     <SettingsSection id="agents" icon={<BotIcon className="size-4 text-dim" />} title="Agents" description="Each agent uses its own CLI login on the runner's host; drawer stores no keys.">
       {settings.data === undefined || runners.isPending ? (
         <Skeleton className="h-48 w-full rounded-xl" />
       ) : (
-        <Agents settings={settings.data} noRunner={runners.isSuccess && runners.data.length === 0} views={PROVIDER_KINDS.map((k) => providerView(k, settings.data, runners.data ?? []))} />
+        <Agents settings={settings.data} noRunner={runners.isSuccess && runners.data.length === 0} views={views} />
       )}
     </SettingsSection>
   );
@@ -114,7 +116,7 @@ function ProviderCard({ view, own }: { view: ProviderView; own: ProviderSettings
     <div className="space-y-3 border-t border-line pt-4">
       <div className="flex items-center gap-2">
         <h3 className="text-sm font-medium">{label}</h3>
-        {view.state ? <StatusChip kind="provider" status={view.state} /> : <span className="text-xs text-faint">unknown</span>}
+        {view.state ? <StatusChip kind="provider" status={view.state} /> : <span className="text-xs text-faint">{view.awaitingRunner ? "waiting for the runner" : "unknown"}</span>}
         {view.version && <span className="text-xs text-faint tabular-nums">v{view.version}</span>}
         <Switch
           className="ml-auto"
@@ -184,9 +186,11 @@ function Row({ label, htmlFor, children }: { label: string; htmlFor?: string; ch
 function CustomModels({ kind, models }: { kind: ProviderKind; models: string[] }) {
   const save = useSave();
   const [text, setText] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
   const add = () => {
     const id = text.trim();
     if (id === "" || models.includes(id)) return setText("");
+    if (!isModelId(id)) return setProblem("Use letters, digits and . _ : / @ + -");
     void save(kind, { customModels: [...models, id] }).then((ok) => ok && setText(""));
   };
   return (
@@ -204,15 +208,20 @@ function CustomModels({ kind, models }: { kind: ProviderKind; models: string[] }
           value={text}
           placeholder="model id"
           aria-label={`Add a model for ${PROVIDER_LABELS[kind]}`}
+          aria-invalid={problem !== null}
           className="h-7 font-mono text-xs placeholder:font-sans"
           spellCheck={false}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setProblem(null);
+          }}
           onKeyDown={(e) => e.key === "Enter" && add()}
         />
         <Button variant="ghost" size="icon-xs" aria-label="Add model" disabled={text.trim() === ""} onClick={add}>
           <PlusIcon />
         </Button>
       </div>
+      {problem && <p role="alert" className="w-full text-xs text-destructive">{problem}</p>}
     </div>
   );
 }

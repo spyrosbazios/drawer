@@ -22,7 +22,7 @@ import type { RunnerIdentity, RunnerQuery } from "./types.ts";
 export const MAX_WAIT_SECONDS = 30;
 /** Limits on what goes into a session item (the runner trims to these before it sends). */
 export const LIMITS = {
-  /** A message, an assistant text, a question, a notice, an answer. */
+  /** A message, an assistant text, a question, a notice, one answer. */
   text: 100_000,
   toolSummary: 300,
   toolResult: 20_000,
@@ -136,8 +136,16 @@ export function fileAttachmentBody(obj: Obj): FileAttachmentBody {
   return { path: normalizePath(nonEmpty(obj, "path")), ...(rev === undefined ? {} : { rev }), ...(message === undefined ? {} : { message }) };
 }
 
+/** The count against the question (one for a single question) is the manager's check: it knows the question. */
 export function answerBody(obj: Obj): AnswerBody {
-  return { questionId: nonEmpty(obj, "questionId"), answer: capped(obj, "answer", LIMITS.text) };
+  const value = obj.answers;
+  if (!Array.isArray(value) || value.length === 0 || !value.every((v) => typeof v === "string")) throw invalid("answers must be a non-empty array of strings");
+  // Every option plus the person's own words.
+  if (value.length > LIMITS.options + 1) throw invalid(`answers must have at most ${LIMITS.options + 1} entries`);
+  if (value.some((v) => v.trim() === "")) throw invalid("each answer must not be empty");
+  if (value.some((v) => v.length > LIMITS.text)) throw invalid(`each answer must be at most ${LIMITS.text} characters`);
+  if (new Set(value).size !== value.length) throw invalid("answers must be distinct");
+  return { questionId: nonEmpty(obj, "questionId"), answers: value };
 }
 
 export function newItem(obj: Obj): NewSessionItem {
@@ -158,7 +166,8 @@ export function newItem(obj: Obj): NewSessionItem {
       };
     }
     case "question":
-      return { type: "question", questionId: nonEmpty(obj, "questionId"), text: capped(obj, "text", LIMITS.text), options: options(obj) };
+      if (typeof obj.multiple !== "boolean") throw invalid("multiple must be a boolean");
+      return { type: "question", questionId: nonEmpty(obj, "questionId"), text: capped(obj, "text", LIMITS.text), options: options(obj), multiple: obj.multiple };
     case "reasoning": {
       const status = obj.status;
       if (status !== "running" && status !== "done") throw invalid("status must be running or done");

@@ -32,6 +32,13 @@ function attachmentText(a: SessionAttachment): string {
   return `${a.name} (${a.kind}, ${formatSize(a.size)}, id ${a.id})${a.filedAs ? ` filed as ${a.filedAs}` : ""}`;
 }
 
+/** One answer as it was given; several each quoted, so an answer with a comma in it stays one. */
+function answersText(answers: string[] | null): string {
+  if (answers === null) return "  (unanswered)";
+  if (answers.length === 1) return `  answer: ${clip(answers[0] as string, 200)}`;
+  return `  answers: ${answers.map((a) => JSON.stringify(clip(a, 200))).join(", ")}`;
+}
+
 function itemText(item: SessionItem): string {
   const head = `#${item.seq}`;
   switch (item.type) {
@@ -49,9 +56,8 @@ function itemText(item: SessionItem): string {
     case "reasoning":
       return `${head} thought${item.status === "running" ? " (running)" : ` (${item.seconds}s)`}: ${clip(item.text, 160)}`;
     case "question": {
-      const options = item.options.length > 0 ? `  options: ${item.options.map((o, i) => `${i + 1}) ${oneLine(o)}`).join("  ")}` : "";
-      const answer = item.answer === null ? "  (unanswered)" : `  answer: ${clip(item.answer, 200)}`;
-      return `${head} question ${item.questionId}: ${clip(item.text)}${options}${answer}`;
+      const options = item.options.length > 0 ? `  options${item.multiple ? " (pick any)" : ""}: ${item.options.map((o, i) => `${i + 1}) ${oneLine(o)}`).join("  ")}` : "";
+      return `${head} question ${item.questionId}: ${clip(item.text)}${options}${answersText(item.answers)}`;
     }
     case "notice":
       return `${head} ${item.level}: ${clip(item.text)}`;
@@ -87,6 +93,37 @@ export const session: Command = {
     const client = await ctx.client();
     const detail = await client.session(id, args.int("since"));
     emit(ctx.mode, detail, () => detailText(detail));
+  },
+};
+
+/** What `--pick` names: an option's number as `drawer session` prints it, or the option's text. */
+function pickedOption(options: string[], pick: string): string {
+  const n = /^\d+$/.test(pick) ? Number(pick) : null;
+  if (n !== null && n >= 1 && n <= options.length) return options[n - 1] as string;
+  if (options.includes(pick)) return pick;
+  throw new UsageError(`--pick ${pick} is not an option of this question: give its number (1-${options.length}) or its text`);
+}
+
+export const answer: Command = {
+  name: "answer",
+  usage: ['drawer answer <session-id> <question-id> [--pick <n|option>]... ["<own words>"]'],
+  summary: "answer an agent's question",
+  details:
+    "`drawer session <id>` lists the open question with its id and numbered options. --pick picks an option by its number or its text; own words are an answer of their own. A question takes exactly one answer: one --pick or own words. A question marked (pick any) takes one or more: repeat --pick, and add own words if you like, e.g. `drawer answer <id> <qid> --pick 1 --pick 3 \"and round the top edge\"`.",
+  flags: { list: ["pick"] },
+  async run(ctx, args) {
+    const [id, questionId, ...words] = args.positionals;
+    const usage = 'usage: drawer answer <session-id> <question-id> [--pick <n|option>]... ["<own words>"]';
+    if (!id || !questionId) throw new UsageError(usage);
+    const client = await ctx.client();
+    const question = (await client.session(id)).items.find((i) => i.type === "question" && i.questionId === questionId);
+    if (question?.type !== "question") throw new UsageError(`session ${id} has no question ${questionId}; \`drawer session ${id}\` lists them`);
+    const own = words.join(" ").trim();
+    const answers = [...new Set(args.list("pick").map((p) => pickedOption(question.options, p)))].concat(own === "" ? [] : [own]);
+    if (answers.length === 0) throw new UsageError(usage);
+    if (!question.multiple && answers.length > 1) throw new UsageError("this question takes one answer: one --pick or own words, not both");
+    const updated = await client.answer(id, { questionId, answers });
+    emit(ctx.mode, updated, () => `answered ${questionId} in session ${updated.id}  ${updated.status}`);
   },
 };
 

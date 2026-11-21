@@ -11,7 +11,7 @@ import { importCmd, newProject, preview, projects, reindex } from "./commands/pr
 import { render } from "./commands/render.ts";
 import { context, search } from "./commands/search.ts";
 import { health, server } from "./commands/server.ts";
-import { ask, attachment, attachments, fileAttachment, say, session, sessions } from "./commands/sessions.ts";
+import { answer, ask, attachment, attachments, fileAttachment, say, session, sessions } from "./commands/sessions.ts";
 import { agents } from "./commands/sessions.ts";
 import { author, resolveServerUrl, type Env } from "./config.ts";
 import { commandHelp, usageOverview } from "./help.ts";
@@ -56,6 +56,7 @@ export const COMMANDS: readonly Command[] = [
   session,
   ask,
   say,
+  answer,
   attachments,
   attachment,
   fileAttachment,

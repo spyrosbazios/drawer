@@ -48,9 +48,19 @@ function isItem(value: unknown): value is SessionItem {
   return typeof v.seq === "number" && typeof v.version === "number" && typeof v.type === "string" && typeof v.at === "string";
 }
 
-/** User items written before attachments existed carry none. */
-function withAttachments(item: SessionItem): SessionItem {
-  return item.type === "user" && !Array.isArray(item.attachments) ? { ...item, attachments: [] } : item;
+/**
+ * Items in an older shape, brought to the current one as they are read: user items written before attachments
+ * existed carry none; questions written before multiple answers were single ones with `answer: string | null`.
+ */
+function current(item: SessionItem): SessionItem {
+  if (item.type === "user" && !Array.isArray(item.attachments)) return { ...item, attachments: [] };
+  if (item.type === "question") {
+    // The file may hold the old shape whatever the type says.
+    const { answer, ...rest } = item as typeof item & { answer?: unknown };
+    if (typeof rest.multiple === "boolean") return item;
+    return { ...rest, multiple: false, answers: typeof answer === "string" ? [answer] : null };
+  }
+  return item;
 }
 
 export class SessionFiles {
@@ -108,7 +118,7 @@ export class SessionFiles {
       if (line.trim() === "") continue;
       try {
         const parsed: unknown = JSON.parse(line);
-        if (isItem(parsed)) bySeq.set(parsed.seq, withAttachments(parsed));
+        if (isItem(parsed)) bySeq.set(parsed.seq, current(parsed));
       } catch {
         // a torn line: nothing more to recover from it
       }

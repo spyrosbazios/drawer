@@ -478,9 +478,9 @@ export class Client {
     return this.sendJson("PATCH", `/api/sessions/${encodeURIComponent(id)}`, body, { query: { ...runner } });
   }
 
-  /** Long poll: the person's answer to a question, or null after `wait` seconds. */
-  async waitAnswer(id: string, questionId: string, wait: number): Promise<string | null> {
-    const body = await this.getJson<{ answer: string | null }>(`/api/sessions/${encodeURIComponent(id)}/answer`, { question: questionId, wait });
-    return body.answer;
+  /** Long poll: the person's answers to a question (one for a single question), or null after `wait` seconds. */
+  async waitAnswer(id: string, questionId: string, wait: number): Promise<string[] | null> {
+    const body = await this.getJson<{ answers: string[] | null }>(`/api/sessions/${encodeURIComponent(id)}/answer`, { question: questionId, wait });
+    return body.answers;
   }
 }

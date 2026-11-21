@@ -473,6 +473,16 @@ export class FakeModeling {
       this.addSessionItem(id, { type: "user", text: body.text, refs: [], attachments: [], author: "agent" });
       return json(entry.session);
     }
+    if (route[2] === "answer" && method === "POST") {
+      const body = parse(bodyText) as { questionId: string; answers: string[] };
+      const index = entry.items.findIndex((i) => i.type === "question" && i.questionId === body.questionId);
+      const item = entry.items[index];
+      if (item?.type !== "question") return apiError(404, "not_found", `no such question: ${body.questionId}`);
+      if (item.answers !== null) return apiError(409, "conflict", `question ${body.questionId} was already answered`);
+      entry.session.version += 1;
+      entry.items[index] = { ...item, answers: body.answers, version: entry.session.version };
+      return json(entry.session);
+    }
     const since = query.since === undefined ? 0 : Number(query.since);
     return json({ session: entry.session, items: entry.items.filter((i) => i.version > since) });
   }

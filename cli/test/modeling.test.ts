@@ -655,8 +655,9 @@ describe("sessions", () => {
     fake.modeling.addSessionItem(id, { type: "assistant", text: "I will\nmeasure the tray first." });
     fake.modeling.addSessionItem(id, { type: "tool", callId: "c1", name: "measure", summary: "measure refs/tray.stl", status: "ok", result: "ok", images: [] });
     fake.modeling.addSessionItem(id, { type: "tool", callId: "c2", name: "write", summary: "write parts/lid.scad", status: "error", result: "conflict:\nrev is stale", images: [] });
-    fake.modeling.addSessionItem(id, { type: "question", questionId: "q1", text: "Which fit?", options: ["sliding", "press"], answer: null });
-    fake.modeling.addSessionItem(id, { type: "question", questionId: "q2", text: "Colour?", options: [], answer: "black" });
+    fake.modeling.addSessionItem(id, { type: "question", questionId: "q1", text: "Which fit?", options: ["sliding", "press"], multiple: false, answers: null });
+    fake.modeling.addSessionItem(id, { type: "question", questionId: "q2", text: "Colour?", options: [], multiple: false, answers: ["black"] });
+    fake.modeling.addSessionItem(id, { type: "question", questionId: "q3", text: "Which edges?", options: ["top", "sides"], multiple: true, answers: ["top", "only the outer, 1 mm"] });
     fake.modeling.addSessionItem(id, { type: "reasoning", reasoningId: "r1", text: "The tray is\n60 mm wide.", status: "done", seconds: 7 });
     fake.modeling.addSessionItem(id, { type: "notice", level: "error", text: "the runner went away" });
     const r = await sb.run(["session", id, "--text"]);
@@ -668,15 +669,35 @@ describe("sessions", () => {
       "#4 tool error: write parts/lid.scad  -> conflict: rev is stale",
       "#5 question q1: Which fit?  options: 1) sliding  2) press  (unanswered)",
       "#6 question q2: Colour?  answer: black",
-      "#7 thought (7s): The tray is 60 mm wide.",
-      "#8 error: the runner went away",
+      '#7 question q3: Which edges?  options (pick any): 1) top  2) sides  answers: "top", "only the outer, 1 mm"',
+      "#8 thought (7s): The tray is 60 mm wide.",
+      "#9 error: the runner went away",
     ]);
     expect(r.out.split("\n")[0]).toMatch(new RegExp(`^${id} {2}queued {2}box `));
     const after = await sb.run(["session", id, "--since", "5", "--json"]);
     expect(fake.requests.at(-1)?.query.since).toBe("5");
-    expect(after.json<SessionDetail>().items.map((i) => i.seq)).toEqual([6, 7, 8]);
+    expect(after.json<SessionDetail>().items.map((i) => i.seq)).toEqual([6, 7, 8, 9]);
     expect((await sb.run(["session", "s999"])).code).toBe(3);
     expect((await sb.run(["session"])).code).toBe(1);
+  });
+
+  test("answer sends picks by number or text and own words; a single question takes one", async () => {
+    const id = (await sb.run(["ask", "box", "start"])).json<Session>().id;
+    fake.modeling.addSessionItem(id, { type: "question", questionId: "q1", text: "Which fit?", options: ["sliding", "press"], multiple: false, answers: null });
+    fake.modeling.addSessionItem(id, { type: "question", questionId: "q2", text: "Which edges?", options: ["top", "bottom", "sides"], multiple: true, answers: null });
+
+    expect((await sb.run(["answer", id, "q1", "--pick", "1", "or", "press"])).code).toBe(1);
+    expect((await sb.run(["answer", id, "q1", "--pick", "4"])).code).toBe(1);
+    expect((await sb.run(["answer", id, "q1"])).code).toBe(1);
+    expect((await sb.run(["answer", id, "nope", "x"])).code).toBe(1);
+    const single = await sb.run(["answer", id, "q1", "--pick", "press", "--text"]);
+    expect(single.code).toBe(0);
+    expect(bodyOf(lastWrite())).toEqual({ questionId: "q1", answers: ["press"] });
+    expect(single.out).toBe(`answered q1 in session ${id}  queued\n`);
+    expect((await sb.run(["answer", id, "q1", "sliding"])).code).toBe(2);
+
+    expect((await sb.run(["answer", id, "q2", "--pick", "1", "--pick", "sides", "--pick", "3", "round", "only", "the", "outer"])).code).toBe(0);
+    expect(bodyOf(lastWrite())).toEqual({ questionId: "q2", answers: ["top", "sides", "round only the outer"] });
   });
 
   test("say sends a message to the session", async () => {

@@ -17,7 +17,8 @@ produce lives in the project.
    they are. Decide what is one part and what is several parts in an assembly.
 3. **Ask once.** Before the first model, tell the person what you assume and how you will build it,
    and ask what the brief leaves open, in one message. Then work without interrupting them. Skip the
-   question when nothing is open. Ask again only when you are blocked.
+   question when nothing is open. Ask again only when you are blocked. When the person may choose
+   several of your options at once, let them pick several instead of asking one question per option.
 4. **Write the spec before the model.** Every size the brief or a mating object fixes becomes a
    dimension with a tolerance. The spec is the definition of done, so write it as carefully as the
    model.

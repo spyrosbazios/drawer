@@ -21,7 +21,7 @@ interface StoredSession {
   turn: number;
   turnsDone: number;
   /** The question a running turn waits for, with what to do when it is answered. */
-  waiting: { questionId: string; resume: (answer: string) => void } | null;
+  waiting: { questionId: string; resume: (answers: string[]) => void } | null;
 }
 
 /** A small picture a tool call "rendered", as a data URL so the mock needs no file for it. */
@@ -98,7 +98,7 @@ function append(s: StoredSession, item: NewSessionItem | UserBody): SessionItem 
     if (item.type === "tool") s.session.toolCalls++;
   }
   // A new question has no answer yet; the runner never sends that field.
-  const full = { ...item, ...(item.type === "question" ? { answer: null } : {}), seq: ++s.session.seq, version: touch(s), at: now() } as SessionItem;
+  const full = { ...item, ...(item.type === "question" ? { answers: null } : {}), seq: ++s.session.seq, version: touch(s), at: now() } as SessionItem;
   s.items.push(full);
   emit(s);
   return full;
@@ -178,24 +178,28 @@ async function runTurn(s: StoredSession): Promise<void> {
     if (!(await tool("report", `${draft.id}: draft ${report.passed}/${report.total}, failing ${failing.map((g) => g.label).join(", ")}`, report.next.join("\n"), `measuring ${draft.id}`))) return;
   }
 
-  // Every other turn asks before it changes anything, like the real agent does once per project.
+  // Every other turn asks before it changes anything, like the real agent does once per project: which sizes
+  // to hold while it changes the part, several at once (a multiple question; the seeded one is single).
   if (s.turnsDone % 2 === 0) {
     if (!alive()) return;
     const questionId = `q-${s.session.id}-${turn}`;
     append(s, {
       type: "question",
       questionId,
-      text: draft ? `Before I change ${draft.id}: I will thicken the thinnest wall to meet the minimum and keep the rest. Agree?` : "Before I start: PETG, standard strictness, the tray edge is 4.0 mm. Agree?",
-      options: ["Agree", "Change something"],
+      text: draft
+        ? `Before I change **${draft.id}**: I will thicken the thinnest wall to meet the minimum. Which sizes must stay as they are?`
+        : "Before I start: PETG, standard strictness. Which sizes must I hold exactly?",
+      options: ["Outer width", "Slot width", "Overall height", "Mounting holes"],
+      multiple: true,
     });
     patch(s, { status: "waiting", activity: null });
-    const answer = await new Promise<string>((resolve) => {
+    const answers = await new Promise<string[]>((resolve) => {
       s.waiting = { questionId, resume: resolve };
     });
     if (!alive()) return;
     patch(s, { status: "working", activity: "applying your answer" });
     if (!(await think(["The answer settles it. Apply the change to the one parameter that drives the failing gate, then measure again."]))) return;
-    append(s, { type: "assistant", text: answer === "Agree" ? "Thanks. Going ahead." : `Noted: "${answer}". Adjusting the plan.` });
+    append(s, { type: "assistant", text: `Noted, holding ${answers.length}: ${answers.map((a) => `"${a}"`).join(", ")}. Adjusting the plan.` });
   }
 
   if (draft) {
@@ -287,17 +291,18 @@ export function message(id: string, text: string, refs: SessionRef[], attachment
   return { ...s.session };
 }
 
-export function answer(id: string, questionId: string, value: string): Session {
+export function answer(id: string, questionId: string, answers: string[]): Session {
   const s = find(id);
   const i = s.items.findIndex((x) => x.type === "question" && x.questionId === questionId);
   const q = s.items[i];
   if (!q || q.type !== "question") throw new HttpError("not_found", `No question ${questionId}`);
-  if (q.answer !== null) throw new HttpError("conflict", "Already answered");
-  s.items[i] = { ...q, answer: value, version: touch(s) };
+  if (q.answers !== null) throw new HttpError("conflict", "Already answered");
+  if (!Array.isArray(answers) || answers.length === 0 || (!q.multiple && answers.length !== 1)) throw new HttpError("invalid", q.multiple ? "Give at least one answer" : "Give exactly one answer");
+  s.items[i] = { ...q, answers, version: touch(s) };
   emit(s);
   const w = s.waiting;
   s.waiting = null;
-  if (w?.questionId === questionId) w.resume(value);
+  if (w?.questionId === questionId) w.resume(answers);
   return { ...s.session };
 }
 
@@ -363,7 +368,7 @@ export function seedSession(project: string, title: string, items: (NewSessionIt
   s.session.activity = activity;
   if (status === "working") s.session.pending = 0;
   // A seeded open question: answering it runs the rest of a turn.
-  const open = [...s.items].reverse().find((x) => x.type === "question" && x.answer === null);
+  const open = [...s.items].reverse().find((x) => x.type === "question" && x.answers === null);
   if (open?.type === "question" && status === "waiting") {
     const turn = ++s.turn;
     s.waiting = {

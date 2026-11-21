@@ -148,7 +148,7 @@ function deskOrganiser(): void {
       },
       { type: "notice", level: "info", text: "Session resumed on runner mock-runner" },
       { type: "reasoning", reasoningId: "k2", text: "Going from 1.2 to 1.8 mm makes the arm stiffer, but it must still flex enough to snap onto the 4 mm edge.\n\nWorth confirming before changing the model.", status: "done", seconds: 9 },
-      { type: "question", questionId: "q-seed", text: "Before I change it: raise arm_t from 1.2 to 1.8 mm? It stays openable by hand.", options: ["Agree", "Change something"] },
+      { type: "question", questionId: "q-seed", text: "Before I change it: raise arm_t from 1.2 to 1.8 mm? It stays openable by hand.", options: ["Agree", "Change something"], multiple: false },
     ],
     "waiting",
     12,

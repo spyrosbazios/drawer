@@ -18,7 +18,7 @@ interface ThreadProps {
   items: readonly SessionItem[] | undefined;
   noRunner: boolean;
   answering: boolean;
-  onAnswer: (question: QuestionItem, answer: string) => void;
+  onAnswer: (question: QuestionItem, answers: string[]) => void;
 }
 
 /** The end of the thread: what the agent is doing right now (the one place the activity text appears), or why it is not. */

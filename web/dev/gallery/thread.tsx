@@ -47,9 +47,10 @@ const ITEMS: SessionItem[] = [
   think(5, "The render failed on a missing semicolon. Fix it, thicken the root to 1.6 mm, render again.", "done", 3),
   tool(6, "Evaluated clip", "ok", "9/10 gates pass; the wall gate was the only failure."),
   { seq: 7, version: 7, at, type: "assistant", text: REPLY },
-  { seq: 8, version: 8, at, type: "notice", level: "info", text: "Session resumed on runner dev" },
-  think(9, "The gap could stay at 3.2 mm, but widening it helps a thicker arm snap on.\n\nWorth asking.", "done", 8),
-  { seq: 10, version: 10, at, type: "question", questionId: "q1", text: "Should the gap stay at 3.2 mm?", options: ["Keep 3.2 mm", "Widen to 3.4 mm"], answer: null },
+  { seq: 8, version: 8, at, type: "question", questionId: "q0", text: "Which edges should I round?", options: ["Arm tip", "Arm root", "Body corners"], multiple: true, answers: ["Arm tip", "Arm root", "not the slot edge"] },
+  { seq: 9, version: 9, at, type: "notice", level: "info", text: "Session resumed on runner dev" },
+  think(10, "The gap could stay at 3.2 mm, but widening it helps a thicker arm snap on.\n\nWorth asking.", "done", 8),
+  { seq: 11, version: 11, at, type: "question", questionId: "q1", text: "Should the gap stay at 3.2 mm?", options: ["Keep 3.2 mm", "Widen to 3.4 mm"], multiple: false, answers: null },
 ];
 
 /** The same thread mid-turn (`?thread=live`): the agent is thinking, the thought is the one live row. */

@@ -319,7 +319,11 @@ the runner: `claude` (Claude Code through the Claude Agent SDK), `codex` (`codex
 - A message sent while a turn runs stays pending; when the turn ends the session is `queued` again.
 - `ask`: the agent's question appears as a `question` item and the status is `waiting`;
   `POST /sessions/:id/answer` records the answer, which the runner's `GET /sessions/:id/answer` long
-  poll returns; the status goes back to `working`.
+  poll returns; the status goes back to `working`. The agent marks a question `multiple` when the person
+  may pick several options. An answer is a list, each entry a picked option verbatim or the person's own
+  words: exactly one for a single question, one or more distinct entries for a multiple one; the server
+  rejects any other count. A list keeps every entry whole whatever it contains, where a joined string
+  would make a separator ambiguous.
 - `POST /sessions/:id/stop`: a working session's runner receives `stop` on its next poll and
   interrupts the agent; the status is `stopped`. A new message queues it again.
 - A runner that has not polled for 60 s is forgotten; its working sessions become `failed` ("the agent
@@ -454,7 +458,7 @@ must come with `content-type: application/json`. No GET changes anything. The se
 | PATCH | `/settings` | `PatchSettingsBody` → `Settings` (people only) |
 | POST | `/sessions/:id/items` | `?runner=&boot=`, `NewSessionItem` → `SessionItem` (runner) |
 | PATCH | `/sessions/:id` | `?runner=&boot=`, `RunnerSessionPatch` → `Session` (runner) |
-| GET | `/sessions/:id/answer` | `?question=&wait=` → `{ answer: string \| null }` (runner, long poll) |
+| GET | `/sessions/:id/answer` | `?question=&wait=` → `{ answers: string[] \| null }` (runner, long poll) |
 | POST | `/reindex` | → `{ files: number }` |
 
 Anything not under `/api` serves the built web app (`web/dist`), with `index.html` as the SPA fallback.

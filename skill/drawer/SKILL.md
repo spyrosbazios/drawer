@@ -98,7 +98,9 @@ An assembly report reads the same, with gates `parts`, `clash`, `mate:<id>`, `fl
   instead of inventing geometry.
 - **Hand a job to drawer's own agent:** `drawer ask <p> "<message>"`, follow with `drawer session <id> --text`,
   talk with `drawer say <id> "<message>"`; `drawer sessions [p]` lists them. `--attach <local-file>` (repeatable)
-  on `ask` and `say` sends a photo, mesh or datasheet with the message.
+  on `ask` and `say` sends a photo, mesh or datasheet with the message. Answer the agent's open question with
+  `drawer answer <id> <question-id> --pick <n>` or own words; a question marked `(pick any)` takes several
+  `--pick`s (`drawer help answer`).
 - **Attachments a person sent to a session:** `drawer attachments <session-id>` lists them (id, name, kind, where
   filed); `drawer attachment <id> -o <local>` downloads one to look at; `drawer file-attachment <id> refs/<name>.<ext>`
   files it into the project as one revision. File what is worth keeping, under a name that says what it is.

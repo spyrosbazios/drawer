@@ -814,18 +814,19 @@ const evaluateAssembly = defineTool({
 const askUser = defineTool({
   name: "ask_user",
   description:
-    "Ask the person one question and wait for the answer. Put everything open in one message, with your assumptions; offer short options when the choices are clear. Use it once before the first model, and later only when blocked.",
+    "Ask the person one question and wait for the answer. Put everything open in one message, with your assumptions; offer short options when the choices are clear. Set multiple when the person may pick several options at once (which features to keep, which edges to round); leave it off when the options exclude each other. The person can always answer in their own words instead of, or with, the options. Use it once before the first model, and later only when blocked.",
   input: {
     question: z.string().min(1).max(20_000),
     options: z.array(z.string().min(1).max(200)).max(12).optional().describe("At most 12 short options"),
+    multiple: z.boolean().optional().describe("True: the person may pick several options. Default false: exactly one answer"),
   },
-  async run(ctx, { question, options }) {
+  async run(ctx, { question, options, multiple }) {
     const questionId = crypto.randomUUID();
-    await ctx.append({ type: "question", questionId, text: question, options: options ?? [] });
+    await ctx.append({ type: "question", questionId, text: question, options: options ?? [], multiple: multiple ?? false });
     const wait = ctx.answerWait ?? 25;
     for (;;) {
-      const answer = await untilAborted(ctx.signal, ctx.client.waitAnswer(ctx.sessionId, questionId, wait));
-      if (answer !== null) return output(`The person answered: ${answer}`, `answer: ${oneLine(answer, 100)}`);
+      const answers = await untilAborted(ctx.signal, ctx.client.waitAnswer(ctx.sessionId, questionId, wait));
+      if (answers !== null) return output(answerText(answers), `answer: ${oneLine(answers.join("; "), 100)}`);
       // The long poll also ends with null when no answer will ever come: ask the session.
       let status: string;
       try {
@@ -838,6 +839,12 @@ const askUser = defineTool({
     }
   },
 });
+
+/** One answer on the line; several as a JSON array (each a picked option or the person's own words), so none can run into another. */
+function answerText(answers: string[]): string {
+  if (answers.length === 1) return `The person answered: ${answers[0]}`;
+  return `The person gave ${answers.length} answers, each a picked option or their own words: ${JSON.stringify(answers)}`;
+}
 
 /** `promise`, or a rejection the moment `signal` aborts (the turn was stopped). */
 function untilAborted<T>(signal: AbortSignal, promise: Promise<T>): Promise<T> {

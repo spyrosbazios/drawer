@@ -450,7 +450,7 @@ async function handle(req: Request): Promise<Response> {
     if (action === "stop" && method === "POST") return json(sessions.stop(id));
     if (action === "answer" && method === "POST") {
       const b = await body<AnswerBody>(req);
-      return json(sessions.answer(id, b.questionId, b.answer));
+      return json(sessions.answer(id, b.questionId, b.answers));
     }
   }
 

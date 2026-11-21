@@ -76,7 +76,7 @@ export interface Sessions {
   /** By the runner that holds the session only (409 conflict otherwise). */
   patch(id: string, patch: RunnerSessionPatch, by: RunnerIdentity): Promise<Session>;
   /** Long poll for a question's answer; null when the wait ends first. */
-  waitAnswer(id: string, questionId: string, wait: number, signal: AbortSignal): Promise<string | null>;
+  waitAnswer(id: string, questionId: string, wait: number, signal: AbortSignal): Promise<string[] | null>;
   /** The modelling guide, as markdown. */
   guide(): Promise<string>;
 }

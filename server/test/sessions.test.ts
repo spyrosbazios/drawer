@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DrawerEvent, ProviderKind, ProviderStatus, RunnersResponse, RunnerWork, Session, SessionDetail, SessionItem, SessionsResponse, Settings } from "@drawer/shared/api";
@@ -308,43 +308,59 @@ describe("questions", () => {
     const api = await makeApi();
     const s = await api.start("ask me");
     turn(await api.work("r1"));
-    const q = await api.item<SessionItem>(s.id, { type: "question", questionId: "q1", text: "Which screw?", options: ["M3", "M4"] });
-    expect(q.json).toMatchObject({ type: "question", questionId: "q1", options: ["M3", "M4"], answer: null });
+    const q = await api.item<SessionItem>(s.id, { type: "question", questionId: "q1", text: "Which screw?", options: ["M3", "M4"], multiple: false });
+    expect(q.json).toMatchObject({ type: "question", questionId: "q1", options: ["M3", "M4"], multiple: false, answers: null });
     expect((await api.get<SessionDetail>(`/sessions/${s.id}`)).json.session.status).toBe("waiting");
 
     // Unanswered: the poll ends with null.
     const started = Date.now();
-    const none = await api.get<{ answer: string | null }>(`/sessions/${s.id}/answer?question=q1&wait=0.2`);
-    expect(none.json).toEqual({ answer: null });
+    const none = await api.get<{ answers: string[] | null }>(`/sessions/${s.id}/answer?question=q1&wait=0.2`);
+    expect(none.json).toEqual({ answers: null });
     expect(Date.now() - started).toBeGreaterThanOrEqual(150);
 
-    const waiting = api.get<{ answer: string | null }>(`/sessions/${s.id}/answer?question=q1&wait=5`);
-    await Bun.sleep(30);
-    const answered = await api.post<Session>(`/sessions/${s.id}/answer`, { questionId: "q1", answer: "M3" });
-    expect(answered.json.status).toBe("working");
-    expect((await waiting).json).toEqual({ answer: "M3" });
-    // An answered question answers at once.
-    expect((await api.get(`/sessions/${s.id}/answer?question=q1`)).json).toEqual({ answer: "M3" });
-    const items = (await api.get<SessionDetail>(`/sessions/${s.id}`)).json.items;
-    expect(items.find((i) => i.type === "question")).toMatchObject({ answer: "M3" });
+    // A single question takes exactly one answer.
+    expect((await api.post(`/sessions/${s.id}/answer`, { questionId: "q1", answers: ["M3", "M4"] })).status).toBe(400);
 
-    expect((await api.post(`/sessions/${s.id}/answer`, { questionId: "q1", answer: "M4" })).status).toBe(409);
-    expect((await api.post(`/sessions/${s.id}/answer`, { questionId: "nope", answer: "M4" })).status).toBe(404);
+    const waiting = api.get<{ answers: string[] | null }>(`/sessions/${s.id}/answer?question=q1&wait=5`);
+    await Bun.sleep(30);
+    const answered = await api.post<Session>(`/sessions/${s.id}/answer`, { questionId: "q1", answers: ["M3"] });
+    expect(answered.json.status).toBe("working");
+    expect((await waiting).json).toEqual({ answers: ["M3"] });
+    // An answered question answers at once.
+    expect((await api.get(`/sessions/${s.id}/answer?question=q1`)).json).toEqual({ answers: ["M3"] });
+    const items = (await api.get<SessionDetail>(`/sessions/${s.id}`)).json.items;
+    expect(items.find((i) => i.type === "question")).toMatchObject({ answers: ["M3"] });
+
+    expect((await api.post(`/sessions/${s.id}/answer`, { questionId: "q1", answers: ["M4"] })).status).toBe(409);
+    expect((await api.post(`/sessions/${s.id}/answer`, { questionId: "nope", answers: ["M4"] })).status).toBe(404);
     expect((await api.get(`/sessions/${s.id}/answer?question=nope`)).status).toBe(404);
     expect((await api.post(`/sessions/${s.id}/answer`, { questionId: "q1" })).status).toBe(400);
     expect((await api.get(`/sessions/${s.id}/answer`)).status).toBe(400);
+  });
+
+  test("a multiple question takes one or more distinct answers, picks and the person's own words alike", async () => {
+    const api = await makeApi();
+    const s = await api.start("ask me");
+    turn(await api.work("r1"));
+    const q = await api.item<SessionItem>(s.id, { type: "question", questionId: "q1", text: "Which edges get a fillet?", options: ["top", "bottom", "sides"], multiple: true });
+    expect(q.json).toMatchObject({ multiple: true, answers: null });
+    const bad = [{ answers: [] }, { answers: "top" }, { answers: ["top", "top"] }, { answers: ["top", " "] }, { answers: ["top", 3] }, { answers: Array.from({ length: 14 }, (_, i) => `a${i}`) }];
+    for (const body of bad) expect((await api.post(`/sessions/${s.id}/answer`, { questionId: "q1", ...body })).status).toBe(400);
+    const answered = await api.post<Session>(`/sessions/${s.id}/answer`, { questionId: "q1", answers: ["top", "sides", "only the outer ones"] });
+    expect(answered.json.status).toBe("working");
+    expect((await api.get(`/sessions/${s.id}/answer?question=q1`)).json).toEqual({ answers: ["top", "sides", "only the outer ones"] });
   });
 
   test("a stop ends the answer long poll", async () => {
     const api = await makeApi();
     const s = await api.start("ask me");
     turn(await api.work("r1"));
-    await api.item(s.id, { type: "question", questionId: "q1", text: "?", options: [] });
+    await api.item(s.id, { type: "question", questionId: "q1", text: "?", options: [], multiple: false });
     const waiting = api.get(`/sessions/${s.id}/answer?question=q1&wait=5`);
     await Bun.sleep(30);
     const stopped = await api.post<Session>(`/sessions/${s.id}/stop`);
     expect(stopped.json.status).toBe("stopped");
-    expect((await waiting).json).toEqual({ answer: null });
+    expect((await waiting).json).toEqual({ answers: null });
   });
 });
 
@@ -366,7 +382,7 @@ describe("stop", () => {
     expect(late.json).toMatchObject({ status: "stopped", activity: null, error: null });
     const lateFail = await api.patch<Session>(s.id, { status: "failed", error: "interrupted" });
     expect(lateFail.json).toMatchObject({ status: "stopped", error: null });
-    await api.item(s.id, { type: "question", questionId: "late", text: "?", options: [] });
+    await api.item(s.id, { type: "question", questionId: "late", text: "?", options: [], multiple: false });
     expect((await api.get<SessionDetail>(`/sessions/${s.id}`)).json.session.status).toBe("stopped");
 
     // A new message queues it again, and the resume handle sent with the late patch was kept.
@@ -379,7 +395,7 @@ describe("stop", () => {
     const api = await makeApi();
     const s = await api.start("go");
     turn(await api.work("r1"));
-    await api.item(s.id, { type: "question", questionId: "q", text: "?", options: [] });
+    await api.item(s.id, { type: "question", questionId: "q", text: "?", options: [], multiple: false });
     expect((await api.post<Session>(`/sessions/${s.id}/stop`)).json.status).toBe("stopped");
     expect(await api.work("r1")).toEqual({ kind: "stop", sessionId: s.id });
   });
@@ -483,14 +499,14 @@ describe("runners", () => {
     const api = await makeApi();
     const s = await api.start("ask");
     turn(await api.work("r1"));
-    await api.item(s.id, { type: "question", questionId: "q", text: "?", options: [] });
+    await api.item(s.id, { type: "question", questionId: "q", text: "?", options: [], multiple: false });
     const poll = api.work("r2", 30);
     const answer = api.get(`/sessions/${s.id}/answer?question=q&wait=30`);
     await Bun.sleep(30);
     const started = Date.now();
     api.close();
     expect(await poll).toBeNull();
-    expect((await answer).json).toEqual({ answer: null });
+    expect((await answer).json).toEqual({ answers: null });
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
@@ -516,7 +532,7 @@ describe("runners", () => {
     turn(await api.work("gone"));
     const waiting = await api.start("waiting");
     turn(await api.work("gone"));
-    await api.item(waiting.id, { type: "question", questionId: "q", text: "?", options: [] }, "gone");
+    await api.item(waiting.id, { type: "question", questionId: "q", text: "?", options: [], multiple: false }, "gone");
     const done = await api.start("done");
     turn(await api.work("gone"));
     await api.patch(done.id, { status: "idle" }, "gone");
@@ -549,8 +565,10 @@ describe("validation", () => {
       { type: "assistant" },
       { type: "tool", callId: "c", name: "n", summary: "s", status: "weird" },
       { type: "tool", name: "n", summary: "s", status: "ok" },
-      { type: "question", text: "?", options: [] },
-      { type: "question", questionId: "q", text: "?", options: [1] },
+      { type: "question", text: "?", options: [], multiple: false },
+      { type: "question", questionId: "q", text: "?", options: [1], multiple: false },
+      { type: "question", questionId: "q", text: "?", options: [] },
+      { type: "question", questionId: "q", text: "?", options: [], multiple: "yes" },
       { type: "notice", level: "loud", text: "x" },
       { type: "reasoning", text: "x", status: "running", seconds: 0 },
       { type: "reasoning", reasoningId: "t", text: "x", status: "weird", seconds: 0 },
@@ -567,7 +585,7 @@ describe("validation", () => {
 
     expect((await api.post(`/sessions/${s.id}/messages`, { text: " " })).status).toBe(400);
     expect((await api.post("/sessions/nope/messages", { text: "hi" })).status).toBe(404);
-    expect((await api.post("/sessions/nope/answer", { questionId: "q", answer: "a" })).status).toBe(404);
+    expect((await api.post("/sessions/nope/answer", { questionId: "q", answers: ["a"] })).status).toBe(404);
 
     const poll = { runner: "r", boot: "b", providers: [], accepting: true, wait: 0 };
     expect((await api.post("/runner/work", {})).status).toBe(400);
@@ -593,7 +611,7 @@ describe("validation", () => {
     const api = await makeApi();
     const s = await api.start("go");
     turn(await api.work("r1"));
-    const q = { type: "question", questionId: "q", text: "?", options: [] };
+    const q = { type: "question", questionId: "q", text: "?", options: [], multiple: false };
     expect((await api.item(s.id, q)).status).toBe(200);
     expect((await api.item(s.id, q)).status).toBe(400);
   });
@@ -623,6 +641,24 @@ describe("events", () => {
 });
 
 describe("persistence", () => {
+  test("questions stored before multiple answers read as single ones", async () => {
+    const first = await makeApi();
+    const s = await first.start("old one");
+    first.close();
+    const at = new Date().toISOString();
+    const old = [
+      { seq: 2, version: 2, at, type: "question", questionId: "q1", text: "?", options: ["a"], answer: "a" },
+      { seq: 3, version: 3, at, type: "question", questionId: "q2", text: "?", options: [], answer: null },
+    ];
+    await appendFile(join(first.dataDir, "sessions", `${s.id}.jsonl`), old.map((i) => `${JSON.stringify(i)}\n`).join(""));
+    const second = await makeApi(first.dataDir);
+    const items = (await second.get<SessionDetail>(`/sessions/${s.id}`)).json.items.filter((i) => i.type === "question");
+    expect(items).toEqual([
+      { seq: 2, version: 2, at, type: "question", questionId: "q1", text: "?", options: ["a"], multiple: false, answers: ["a"] },
+      { seq: 3, version: 3, at, type: "question", questionId: "q2", text: "?", options: [], multiple: false, answers: null },
+    ]);
+  });
+
   test("sessions, items and the resume handle survive a restart; running turns fail", async () => {
     const first = await makeApi();
     const dataDir = first.dataDir;
@@ -639,7 +675,7 @@ describe("persistence", () => {
 
     const working = await first.start("working one");
     turn(await first.work("r1"));
-    await first.item(working.id, { type: "question", questionId: "q", text: "?", options: [] });
+    await first.item(working.id, { type: "question", questionId: "q", text: "?", options: [], multiple: false });
     const queued = await first.start("queued one");
     await first.post(`/sessions/${queued.id}/messages`, { text: "queued two" });
 
@@ -663,7 +699,7 @@ describe("persistence", () => {
 
     const failed = (await second.get<SessionDetail>(`/sessions/${working.id}`)).json;
     expect(failed.session).toMatchObject({ status: "failed", error: "the server restarted during the turn", activity: null });
-    expect(failed.items.find((i) => i.type === "question")).toMatchObject({ questionId: "q", answer: null });
+    expect(failed.items.find((i) => i.type === "question")).toMatchObject({ questionId: "q", multiple: false, answers: null });
 
     // The queued session keeps both pending messages and is claimable; the idle one resumes with its handle.
     const q = turn(await second.work("r1"));
@@ -745,7 +781,7 @@ describe("only the holder writes", () => {
     turn(await api.work("r1", 0, ["claude"], undefined, "old"));
     const waiting = await api.start("waiting");
     turn(await api.work("r1", 0, ["claude"], undefined, "old"));
-    await api.item(waiting.id, { type: "question", questionId: "q", text: "?", options: [] }, "r1", "old");
+    await api.item(waiting.id, { type: "question", questionId: "q", text: "?", options: [], multiple: false }, "r1", "old");
     await api.post(`/sessions/${working.id}/stop`);
     const other = await api.start("other runner");
     turn(await api.work("r9"));
@@ -812,8 +848,8 @@ describe("size limits", () => {
       { ...okTool, result: "r".repeat(20_001) },
       { ...okTool, images: Array.from({ length: 17 }, (_, i) => `/api/renders/k/${i}.png`) },
       { ...okTool, images: ["https://example.com/x.png"] },
-      { type: "question", questionId: "q", text: "?", options: Array.from({ length: 13 }, (_, i) => `o${i}`) },
-      { type: "question", questionId: "q", text: "?", options: ["o".repeat(201)] },
+      { type: "question", questionId: "q", text: "?", options: Array.from({ length: 13 }, (_, i) => `o${i}`), multiple: false },
+      { type: "question", questionId: "q", text: "?", options: ["o".repeat(201)], multiple: false },
     ];
     for (const body of bad) expect({ body: JSON.stringify(body).slice(0, 60), status: (await api.item(s.id, body)).status }).toMatchObject({ status: 400 });
     expect((await api.item(s.id, { ...okTool, summary: "s".repeat(300), result: "r".repeat(20_000) })).status).toBe(200);

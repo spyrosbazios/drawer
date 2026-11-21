@@ -896,7 +896,11 @@ export type SessionItem = { seq: number; version: number; at: string } & (
   | { type: "user"; text: string; refs: SessionRef[]; attachments: SessionAttachment[]; author: Author }
   | { type: "assistant"; text: string }
   | { type: "tool"; callId: string; name: string; summary: string; status: "running" | "ok" | "error"; result: string | null; images: string[] }
-  | { type: "question"; questionId: string; text: string; options: string[]; answer: string | null }
+  /**
+   * `multiple`: the person may pick several options. `answers` is null until answered, then each entry is one
+   * picked option verbatim or the person's own words: exactly one for a single question, one or more for a multiple one.
+   */
+  | { type: "question"; questionId: string; text: string; options: string[]; multiple: boolean; answers: string[] | null }
   /** What the model reported thinking, display only: never sent back to a model, never searched. `seconds` is how long the thought has run. */
   | { type: "reasoning"; reasoningId: string; text: string; status: "running" | "done"; seconds: number }
   | { type: "notice"; level: "info" | "error"; text: string }
@@ -930,10 +934,10 @@ export interface SessionDetail {
   items: SessionItem[];
 }
 
-/** POST /sessions/:id/answer */
+/** POST /sessions/:id/answer: exactly one answer for a single question, one or more distinct ones for a multiple one. */
 export interface AnswerBody {
   questionId: string;
-  answer: string;
+  answers: string[];
 }
 
 /**
@@ -1004,7 +1008,7 @@ export type RunnerWork =
 export type NewSessionItem =
   | { type: "assistant"; text: string }
   | { type: "tool"; callId: string; name: string; summary: string; status: "running" | "ok" | "error"; result: string | null; images: string[] }
-  | { type: "question"; questionId: string; text: string; options: string[] }
+  | { type: "question"; questionId: string; text: string; options: string[]; multiple: boolean }
   | { type: "reasoning"; reasoningId: string; text: string; status: "running" | "done"; seconds: number }
   | { type: "notice"; level: "info" | "error"; text: string };
 

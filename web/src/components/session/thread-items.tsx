@@ -18,7 +18,7 @@ export interface RowEnv {
   liveSeq: number | null;
   /** An answer is being sent. */
   answering: boolean;
-  onAnswer: (question: QuestionItem, answer: string) => void;
+  onAnswer: (question: QuestionItem, answers: string[]) => void;
 }
 
 function Assistant({ text }: { text: string }) {

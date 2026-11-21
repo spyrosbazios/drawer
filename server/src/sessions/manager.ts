@@ -265,9 +265,10 @@ export class SessionManager implements Sessions {
     const index = rec.items.findIndex((item) => item.type === "question" && item.questionId === body.questionId);
     const item = rec.items[index];
     if (item === undefined || item.type !== "question") throw notFound(`no such question: ${body.questionId}`);
-    if (item.answer !== null) throw new ApiException("conflict", `question ${body.questionId} was already answered`);
-    rec.items[index] = { ...item, answer: body.answer, version: this.nextVersion(rec) };
-    const open = rec.items.some((i) => i.type === "question" && i.answer === null);
+    if (item.answers !== null) throw new ApiException("conflict", `question ${body.questionId} was already answered`);
+    if (!item.multiple && body.answers.length !== 1) throw invalid(`question ${body.questionId} takes exactly one answer`);
+    rec.items[index] = { ...item, answers: body.answers, version: this.nextVersion(rec) };
+    const open = rec.items.some((i) => i.type === "question" && i.answers === null);
     if (rec.session.status === "waiting" && !open) rec.session.status = "working";
     this.changed(rec);
     this.saveItem(rec, rec.items[index] as SessionItem);
@@ -476,7 +477,7 @@ export class SessionManager implements Sessions {
       if (item.type === "question" && rec.items.some((i) => i.type === "question" && i.questionId === item.questionId)) {
         throw invalid(`question ${item.questionId} already exists`);
       }
-      stored = this.pushItem(rec, item.type === "question" ? { ...item, answer: null } : item, at);
+      stored = this.pushItem(rec, item.type === "question" ? { ...item, answers: null } : item, at);
       if (isReplaceable(item)) rec.replaceable.set(replaceKey(item), rec.items.length - 1);
       if (item.type === "tool") rec.session.toolCalls += 1;
       if (item.type === "question" && rec.session.status === "working") rec.session.status = "waiting";
@@ -511,18 +512,18 @@ export class SessionManager implements Sessions {
     return { ...rec.session };
   }
 
-  async waitAnswer(id: string, questionId: string, wait: number, signal: AbortSignal): Promise<string | null> {
+  async waitAnswer(id: string, questionId: string, wait: number, signal: AbortSignal): Promise<string[] | null> {
     const isQuestion = (item: SessionItem): item is Extract<SessionItem, { type: "question" }> => item.type === "question" && item.questionId === questionId;
     if (!this.get(id).items.some(isQuestion)) throw notFound(`no such question: ${questionId}`);
-    const check = (): { answer: string | null } | null => {
+    const check = (): { answers: string[] | null } | null => {
       const rec = this.recs.get(id);
-      if (rec === undefined) return { answer: null };
-      const answer = rec.items.find(isQuestion)?.answer ?? null;
-      if (answer !== null) return { answer };
+      if (rec === undefined) return { answers: null };
+      const answers = rec.items.find(isQuestion)?.answers ?? null;
+      if (answers !== null) return { answers };
       // Nothing more will come for a session that was stopped or failed.
-      return rec.session.status === "stopped" || rec.session.status === "failed" ? { answer: null } : null;
+      return rec.session.status === "stopped" || rec.session.status === "failed" ? { answers: null } : null;
     };
-    return (await this.pollUntil(wait, signal, check))?.answer ?? null;
+    return (await this.pollUntil(wait, signal, check))?.answers ?? null;
   }
 
   async guide(): Promise<string> {

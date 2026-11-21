@@ -132,7 +132,7 @@ function LiveBody({ slug, id, onNew }: { slug: string; id: string; onNew: () => 
       return false;
     }
   };
-  const onAnswer = (q: QuestionItem, value: string) => answer.mutate({ questionId: q.questionId, answer: value }, { onError: (e) => toast.error(e.message) });
+  const onAnswer = (q: QuestionItem, answers: string[]) => answer.mutate({ questionId: q.questionId, answers }, { onError: (e) => toast.error(e.message) });
 
   return (
     <DropZone onFiles={attachments.add} className="flex h-full min-h-0 flex-col">

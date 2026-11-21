@@ -76,6 +76,6 @@ export function registerSessionRoutes(router: Router, sessions: Sessions): void 
   router.add("GET", "/sessions/:id/answer", async ({ req, url, params }) => {
     const question = url.searchParams.get("question") ?? "";
     if (question === "") throw invalid("question is required");
-    return json({ answer: await sessions.waitAnswer(params.id as string, question, waitSeconds(url), req.signal) });
+    return json({ answers: await sessions.waitAnswer(params.id as string, question, waitSeconds(url), req.signal) });
   });
 }

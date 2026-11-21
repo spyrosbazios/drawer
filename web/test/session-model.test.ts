@@ -1,13 +1,13 @@
 import type { Session, SessionItem } from "@drawer/shared/api";
 import { describe, expect, test } from "bun:test";
 import type { StepItem } from "@/components/session/model";
-import { firstLine, groupRows, groupStrip, lastLine, liveRow, pendingSeqs, pinnedQuestion, stepsTitle, thoughtLabel, visibleSteps } from "@/components/session/model";
+import { answersOf, firstLine, groupRows, groupStrip, lastLine, liveRow, pendingSeqs, pinnedQuestion, stepsTitle, thoughtLabel, visibleSteps } from "@/components/session/model";
 
 const at = "2026-11-20T10:00:00Z";
 const tool = (seq: number, summary = "x"): SessionItem => ({ seq, version: seq, at, type: "tool", callId: `c${seq}`, name: "t", summary, status: "ok", result: null, images: [] });
 const think = (seq: number, status: "running" | "done" = "done", text = "Looking at it", seconds = 4): SessionItem => ({ seq, version: seq, at, type: "reasoning", reasoningId: `r${seq}`, text, status, seconds });
 const say = (seq: number): SessionItem => ({ seq, version: seq, at, type: "assistant", text: "hi" });
-const ask = (seq: number, answer: string | null): SessionItem => ({ seq, version: seq, at, type: "question", questionId: `q${seq}`, text: "Agree?", options: ["Agree"], answer });
+const ask = (seq: number, answer: string | null): SessionItem => ({ seq, version: seq, at, type: "question", questionId: `q${seq}`, text: "Agree?", options: ["Agree"], multiple: false, answers: answer === null ? null : [answer] });
 
 const s = (id: string, status: Session["status"], updatedAt: string): Session => ({
   id,
@@ -56,6 +56,12 @@ describe("session rows", () => {
 
   test("no pinned question once every question is answered", () => {
     expect(pinnedQuestion([ask(1, "Agree"), say(2)])).toBeUndefined();
+  });
+
+  test("a question form's values become the answers: picks in order, then the typed text, trimmed, no blanks or repeats", () => {
+    expect(answersOf(["Arm tip", "Arm root", "  not the slot edge "])).toEqual(["Arm tip", "Arm root", "not the slot edge"]);
+    expect(answersOf(["Agree", " ", "Agree"])).toEqual(["Agree"]);
+    expect(answersOf([])).toEqual([]);
   });
 });
 

@@ -1,5 +1,5 @@
 /**
- * Pure helpers of the session feature: how items become rows, which question is pinned, which part a
+ * Pure helpers of the session feature: how items become rows, which question is pinned and what its form answers, which part a
  * tool summary names, and how Home's strip groups sessions. No React here; tested in `test/session-model.test.ts`.
  */
 import type { Session, SessionItem } from "@drawer/shared/api";
@@ -29,9 +29,19 @@ export function rowKey(row: Row): string {
 export function pinnedQuestion(items: readonly SessionItem[]): QuestionItem | undefined {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
-    if (it?.type === "question" && it.answer === null) return it;
+    if (it?.type === "question" && it.answers === null) return it;
   }
   return undefined;
+}
+
+/** A question form's values (the picks in order, then the typed text) as the answers to send: trimmed, blanks and repeats dropped. */
+export function answersOf(values: readonly FormDataEntryValue[]): string[] {
+  const out: string[] = [];
+  for (const v of values) {
+    const answer = typeof v === "string" ? v.trim() : "";
+    if (answer !== "" && !out.includes(answer)) out.push(answer);
+  }
+  return out;
 }
 
 /** Items in order, runs of tool calls and thoughts grouped; the pinned question is left out (it is drawn above the composer). */

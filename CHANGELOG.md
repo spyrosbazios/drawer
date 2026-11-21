@@ -5,6 +5,12 @@ version is one semver number for the whole repository, set by the git tag (see [
 
 ## Unreleased
 
+### Added
+
+- The agent can let you pick several answers to a question: its options show as checkboxes, and your own words can go
+  with the picks. From a terminal: `drawer answer <session> <question> --pick <n>...`. An answer is now a list
+  everywhere in the API (`answers`); stored sessions read as before.
+
 ### Changed
 
 - Settings: the agents are a list beside the one you pick. The list shows each agent's status and its on/off switch;

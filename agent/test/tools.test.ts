@@ -206,14 +206,23 @@ describe("ask_user", () => {
         polls++;
         expect(id).toBe("s1");
         expect(qid).toBe((appended[0] as { questionId: string }).questionId);
-        return polls < 3 ? null : "PETG, 6 mm cable";
+        return polls < 3 ? null : ["PETG, 6 mm cable"];
       },
       session: async () => ({ session: { status: "waiting" } as Session, items: [] }),
     });
     const out = await executeTool(byName("ask_user"), context(client, appended), { question: "Which cable?", options: ["5 mm", "6 mm"] });
-    expect(appended[0]).toMatchObject({ type: "question", text: "Which cable?", options: ["5 mm", "6 mm"] });
+    expect(appended[0]).toMatchObject({ type: "question", text: "Which cable?", options: ["5 mm", "6 mm"], multiple: false });
     expect(polls).toBe(3);
     expect(out.text).toBe("The person answered: PETG, 6 mm cable");
+  });
+
+  test("a multiple question gets every answer back, one entry each", async () => {
+    const appended: NewSessionItem[] = [];
+    const client = fakeClient({ waitAnswer: async () => ["top", "sides", "only the outer, 1 mm"] });
+    const out = await executeTool(byName("ask_user"), context(client, appended), { question: "Which edges?", options: ["top", "bottom", "sides"], multiple: true });
+    expect(appended[0]).toMatchObject({ type: "question", options: ["top", "bottom", "sides"], multiple: true });
+    expect(out.text).toBe('The person gave 3 answers, each a picked option or their own words: ["top","sides","only the outer, 1 mm"]');
+    expect(out.summary).toBe("answer: top; sides; only the outer, 1 mm");
   });
 
   test("ends with an error when the session was stopped, failed or deleted", async () => {
@@ -243,7 +252,7 @@ describe("ask_user", () => {
   test("keeps waiting while the session is still on", async () => {
     let polls = 0;
     const client = fakeClient({
-      waitAnswer: async () => (++polls < 3 ? null : "yes"),
+      waitAnswer: async () => (++polls < 3 ? null : ["yes"]),
       session: async () => ({ session: { status: "waiting" } as Session, items: [] }),
     });
     const out = await executeTool(byName("ask_user"), context(client), { question: "?" });
@@ -252,7 +261,7 @@ describe("ask_user", () => {
 
   test("an abort ends a long poll in progress at once", async () => {
     const abort = new AbortController();
-    const client = fakeClient({ waitAnswer: () => new Promise<string | null>(() => {}) });
+    const client = fakeClient({ waitAnswer: () => new Promise<string[] | null>(() => {}) });
     const running = executeTool(byName("ask_user"), context(client, [], abort.signal), { question: "?" });
     await Bun.sleep(5);
     abort.abort();

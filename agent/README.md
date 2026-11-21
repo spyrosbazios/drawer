@@ -64,6 +64,8 @@ web app shows each runner's resolved path, read-only.
 
 ## Install as a user service
 
+Linux below; macOS uses `drawer-agent.plist` with launchd: [INSTALL.md](../INSTALL.md), step 4.
+
     cp agent/drawer-agent.service ~/.config/systemd/user/
     # edit DRAWER_URL (the server's address) and WorkingDirectory (this checkout; the unit assumes ~/drawer)
     systemctl --user daemon-reload

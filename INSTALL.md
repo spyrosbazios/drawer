@@ -80,24 +80,50 @@ one the person wants and wait (table: [agent/README.md](agent/README.md)).
 
 ```sh
 cd ~/drawer && bun install
-mkdir -p ~/.config/systemd/user
-cp agent/drawer-agent.service ~/.config/systemd/user/
 ```
 
-In the copied unit set `Environment=DRAWER_URL=<url>`, and `WorkingDirectory` if the checkout is not `~/drawer`.
 Codex needs its own login first: `CODEX_HOME=~/.local/state/drawer-agent/codex-home codex login` (the person runs it).
 
+Then install the runner as a service, by OS. If the checkout is not `~/drawer`, change the working directory in the
+copied file.
+
+**Linux** (systemd):
+
 ```sh
+mkdir -p ~/.config/systemd/user
+cp agent/drawer-agent.service ~/.config/systemd/user/
+# set Environment=DRAWER_URL=<url> in the copied unit
 systemctl --user daemon-reload
 systemctl --user enable --now drawer-agent
 systemctl --user is-active drawer-agent
+```
+
+Logs: `journalctl --user -u drawer-agent -n 50`.
+
+**macOS** (launchd):
+
+```sh
+mkdir -p ~/Library/LaunchAgents
+sed "s|HOME_DIR|$HOME|g" agent/drawer-agent.plist > ~/Library/LaunchAgents/com.drawer.agent.plist
+# set DRAWER_URL to <url> in the copied plist if it is not http://127.0.0.1:3050
+plutil -lint ~/Library/LaunchAgents/com.drawer.agent.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.drawer.agent.plist
+launchctl print gui/$(id -u)/com.drawer.agent | grep state
+```
+
+Logs: `~/Library/Logs/drawer-agent.log`. After a plist edit or a `git pull`:
+`launchctl kickstart -k gui/$(id -u)/com.drawer.agent`.
+
+**Windows**: untested. Use WSL2 with systemd enabled and follow the Linux steps inside it; Docker Desktop's WSL
+integration gives it the same server.
+
+**Then, on every OS:**
+
+```sh
 curl -s <url>/api/runners
 ```
 
-**Pass**: the runner is listed. If not: `journalctl --user -u drawer-agent -n 50`.
-
-On a machine without systemd, run `DRAWER_URL=<url> bun agent/src/main.ts` under whatever keeps processes alive
-there, and tell the person.
+**Pass**: the runner is listed. If not, read the logs above.
 
 ## 5. The CLI and skill for their own agent (optional)
 
@@ -123,4 +149,4 @@ Report to the person, in this order:
    the only copy, so back it up.
 
 To update later: `cd ~/drawer && git pull && docker compose pull && docker compose up -d`, then
-`systemctl --user restart drawer-agent` if the runner is installed.
+restart the runner if it is installed (Linux: `systemctl --user restart drawer-agent`; macOS: the `kickstart` above).

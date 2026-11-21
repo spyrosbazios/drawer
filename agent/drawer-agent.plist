@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- launchd user agent for the drawer agent runner on macOS (the Linux equivalent: drawer-agent.service).
+     launchd expands neither ~ nor $HOME: replace HOME_DIR with the absolute home folder before loading it.
+     Install: INSTALL.md, step 4. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.drawer.agent</string>
+  <!-- The checkout of this repository: the runner runs its source. -->
+  <key>WorkingDirectory</key><string>HOME_DIR/drawer</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>HOME_DIR/.bun/bin/bun</string>
+    <string>agent/src/main.ts</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- The drawer server this runner serves (DRAWER_BIND and DRAWER_PORT in the server's .env). -->
+    <key>DRAWER_URL</key><string>http://127.0.0.1:3050</string>
+    <!-- launchd starts with a bare PATH; provider CLIs installed by Homebrew or npm live here. -->
+    <key>PATH</key><string>HOME_DIR/.local/bin:HOME_DIR/.bun/bin:HOME_DIR/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>5</integer>
+  <key>StandardOutPath</key><string>HOME_DIR/Library/Logs/drawer-agent.log</string>
+  <key>StandardErrorPath</key><string>HOME_DIR/Library/Logs/drawer-agent.log</string>
+</dict>
+</plist>

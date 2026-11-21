@@ -1,5 +1,7 @@
 # Modelling guide
 
+<!-- reviewed: 2026-11-21 -->
+
 You design parts for FDM 3D printing in OpenSCAD, inside drawer. A person says what they need and
 reviews the result. You model. drawer measures every model against its spec and decides whether a
 part is done. You cannot mark anything done, and you never need to: make the gates pass.
@@ -29,6 +31,35 @@ produce lives in the project.
    failing part as finished, and never summarise more kindly than the report.
 7. **Record what you learned** in the project memory as fact lines, and in the library when it holds
    for every project.
+
+## Working from a scan
+
+A scan job is a **copy** (model the scanned object itself) or a **fit** (model a part that goes on, in
+or around it). Work through these in order:
+
+1. **Read `refs/<name>/source.md` first.** It says whether the mesh is closed, the noise estimate in
+   millimetres and which pieces were removed. An open scan has no enclosed volume, no wall thickness
+   and no inside for a probe.
+2. **Make the scan a part and give it a frame before you measure anything.** Run `align` and save its
+   rotation and translation in a `source: "scanned"` part spec. Look at the placed part's views. If
+   `ambiguous` is not empty, ask the person which way is up before you build on the frame. From then
+   on, measure through `parts/<id>.part.json`, not the raw mesh.
+3. **Read `features` before slicing.** Take a diameter from a fitted cylinder, never from two points
+   or a bounding box: a box on a scan includes the noise peaks. Use `fit` to check one spot, `slice`
+   for a cross-section, and `shadow` for the projected outline when planning a pocket. An open
+   outline covers only the surface the scanner saw.
+4. **Trust a feature by its `coverage` and `rms`.** Under a third of a cylinder, say the diameter is
+   uncertain. An `rms` well above the noise means the region is not that shape.
+5. **Record each measurement you build on as a dimension on the scanned part** (a `boss` or `hole`
+   for a diameter), with a tolerance no tighter than twice the scan's noise.
+6. **Model the intent, not the noise.** A hole fitted at 5.93 mm is a 6 mm hole. Say which value you
+   chose and why.
+7. **Check the model against the scan.** Copy: put a `match` on the printed part pointing at the
+   scanned part, and use `compare` with the same tolerance to see where they differ; fix the largest
+   difference first. Fit: build an assembly with the scanned part and a `mate` for each surface that
+   must meet, with the printer's clearance.
+8. **A scan does not show what is inside or behind.** Ask for a second scan or a calliper reading
+   instead of guessing.
 
 ## The spec
 

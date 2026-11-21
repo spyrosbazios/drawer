@@ -1,11 +1,11 @@
-import type { Axis, Dimension, DimensionKind, PartSpec, PartSpecBody, Strictness } from "@drawer/shared/api";
+import { DIMENSION_KINDS, PART_SOURCES, isMeshFormat } from "@drawer/shared/api";
+import type { Axis, Dimension, DimensionKind, Match, PartSource, PartSpec, PartSpecBody, Strictness } from "@drawer/shared/api";
 import { z } from "zod";
 
 /**
  * The edit-spec form keeps every number as the text the person typed, so a half-typed value is never
  * rewritten under them; `specFormSchema` validates it and `formToBody` turns it into the request body.
  */
-export const DIMENSION_KINDS = ["size", "envelope", "hole", "boss", "gap", "wall", "min_wall", "volume"] as const satisfies readonly DimensionKind[];
 export const AXES = ["x", "y", "z"] as const satisfies readonly Axis[];
 export const STRICTNESS = ["quick", "standard", "functional"] as const satisfies readonly Strictness[];
 
@@ -42,10 +42,14 @@ export interface SpecForm {
   title: string;
   class: string;
   description: string;
-  source: "printed" | "bought";
+  source: PartSource;
+  scanFile: string;
+  scanRotate: string;
+  scanTranslate: string;
   material: string;
   strictness: Strictness;
   dimensions: DimensionForm[];
+  matches: Match[];
 }
 
 const usesAxis = (k: DimensionKind) => k === "size" || k === "hole" || k === "boss" || k === "gap" || k === "wall";
@@ -88,9 +92,13 @@ export function specToForm(spec: PartSpec): SpecForm {
     class: spec.class,
     description: spec.description,
     source: spec.source,
+    scanFile: spec.scan?.file ?? "",
+    scanRotate: spec.scan?.rotate.join(", ") ?? "0, 0, 0",
+    scanTranslate: spec.scan?.translate.join(", ") ?? "0, 0, 0",
     material: spec.material,
     strictness: spec.strictness,
     dimensions: spec.dimensions.map(dimensionToForm),
+    matches: spec.matches,
   };
 }
 
@@ -163,12 +171,24 @@ export const specFormSchema = z
     title: z.string().trim().min(1, "Give the part a title"),
     class: z.string(),
     description: z.string(),
-    source: z.enum(["printed", "bought"]),
+    source: z.enum(PART_SOURCES),
+    scanFile: z.string(),
+    scanRotate: z.string(),
+    scanTranslate: z.string(),
     material: z.string(),
     strictness: z.enum(STRICTNESS),
     dimensions: z.array(dimensionSchema),
+    matches: z.array(z.object({ id: z.string(), label: z.string(), to: z.string(), tol: z.number(), share: z.number().optional() })),
   })
   .superRefine((v, ctx) => {
+    if (v.source === "scanned") {
+      const file = v.scanFile.trim();
+      if (!isMeshFormat(file.slice(file.lastIndexOf(".") + 1).toLowerCase())) ctx.addIssue({ code: "custom", path: ["scanFile"], message: "Enter a project mesh path" });
+      for (const key of ["scanRotate", "scanTranslate"] as const) {
+        const values = v[key].split(",");
+        if (values.length !== 3 || values.some((value) => finite(value) === undefined)) ctx.addIssue({ code: "custom", path: [key], message: "Enter three comma-separated numbers" });
+      }
+    }
     const seen = new Set<string>();
     v.dimensions.forEach((d, i) => {
       if (seen.has(d.id)) ctx.addIssue({ code: "custom", path: ["dimensions", i, "id"], message: "Used twice" });
@@ -218,8 +238,10 @@ export function formToBody(v: SpecForm): PartSpecBody {
     class: v.class.trim(),
     description: v.description.trim(),
     source: v.source,
+    ...(v.source === "scanned" ? { scan: { file: v.scanFile.trim(), rotate: v.scanRotate.split(",").map(Number) as [number, number, number], translate: v.scanTranslate.split(",").map(Number) as [number, number, number] } } : {}),
     material: v.material,
     strictness: v.strictness,
     dimensions: v.dimensions.map(formToDimension),
+    matches: v.source === "printed" ? v.matches : [],
   };
 }

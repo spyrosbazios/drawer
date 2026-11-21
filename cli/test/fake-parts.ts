@@ -7,6 +7,7 @@
  *   THIN          min_wall fails, unless a what-if sets wall >= 1.6
  *   NOLINT        lint warns
  */
+import { DEFAULT_COMPARE_TOL } from "@drawer/shared/api";
 import type {
   ProviderKind,
   ApiError,
@@ -14,6 +15,7 @@ import type {
   AssemblySpec,
   Attempt,
   CompareResult,
+  Feature,
   GateResult,
   LibraryProfile,
   MeshAnalysis,
@@ -48,7 +50,7 @@ export interface FakeStore {
 
 export const MESH: MeshInfo = {
   format: "stl",
-  triangles: 1234,
+  closed: true, triangles: 1234,
   bbox: { min: [0, 0, 0], max: [40, 30, 12.5], size: [40, 30, 12.5] },
   volumeCm3: 8.125,
 };
@@ -77,10 +79,11 @@ const DEFAULT_SPEC: Omit<PartSpec, "title"> = {
   material: "PETG",
   strictness: "standard",
   dimensions: [],
+  matches: [],
   waivers: [],
   prints: [],
 };
-const SPEC_FIELDS = new Set(["title", "class", "description", "source", "material", "strictness", "dimensions"]);
+const SPEC_FIELDS = new Set(["title", "class", "description", "source", "material", "strictness", "dimensions", "scan", "matches"]);
 
 export function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -95,10 +98,11 @@ const parse = (text: string): Record<string, unknown> => (text.trim() === "" ? {
 
 export const partOfPath = (path: string): string | null => /^parts\/([a-z0-9][a-z0-9-]*)\.(?:scad|part\.json)$/.exec(path)?.[1] ?? null;
 
-function refFor(key: string): RenderRef {
+function refFor(meshKey: string): RenderRef {
+  const key = new Bun.CryptoHasher("sha256").update(meshKey).digest("hex").slice(0, 24);
   return {
     key,
-    mesh: `/api/renders/${key}/mesh.stl`,
+    mesh: `/api/renders/${meshKey}/mesh.stl`,
     views: { iso: `/api/renders/${key}/iso.png`, front: `/api/renders/${key}/front.png`, top: `/api/renders/${key}/top.png`, side: `/api/renders/${key}/side.png` },
     sheet: `/api/renders/${key}/sheet.png`,
   };
@@ -162,10 +166,14 @@ export class FakeModeling {
   private report(project: string, id: string, params?: ParamValues): PartReport | null {
     const spec = this.spec(project, id);
     if (!spec) return null;
-    const model = this.text(project, `parts/${id}.scad`);
-    const modelRev = this.store.files.get(project)?.get(`parts/${id}.scad`)?.rev ?? "empty";
+    const modelPath = spec.scan?.file ?? `parts/${id}.scad`;
+    const model = this.text(project, modelPath);
+    const modelRev = this.store.files.get(project)?.get(modelPath)?.rev ?? "empty";
     const gates: GateResult[] = [];
-    if (model !== null && model.includes("SYNTAX_ERROR")) {
+    if (spec.scan) {
+      gates.push(gate("parses", "Builds", model === null ? "fail" : "pass"));
+      for (const d of spec.dimensions) gates.push(gate(`dim:${d.id}`, d.label, model === null ? "skipped" : "pass"));
+    } else if (model !== null && model.includes("SYNTAX_ERROR")) {
       gates.push(gate("parses", "Builds a solid", "fail", { detail: "OpenSCAD reported an error", hint: "fix the syntax error reported by the check, then write again" }));
       gates.push(gate("solid", "One watertight body", "skipped", { detail: "no mesh: parses failed" }));
     } else if (model !== null) {
@@ -182,6 +190,7 @@ export class FakeModeling {
       if (model.includes("NOLINT")) gates.push(gate("lint", "Source conventions", "warn", { detail: "9 unexplained numeric literals inside modules", hint: "name them as parameters" }));
       else gates.push(gate("lint", "Source conventions", "pass"));
     }
+    for (const match of spec.matches ?? []) gates.push(gate(`match:${match.id}`, match.label, model === null ? "skipped" : "pass"));
     for (const w of spec.waivers) {
       const g = gates.find((x) => x.id === w.gate);
       if (g) {
@@ -190,7 +199,7 @@ export class FakeModeling {
       }
     }
     const parsesFailed = gates.some((g) => g.id === "parses" && g.status === "fail");
-    const status: ReportStatus = model === null ? "empty" : parsesFailed ? "failed" : gates.some((g) => g.status === "fail") ? "draft" : "passed";
+    const status: ReportStatus = parsesFailed ? "failed" : model === null ? "empty" : gates.some((g) => g.status === "fail") ? "draft" : "passed";
     const counted = gates.filter((g) => g.status !== "skipped");
     const passed = counted.filter((g) => g.status !== "fail").length;
     const next = gates.filter((g) => g.status === "fail" && g.hint).map((g) => `${g.label}: ${g.hint}`);
@@ -208,7 +217,7 @@ export class FakeModeling {
       analysis: model === null || status === "failed" ? null : ANALYSIS,
       render: model === null || status === "failed" ? null : refFor(`${modelRev}${params ? "wi" : ""}`.padEnd(24, "0")),
       params: [{ name: "wall", type: "number", value: typeof params?.wall === "number" ? params.wall : 1.6, group: "", description: "", min: null, max: null, step: null, options: null, line: 3 }],
-      massG: model === null || status === "failed" ? null : 10.3,
+      massG: model === null || status === "failed" || spec.scan ? null : 10.3,
       next,
       whatIf: params !== undefined,
       seconds: 0.4,
@@ -313,6 +322,9 @@ export class FakeModeling {
       case "sessions":
         return method === "POST" ? this.createSession(slug, bodyText) : null;
       case "measure":
+      case "align":
+      case "features":
+      case "fit":
       case "slice":
       case "probe":
       case "section":
@@ -355,7 +367,7 @@ export class FakeModeling {
         return json(this.summary(slug, id));
       }
       case "attempts":
-        return json({ attempts: this.attempts.get(`${slug}/${id}`) ?? [] });
+        return json({ attempts: spec.scan ? [] : this.attempts.get(`${slug}/${id}`) ?? [] });
       case "restore": {
         const body = parse(bodyText) as { revisionId: string };
         if (!(this.attempts.get(`${slug}/${id}`) ?? []).some((a) => a.revisionId === body.revisionId)) return apiError(404, "not_found", `no attempt ${body.revisionId}`);
@@ -388,6 +400,12 @@ export class FakeModeling {
     const file = this.store.files.get(slug)?.get(path);
     if (!file) return apiError(404, "not_found", `no file ${path}`);
     const body = parse(bodyText);
+    if (kind === "align") return json({ rotate: [0, 0, 0], translate: [0, 0, 0], rms: body.to ? 0 : null, ambiguous: [] });
+    if (kind === "features" || kind === "fit") {
+      const feature: Feature = { kind: "plane", origin: [0, 0, 0], direction: [0, 0, 1], diameter: null, length: null, side: null, areaMm2: 1200, rms: 0, maxError: 0, coverage: 1 };
+      const ref = refFor(file.rev);
+      return kind === "fit" ? json(feature) : json({ features: [feature], field: ref.mesh.replace("mesh.stl", "features.f32"), mesh: ref.mesh });
+    }
     if (kind === "measure") return json({ project: slug, path, mesh: MESH, analysis: ANALYSIS, render: refFor(`${file.rev}00000000`.slice(0, 24)) });
     if (kind === "probe") {
       const from = body.from as number[];
@@ -396,7 +414,8 @@ export class FakeModeling {
     if (kind === "section") return json({ axis: body.axis, at: body.at, image: `/api/renders/${file.rev}00000000/section-${String(body.axis)}-${String(body.at)}.png` });
     return json({
       axis: body.axis,
-      at: body.at,
+      at: body.shadow ? null : body.at,
+      open: [],
       contours: [
         { hole: false, areaMm2: 1200, centre: [20, 15], bbox: { min: [0, 0], max: [40, 30] }, circle: { centre: [20, 15], diameter: 38, rms: 4, round: false }, points: [] },
         { hole: true, areaMm2: 9.1, centre: [10, 5], bbox: { min: [8.3, 3.3], max: [11.7, 6.7] }, circle: { centre: [10, 5], diameter: 3.4, rms: 0.01, round: true }, points: [] },
@@ -405,12 +424,14 @@ export class FakeModeling {
   }
 
   private compare(bodyText: string): Response {
-    const body = parse(bodyText) as { a: { part?: string; path?: string; at?: string }; b: { part?: string; path?: string; at?: string } };
+    const raw = parse(bodyText);
+    const body = raw as { a: { part?: string; path?: string; at?: string }; b: { part?: string; path?: string; at?: string } };
+    const tol = typeof raw.tol === "number" ? raw.tol : DEFAULT_COMPARE_TOL;
     const key = (side: typeof body.a) => `cmp-${side.part ?? side.path ?? "x"}-${side.at ?? "now"}`.replace(/[^a-z0-9-]/gi, "-");
     const result: CompareResult = {
       a: { render: refFor(key(body.a)), mesh: MESH },
       b: { render: refFor(key(body.b)), mesh: { ...MESH, volumeCm3: 9.3 } },
-      deviation: { min: -0.4, max: 1.2, rms: 0.31, p95: 0.8, at: [12, 4, 6], field: `/api/renders/${key(body.b)}/deviation.f32` },
+      deviation: { min: -0.4, max: 1.2, rms: 0.31, p95: 0.8, within: 0.6, reverse: { min: -1.2, max: 0.4, rms: 0.31, p95: 0.8, within: 0.7 }, tol, at: [12, 4, 6], field: `/api/renders/${key(body.b)}/deviation.f32`, mesh: refFor(key(body.b)).mesh },
       volumeDeltaCm3: 1.2,
       sizeDelta: [2, 0, -1],
     };

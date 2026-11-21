@@ -19,19 +19,22 @@ import type {
   RenderResult,
   RenderView,
   SearchHit,
+  ScanQuery,
+  ScanResult,
   TreeEntry,
   TreeResponse,
   WriteResult,
 } from "@drawer/shared/api";
-import { LIBRARY_SLUG } from "@drawer/shared/api";
-import { ImportError, RenderError, type Importers, type Renderer } from "@drawer/shared/contracts";
+import { isMeshFormat, LIBRARY_SLUG } from "@drawer/shared/api";
+import { ImportError, RenderError, type Importers, type MeshOutput, type MeshRequest, type Renderer } from "@drawer/shared/contracts";
 import { ApiException, exists, invalid, notFound } from "./errors.ts";
 import type { EventBus } from "./events.ts";
 import { Index, type FileRow, type UpsertSpec } from "./index/indexer.ts";
 import { MAX_IMPORT_IMAGES, imageExtension, safeFileName, sourceMarkdown, uniqueName } from "./importing.ts";
-import { assertNewSlug, isHiddenName, kindFromExtension, normalizePath, slugify } from "./store/paths.ts";
+import { assertNewSlug, extOf, isHiddenName, kindFromExtension, normalizePath, slugify } from "./store/paths.ts";
 import { PartsService } from "./parts/service.ts";
-import { partOfPath } from "./parts/validate.ts";
+import { placement } from "./parts/assembly-gates.ts";
+import { parseJsonFile, partOfPath, validatePartSpec } from "./parts/validate.ts";
 import { assertLibraryKeeps, assertLibraryPath } from "./library-layout.ts";
 import { Thumbnails } from "./thumbnails.ts";
 import { libraryProfileFiles, libraryStarter, projectStarter } from "./store/starter.ts";
@@ -97,7 +100,8 @@ export class Service {
       workspace: {
         writeFile: (slug, path, bytes, opts) => this.writeFile(slug, path, bytes, opts),
         writeMany: (slug, writes, removes, author, message) => this.writeMany(slug, writes, removes, author, message),
-        render: (slug, path, body) => this.render(slug, path, body),
+        render: (slug, path, body, matrix) => this.render(slug, path, body, matrix),
+        mesh: (slug, path, at, matrix) => this.mesh(slug, path, at, matrix),
       },
     });
     this.thumbnails = new Thumbnails({
@@ -434,14 +438,14 @@ export class Service {
     return { project: slug, path, rev: result.rev, created: result.created, revisionId: result.revisionId, check, part: partOfPath(path)?.id ?? null };
   }
 
-  /** Several files written and removed as one revision (parts routes). Structured files are validated first. */
-  async writeMany(slug: string, writes: { path: string; bytes: Uint8Array }[], removes: string[], author: string, message: string): Promise<{ revisionId: string }> {
+  /** Several files written and removed as one revision. Structured files are validated first. */
+  async writeMany(slug: string, writes: { path: string; bytes: Uint8Array }[], removes: string[], author: string, message: string, newDir?: string): Promise<{ revisionId: string }> {
     return this.lock.run(async () => {
       await this.store.requireProject(slug);
       for (const w of writes) this.checkPlace(slug, w.path);
       if (slug === LIBRARY_SLUG) for (const path of removes) assertLibraryKeeps(path);
       for (const w of writes) await this.parts.validatorFor(slug, w.path, author)?.(w.bytes);
-      const change = await this.store.writeMany(slug, writes, removes, { author, message });
+      const change = newDir ? await this.store.createFileDirectory(slug, newDir, writes, { author, message }) : await this.store.writeMany(slug, writes, removes, { author, message });
       if (change.commit) {
         await this.indexChange(slug, change, author);
         for (const w of writes) this.emitFile("written", slug, w.path, this.index.fileRow(slug, w.path)?.rev ?? null, author);
@@ -469,15 +473,15 @@ export class Service {
   async moveFile(slug: string, from: string, to: string, message: string | undefined, author: string): Promise<{ revisionId: string }> {
     return this.lock.run(async () => {
       await this.store.requireProject(slug);
-      if (slug === LIBRARY_SLUG) {
-        assertLibraryKeeps(from);
-        const st = await this.store.stat(slug, from);
-        const moved = st?.type === "dir" ? (await this.store.walk(slug, from)).filter((e) => e.type === "file").map((e) => `${to}${e.path.slice(from.length)}`) : [to];
-        for (const path of moved) assertLibraryPath(path);
-      }
-      if ((await this.store.stat(slug, from))?.type === "file") {
-        const validate = this.parts.validatorFor(slug, to, author);
-        if (validate) await validate(await this.store.readBytes(slug, from));
+      const st = await this.store.stat(slug, from);
+      if (slug === LIBRARY_SLUG) assertLibraryKeeps(from);
+      const files = st?.type === "dir" ? (await this.store.walk(slug, from)).filter((e) => e.type === "file").map((e) => e.path) : st?.type === "file" ? [from] : [];
+      const destinations = new Set(files.map((file) => `${to}${file.slice(from.length)}`));
+      for (const file of files) {
+        const dest = `${to}${file.slice(from.length)}`;
+        this.checkPlace(slug, dest);
+        const validate = this.parts.validatorFor(slug, dest, author, destinations);
+        if (validate) await validate(await this.store.readBytes(slug, file));
       }
       const change = await this.store.move(slug, from, to, { author, message });
       await this.indexChange(slug, change, author);
@@ -578,57 +582,34 @@ export class Service {
 
   // ---- rendering ----------------------------------------------------------------------------
 
-  async render(slug: string, path: string, body: RenderBody): Promise<RenderResult> {
+  private async withRenderFile<T>(slug: string, path: string, at: string | undefined, params: RenderBody["params"], matrix: number[] | undefined, work: (req: MeshRequest) => Promise<T>): Promise<T> {
     await this.store.requireProject(slug);
-    const views = body.views && body.views.length > 0 ? [...new Set(body.views)] : ALL_VIEWS;
-    const size = body.size ?? DEFAULT_RENDER_SIZE;
     const kind = kindFromExtension(path);
-    if (kind !== "scad" && kind !== "mesh") throw invalid(`${path} is not a .scad or mesh file`);
+    const part = partOfPath(path);
+    if (kind !== "scad" && kind !== "mesh" && part?.file !== "spec") throw invalid(`${path} is not a .scad or mesh file`);
 
     const libraryDir = this.store.projectDir(LIBRARY_SLUG);
     let root = this.store.projectDir(slug);
     let cleanup: (() => Promise<void>) | null = null;
-    const at = body.at ?? null;
-    let total = views.length + 3;
-    if (body.at !== undefined) {
-      const tree = await this.store.materialise(slug, body.at);
+    if (at !== undefined) {
+      const tree = await this.store.materialise(slug, at);
       root = tree.root;
       cleanup = tree.cleanup;
     }
     try {
-      const st = body.at === undefined ? await this.store.stat(slug, path) : await lstatOrNull(join(root, path));
-      if (st?.type !== "file") throw notFound(`no such file${body.at ? ` at revision ${body.at}` : ""}: ${path}`);
-      const out = await this.renderer.render({
-        file: join(root, path),
-        searchPaths: root === libraryDir ? [root] : [root, libraryDir],
-        views,
-        size,
-        ...(body.params ? { params: body.params } : {}),
-        onProgress: (p) => {
-          total = p.total;
-          this.bus.emit({ type: "render_progress", project: slug, path, at, ...p });
-        },
-      });
-      const base = `/api/renders/${out.key}`;
-      const result: RenderResult = {
-        project: slug,
-        path,
-        key: out.key,
-        cached: out.cached,
-        seconds: out.seconds,
-        mesh: `${base}/mesh.stl`,
-        views: Object.fromEntries(out.views.map((v) => [v, `${base}/${v}.png`])),
-        sheet: `${base}/sheet.png`,
-        info: out.info,
-        log: out.log,
-        warnings: out.warnings,
-      };
-      this.bus.emit({ type: "render_progress", project: slug, path, at, stage: "done", step: total, total, view: null });
-      this.bus.emit({ type: "render", project: slug, path, key: out.key });
-      return result;
+      const st = at === undefined ? await this.store.stat(slug, path) : await lstatOrNull(join(root, path));
+      if (st?.type !== "file") throw notFound(`no such file${at ? ` at revision ${at}` : ""}: ${path}`);
+      let input = path;
+      let frame = matrix;
+      if (part?.file === "spec") {
+        const bytes = await Bun.file(join(root, path)).bytes();
+        const { scan } = validatePartSpec(parseJsonFile(bytes, path), []);
+        if (!scan) throw invalid(`${path} does not describe a scanned part`);
+        input = scan.file;
+        frame = placement(scan.rotate, scan.translate);
+      }
+      return await work({ file: join(root, input), searchPaths: root === libraryDir ? [root] : [root, libraryDir], ...(params ? { params } : {}), ...(frame ? { matrix: frame } : {}) });
     } catch (err) {
-      this.bus.emit({ type: "render_progress", project: slug, path, at, stage: "failed", step: 0, total, view: null });
-      // OpenSCAD reports absolute paths; a client only knows project-relative ones.
       if (err instanceof RenderError) throw new ApiException("render_failed", err.message.replaceAll(`${root}/`, "").replaceAll(`${libraryDir}/`, `${LIBRARY_SLUG}/`));
       throw err;
     } finally {
@@ -636,10 +617,97 @@ export class Service {
     }
   }
 
+  async mesh(slug: string, path: string, at?: string, matrix?: number[]): Promise<MeshOutput> {
+    return this.withRenderFile(slug, path, at, undefined, matrix, (req) => this.renderer.mesh(req));
+  }
+
+  async render(slug: string, path: string, body: RenderBody, matrix?: number[]): Promise<RenderResult> {
+    const views = body.views && body.views.length > 0 ? [...new Set(body.views)] : ALL_VIEWS;
+    const size = body.size ?? DEFAULT_RENDER_SIZE;
+    const at = body.at ?? null;
+    let total = views.length + 3;
+    return this.withRenderFile(slug, path, body.at, body.params, matrix, async (req) => {
+      try {
+        const out = await this.renderer.render({
+          ...req,
+          views,
+          size,
+          onProgress: (p) => {
+            total = p.total;
+            this.bus.emit({ type: "render_progress", project: slug, path, at, ...p });
+          },
+        });
+        const base = `/api/renders/${out.key}`;
+        const result: RenderResult = {
+          project: slug,
+          path,
+          key: out.key,
+          cached: out.cached,
+          seconds: out.seconds,
+          mesh: `/api/renders/${out.meshKey}/mesh.stl`,
+          ...(out.proxy ? { proxy: `/api/renders/${out.meshKey}/proxy.stl` } : {}),
+          views: Object.fromEntries(out.views.map((v) => [v, `${base}/${v}.png`])),
+          sheet: `${base}/sheet.png`,
+          info: out.info,
+          log: out.log,
+          warnings: out.warnings,
+        };
+        this.bus.emit({ type: "render_progress", project: slug, path, at, stage: "done", step: total, total, view: null });
+        this.bus.emit({ type: "render", project: slug, path, key: out.key });
+        return result;
+      } catch (err) {
+        this.bus.emit({ type: "render_progress", project: slug, path, at, stage: "failed", step: 0, total, view: null });
+        throw err;
+      }
+    });
+  }
+
   // ---- overview ----------------------------------------------------------------------------
 
   async overview(slug: string): Promise<ProjectOverview> {
     return this.parts.overview(await this.getProject(slug));
+  }
+
+  // ---- scans --------------------------------------------------------------------------------
+
+  async addScan(slug: string, query: ScanQuery, bytes: Uint8Array, author: string): Promise<ScanResult> {
+    await this.store.requireProject(slug);
+    if (slug === LIBRARY_SLUG) throw invalid("add scans to a project");
+    const name = assertNewSlug(query.name);
+    if (query.filename !== posix.basename(query.filename) || /[\\\x00-\x1f\x7f]/.test(query.filename) || Buffer.byteLength(query.filename) > 255) {
+      throw invalid("filename must be one file name");
+    }
+    const format = extOf(query.filename);
+    if (!isMeshFormat(format)) throw invalid("scan must be an STL, OBJ, 3MF or PLY file");
+    if (format !== "3mf" && query.units === undefined) throw invalid("specify the original scan units");
+    const dir = `refs/${name}`;
+    if (await this.store.stat(slug, dir)) throw exists(`${dir} already exists: pick another name`);
+    const scan = await this.renderer.normalizeScan({ format, bytes, ...(query.units ? { units: query.units } : {}) }).catch((err: unknown) => {
+      if (err instanceof RenderError) throw new ApiException("render_failed", err.message);
+      throw err;
+    });
+    const path = `${dir}/scan.stl`;
+    const source = `${dir}/source.md`;
+    const facts = [
+      "# Scan source",
+      "",
+      `- [filename] ${JSON.stringify(query.filename).replaceAll("[", "\\[").replaceAll("]", "\\]")}`,
+      `- [format] ${format}`,
+      `- [units] ${scan.unit}${format === "3mf" ? " (from the 3MF model)" : ""}`,
+      `- [units_given] ${query.units ?? "none"}`,
+      `- [triangles_original] ${scan.originalTriangles}`,
+      `- [triangles_stored] ${scan.info.triangles}`,
+      `- [degenerate_triangles_removed] ${scan.degenerateTriangles}`,
+      `- [debris_triangles_removed] ${scan.debrisTriangles}`,
+      `- [closed] ${scan.info.closed}`,
+      `- [noise_mm] ${scan.noiseMm}`,
+      "",
+      "Drawer welded and cleaned the surface, corrected winding, and stored the result in millimetres. The original upload was discarded.",
+      "",
+    ];
+    const writes = [{ path, bytes: scan.bytes }, { path: source, bytes: new TextEncoder().encode(facts.join("\n")) }];
+    const { revisionId } = await this.writeMany(slug, writes, [], author, `add scan ${name}`, dir);
+    return { project: slug, path, source, revisionId, mesh: scan.info, noiseMm: scan.noiseMm };
   }
 
   // ---- importing ----------------------------------------------------------------------------

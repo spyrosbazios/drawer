@@ -1,6 +1,8 @@
-import { DownloadIcon, PlayIcon } from "lucide-react";
-import { Suspense, useMemo, useState } from "react";
+import { CrosshairIcon, DownloadIcon, Move3DIcon, PlayIcon } from "lucide-react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAlign, useFeatures, useField, useFitFeature } from "@/hooks/measure";
 import { useRender } from "@/hooks/render";
 import { formatOf } from "@/lib/mesh-scene";
 import type { MeshScene } from "@/lib/mesh-scene";
@@ -24,15 +26,38 @@ export function MeshFileViewer({ slug, path, rev, at }: Props) {
   const [scene, setScene] = useState<MeshScene | null>(null);
   const [wireframe, setWireframe] = useState(false);
   const [grid, setGrid] = useState(true);
-  // Never renders by itself: Render in the File menu, or "Render this revision" in the revisions panel, fills the cache.
-  const { query: render } = useRender(slug, path, rev ?? "", at, false);
+  const [showFeatures, setShowFeatures] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [fitOpen, setFitOpen] = useState(false);
+  const [alignOpen, setAlignOpen] = useState(false);
+  const alignment = useAlign(slug, path);
+  const align = alignment.mutate;
+  const features = useFeatures(slug, path, rev ?? "", at, showFeatures);
+  const field = useField(showFeatures ? features.data?.field : undefined);
+  const fit = useFitFeature(slug, path, at);
+  const scan = /^refs\/[^/]+\/scan\.stl$/.test(path);
+  const { query: render } = useRender(slug, path, rev, at, scan);
   // An old revision that was just rendered opens on its sheet; otherwise the model, until the user picks.
   const view: Shown = chosen ?? (at && render.data ? "sheet" : "model");
   const format = formatOf(path);
-  const url = fileUrl(slug, path, { at, version: rev });
+  const overlayMesh = showFeatures ? features.data?.mesh : undefined;
+  const url = overlayMesh ?? render.data?.proxy ?? fileUrl(slug, path, { at, version: rev });
   const download = fileUrl(slug, path, { at, download: true });
 
   const shading = useShadingEntry(view !== "model");
+  const mutateFit = fit.mutate;
+  useEffect(() => {
+    if (!scene) return;
+    scene.setPickHandler(picking && view === "model" ? ({ position }) => {
+      setPicking(false);
+      setFitOpen(true);
+      mutateFit(position);
+    } : null);
+    return () => scene.setPickHandler(null);
+  }, [mutateFit, picking, scene, view]);
+  useEffect(() => {
+    scene?.setField(showFeatures && field.data ? { kind: "features", values: field.data, domain: [0, 1] } : null);
+  }, [field.data, scene, showFeatures]);
   const menus = useMemo<MenuSpec[]>(
     () => [
       {
@@ -43,10 +68,19 @@ export function MeshFileViewer({ slug, path, rev, at }: Props) {
           { kind: "separator" },
           { kind: "check", label: "Wireframe", checked: wireframe, onChange: setWireframe, disabled: view !== "model" },
           { kind: "check", label: "Grid", checked: grid, onChange: setGrid, disabled: view !== "model" },
+          { kind: "check", label: "Colour by feature", checked: showFeatures, onChange: setShowFeatures, disabled: view !== "model" },
           shading,
         ],
       },
       cameraMenu(view === "model" ? scene : null),
+      {
+        id: "point",
+        label: "Measure",
+        entries: [
+          { kind: "item", label: picking ? "Stop picking a point" : "Fit at a point", icon: CrosshairIcon, onSelect: () => setPicking(!picking), disabled: !scene || view !== "model" },
+          { kind: "item", label: "Propose scan frame", icon: Move3DIcon, onSelect: () => { setAlignOpen(true); align(at ? { revision: at } : {}); } },
+        ],
+      },
       {
         id: "file",
         label: "File",
@@ -65,7 +99,7 @@ export function MeshFileViewer({ slug, path, rev, at }: Props) {
         ],
       },
     ],
-    [view, wireframe, grid, shading, scene, at, render, download],
+    [view, wireframe, grid, shading, scene, at, render, download, showFeatures, picking, align],
   );
 
   if (!format) {
@@ -76,15 +110,16 @@ export function MeshFileViewer({ slug, path, rev, at }: Props) {
     );
   }
 
-  const status = render.isFetching ? "Rendering…" : null;
+  const status = picking ? "Pick a point on the model" : features.isFetching ? "Finding features…" : render.isFetching ? "Rendering…" : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ViewerMenubar label="Mesh viewer" menus={menus} status={status} />
+      {showFeatures && (features.error || field.error) && <p role="alert" className="px-2 text-sm text-destructive">{(features.error ?? field.error)?.message}</p>}
       <div className="min-h-0 flex-1">
         {view === "model" ? (
           <Suspense fallback={<Skeleton className="size-full rounded-none" />}>
-            <MeshViewer url={url} format={format} wireframe={wireframe} grid={grid} onScene={setScene} />
+            {scan && !render.data ? (render.error ? <p role="alert" className="p-4 text-sm text-destructive">{render.error.message}</p> : <Skeleton className="size-full" />) : <MeshViewer url={url} format={overlayMesh || render.data?.proxy ? "stl" : format} wireframe={wireframe} grid={grid} onScene={setScene} />}
           </Suspense>
         ) : render.data ? (
           <div className="flex size-full items-center justify-center overflow-auto bg-card p-2">
@@ -98,6 +133,43 @@ export function MeshFileViewer({ slug, path, rev, at }: Props) {
           </p>
         )}
       </div>
+      <Dialog open={alignOpen} onOpenChange={setAlignOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Proposed scan frame</DialogTitle>
+            <DialogDescription>Rotation in degrees and translation in millimetres.</DialogDescription>
+          </DialogHeader>
+          {alignment.isPending && <p className="text-sm text-dim">Finding a frame…</p>}
+          {alignment.error && <p role="alert" className="text-sm text-destructive">{alignment.error.message}</p>}
+          {alignment.data && (
+            <dl className="grid grid-cols-2 gap-2 text-sm">
+              <dt>Rotate</dt><dd>{alignment.data.rotate.map((n) => n.toFixed(2)).join(", ")}</dd>
+              <dt>Translate</dt><dd>{alignment.data.translate.map((n) => n.toFixed(2)).join(", ")}</dd>
+            </dl>
+          )}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={fitOpen} onOpenChange={setFitOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Surface fit</DialogTitle>
+            <DialogDescription>{fit.data ? fit.data.kind : "Feature at the picked point"}</DialogDescription>
+          </DialogHeader>
+          {fit.isPending && <p className="text-sm text-dim">Fitting surface…</p>}
+          {fit.error && <p role="alert" className="text-sm text-destructive">{fit.error.message}</p>}
+          {fit.data && (
+            <dl className="grid grid-cols-2 gap-2 text-sm">
+              <dt>Origin</dt><dd>{fit.data.origin.map((n) => n.toFixed(2)).join(", ")} mm</dd>
+              {fit.data.direction && <><dt>Direction</dt><dd>{fit.data.direction.map((n) => n.toFixed(3)).join(", ")}</dd></>}
+              {fit.data.diameter !== null && <><dt>Diameter</dt><dd>{fit.data.diameter.toFixed(2)} mm ({fit.data.side})</dd></>}
+              {fit.data.length !== null && <><dt>Length</dt><dd>{fit.data.length.toFixed(2)} mm</dd></>}
+              <dt>Coverage</dt><dd>{Math.round(fit.data.coverage * 100)}%</dd>
+              <dt>RMS error</dt><dd>{fit.data.rms.toFixed(3)} mm</dd>
+              <dt>Largest error</dt><dd>{fit.data.maxError.toFixed(3)} mm</dd>
+            </dl>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

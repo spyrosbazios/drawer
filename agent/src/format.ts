@@ -105,7 +105,7 @@ export function formatAssemblyReport(r: AssemblyReport): string {
   const lines = [`Assembly "${r.spec.title}": ${r.status.toUpperCase()} (${r.passed}/${r.total} gates)`];
   lines.push(...formatGates(r.gates));
   if (r.instances.length > 0) lines.push(`Instances: ${r.instances.map((i) => `${i.id}=${i.part} (${i.partStatus})`).join(", ")}`);
-  if (r.pairs.length > 0) lines.push("Pairs:", ...r.pairs.map((p) => `- ${p.a}/${p.b}: gap ${num(p.gapMm)} mm, overlap ${num(p.overlapCm3 * 1000)} mm³`));
+  if (r.pairs.length > 0) lines.push("Pairs:", ...r.pairs.map((p) => `- ${p.a}/${p.b}: gap ${num(p.gapMm)} mm, ${p.penetration ? `depth ${num(p.penetration.depthMm)} mm (limit ${num(p.penetration.limitMm)} mm)` : `overlap ${num((p.overlapCm3 ?? 0) * 1000)} mm³`}`));
   if (r.bom.length > 0) lines.push(`BOM: ${r.bom.map((b) => `${b.count}× ${b.part} (${b.source}${b.massG !== null ? `, ${num(b.massG, 1)} g` : ""})`).join(", ")}`);
   if (r.totalPrintedMassG !== null) lines.push(`Printed mass: ${num(r.totalPrintedMassG, 1)} g`);
   const next = r.next[0];
@@ -230,6 +230,12 @@ export function summarizeCall(name: string, input: unknown): string {
       return on("setting the parameters of", part);
     case "view_part":
       return on("looking at", part ?? path);
+    case "align":
+      return on("aligning", path);
+    case "features":
+      return on("finding features on", path);
+    case "fit":
+      return on("fitting a surface on", path);
     case "measure_file":
       return on("measuring", path);
     case "slice":

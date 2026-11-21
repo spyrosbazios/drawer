@@ -5,6 +5,6 @@ addEventListener("message", (ev: MessageEvent<WorkerRequest>) => {
   const req = ev.data;
   if (req.op === "probe" && req.axis === "x") process.exit(1);
   if (req.op === "probe") return;
-  const reply: WorkerReply = { id: req.id, ok: true, op: "slice", contours: [] };
+  const reply: WorkerReply = { id: req.id, ok: true, op: "slice", result: { axis: "z", at: 0, contours: [], open: [] } };
   postMessage(reply);
 });

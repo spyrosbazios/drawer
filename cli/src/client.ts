@@ -1,5 +1,7 @@
 /** Typed fetch wrapper over every route in shared/src/api.ts. Only types are imported from @drawer/shared. */
 import type {
+  AlignBody,
+  AlignResult,
   AnswerBody,
   ApiError,
   AssemblyReport,
@@ -12,6 +14,10 @@ import type {
   CreateSessionBody,
   EditBody,
   EvaluateBody,
+  Feature,
+  FeaturesBody,
+  FeaturesResult,
+  FitBody,
   FileAttachmentBody,
   FileAttachmentResult,
   FileInfo,
@@ -45,6 +51,8 @@ import type {
   RunnerWork,
   RunnersResponse,
   SearchResponse,
+  ScanQuery,
+  ScanResult,
   SectionBody,
   SectionResult,
   Session,
@@ -374,12 +382,28 @@ export class Client {
     return this.sendJson("POST", this.filePath(slug, "slice", path), body);
   }
 
+  align(slug: string, path: string, body: AlignBody = {}): Promise<AlignResult> {
+    return this.sendJson("POST", this.filePath(slug, "align", path), body);
+  }
+
+  features(slug: string, path: string, body: FeaturesBody = {}): Promise<FeaturesResult> {
+    return this.sendJson("POST", this.filePath(slug, "features", path), body);
+  }
+
+  fit(slug: string, path: string, body: FitBody): Promise<Feature> {
+    return this.sendJson("POST", this.filePath(slug, "fit", path), body);
+  }
+
   probe(slug: string, path: string, body: ProbeBody): Promise<ProbeResult> {
     return this.sendJson("POST", this.filePath(slug, "probe", path), body);
   }
 
   section(slug: string, path: string, body: SectionBody): Promise<SectionResult> {
     return this.sendJson("POST", this.filePath(slug, "section", path), body);
+  }
+
+  async addScan(slug: string, query: ScanQuery, body: Uint8Array): Promise<ScanResult> {
+    return (await (await this.request("POST", this.projectPath(slug, "/scans"), { query: { ...query }, body })).json()) as ScanResult;
   }
 
   compare(slug: string, body: CompareBody): Promise<CompareResult> {

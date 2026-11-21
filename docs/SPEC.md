@@ -19,7 +19,7 @@ behaviour. Where the two disagree, `api.ts` wins and this file gets fixed.
   the HTTP API (agents through the `drawer` CLI). Nothing is synced to the machine an agent runs on;
   the CLI keeps only a throw-away cache of rendered PNGs so the agent can look at them.
 - **A project is a folder.** A brief, parts, an optional assembly, references and notes. Any other
-  file is allowed too: markdown, `.scad`, meshes (`.stl`, `.3mf`, `.obj`), images, PDFs.
+  file is allowed too: markdown, `.scad`, meshes (`.stl`, `.3mf`, `.obj`, `.ply`), images, PDFs.
 - **A part is a spec plus a model.** `parts/<id>.part.json` says what must be true; `parts/<id>.scad`
   is the agent's attempt at it. The server evaluates the model against the spec (the *gates*) and
   reports a status. No client can set a status.
@@ -59,7 +59,8 @@ projects/_library/        shared by every project, created on first start; nothi
   refs/**                 datasheets, drawings and meshes of bought parts
 sessions/<id>.json        an agent session's state; <id>.jsonl its items, one JSON object per line
 sessions/attachments/     files sent with messages: <id>.json (descriptor, project, session), <id>.bin
-cache/renders/<key>/      mesh.stl, view PNGs, sheet.png, meta.json, and what was measured on that mesh
+cache/meshes/<key>/       mesh.stl, optional proxy.stl, meta.json and derived measurements
+cache/renders/<key>/      view PNGs, sheet.png and render metadata
 cache/reports/<key>.json  part and assembly reports
 cache/thumbnails/         project thumbnails: <key>.png, and <key>.fail for a cover that does not render
 index.db                  SQLite
@@ -105,7 +106,7 @@ index.db                  SQLite
 |---|---|---|
 | `markdown` | `.md` | reader + edit |
 | `scad` | `.scad` | code + render split |
-| `mesh` | `.stl` `.3mf` `.obj` | 3D viewer |
+| `mesh` | `.stl` `.3mf` `.obj` `.ply` | 3D viewer |
 | `image` | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.svg` | image |
 | `pdf` | `.pdf` | embedded PDF |
 | `text` | `.txt` `.json` `.yaml` `.yml` `.toml` `.csv` `.gcode` `.py` `.js` `.ts` `.sh` `.dxf` and any file that decodes as UTF-8 under 1 MB | code view |
@@ -147,8 +148,9 @@ Borrowed from Basic Memory so the folders stay openable there and in Obsidian.
   `import()`s it.
 - The command is `DRAWER_OPENSCAD` (default `openscad`). In the container image it is on `PATH`.
   `OPENSCADPATH` is set to `<project>:<projects/_library>` so `use <lib/x.scad>` finds library files.
-- Cache key = SHA-256 of: the file bytes, the bytes of every file OpenSCAD reports as a dependency
-  (`-d`), views, size, OpenSCAD version. Hit → `cached: true`, no work.
+- The mesh key hashes the file format and bytes, dependency bytes reported by OpenSCAD (`-d`),
+  parameter overrides and the OpenSCAD version for SCAD. The preview key hashes the mesh key,
+  views, size and OpenSCAD version. Both include a pipeline version. A preview cache hit sets `cached: true`.
 - Renders run one at a time (a queue); timeout 120 s → `render_failed`.
 - A running render reports each stage change as a `render_progress` event on `/events` (`queued`,
   `analysing`, `geometry`, `views` once per view, `sheet`, then `done` or `failed`), with `step` of
@@ -157,7 +159,11 @@ Borrowed from Basic Memory so the folders stay openable there and in Obsidian.
 - A failed render returns `422 render_failed` with OpenSCAD's stderr in `message`, paths made project-relative.
 - Views: `iso` (55,0,25), `front` (90,0,0), `top` (0,0,0), `side` (90,0,90), all with
   `--viewall --autocenter`, orthographic except `iso`.
-- `MeshInfo` is computed by the server from the STL (triangle count, bbox, signed volume), not by OpenSCAD.
+- The worker computes `MeshInfo` from the triangles, including the bounding box, count and `closed`.
+  A closed surface has exactly two triangles per edge. Only closed meshes with consistent winding
+  and nonzero signed volume report a volume.
+- The renderer reduces mesh previews over 200,000 triangles by vertex clustering and returns a
+  `proxy` URL for `proxy.stl`. Measurements and the `mesh` URL use all triangles.
 - **Thumbnails.** `Project.cover` is the chosen cover, else the first of the part models, other `.scad`
   files (shallowest first), meshes. `Project.thumbnail` is `/api/projects/<slug>/thumbnail/<key>.png`, where
   the key is a hash of the cover's path, its rev, the revs of every file it uses (the index's SCAD links)
@@ -167,6 +173,44 @@ Borrowed from Basic Memory so the folders stay openable there and in Obsidian.
   `ETag`. A cover that does not render is remembered (`<key>.fail`), the request is `404`, a `project`
   event goes out, and the thumbnail moves to the next candidate; `null` when none is left or there is
   nothing to draw. A key that is not the project's current one and was never drawn is `404`.
+
+## Scan intake
+
+Drop an STL, OBJ, 3MF or PLY onto the project tree and choose **Add scan**. Give STL, OBJ and PLY
+their original units (`mm`, `cm`, `m` or `in`). For 3MF the embedded units take precedence. PLY
+accepts ASCII and both binary byte orders. Save the uploads as ordinary reference files when you
+want to keep their original bytes.
+
+Intake accepts a raw file of at most 200 MB and 2,000,000 triangles. Export a triangulated surface
+for point clouds, and decimate larger meshes before uploading. In one revision the server writes
+`refs/<name>/scan.stl` in millimetres and `refs/<name>/source.md`. An existing name returns 409.
+The note records the original filename, units, triangle counts, removal of degenerate triangles
+and pieces below 1% of total surface area, closedness and noise. Intake welds vertices with a
+tolerance of one ten-thousandth of the median nonzero edge length, corrects winding, and discards
+the original upload. On an open component it keeps the side supported by most of the source area
+when making the winding consistent. The noise estimate is the median distance of a vertex to the
+least-squares plane of its neighbours.
+
+## Scanned parts and alignment
+
+Set a part's `source` to `"scanned"` and give it `scan: { file, rotate, translate }`. The file is a
+project mesh, typically `refs/<name>/scan.stl`. Rotations are in degrees about x, y and z in that
+order, then translation in millimetres. This part has no OpenSCAD file, parameters or attempts.
+The server evaluates only `parses` and its dimension gates, using the placed mesh. A measurement
+can address `parts/<id>.part.json` to use that frame. Assemblies place scanned parts the same way
+as other parts. The library continues to hold bought parts.
+
+The index records a `scans` dependency from the spec to its mesh. A mesh write, deletion or
+reappearance queues the part. Evaluation and report keys include the referenced file revision.
+Historical evaluation uses the spec and mesh from the requested revision.
+
+`POST .../align/<path>` proposes a pose without making a revision. With no target it uses the
+largest fitted plane as the datum, the longest remaining direction for x, and the box corner or
+main revolution axis as the origin; every other plane with at least 90 % of the datum's area is
+offered in `ambiguous` as the other way up, with `rms` null. With `to`, the renderer tries the 24 proper principal-axis
+orientations and refines them with point-to-plane ICP
+([Chen–Medioni](https://graphics.stanford.edu/~smr/ICP/comparison/chen-medioni-align-rob91.pdf)). The result includes the RMS distance and
+other poses with similar scores when alignment is ambiguous.
 
 ## Parts and gates
 
@@ -192,9 +236,10 @@ expected, and a hint.
 | Gate | Passes when | Applies |
 |---|---|---|
 | `parses` | OpenSCAD evaluates the model without errors and builds a non-empty solid | always |
-| `solid` | one connected, watertight body | always |
+| `solid` | one connected, watertight body | printed or bought |
 | `fits_bed` | the bounding box fits the printer's bed (x and y may swap) | printed |
 | `dim:<id>` | the measured value is within the dimension's range | always, one per spec dimension |
+| `match:<id>` | both area shares within ±`tol` reach `share` (default 0.95) | printed, one per match |
 | `lint` | first line is a `//` description; at least one Customizer parameter; no top-level `$fn` above 128. More than 6 unexplained numeric literals inside modules is a `warn` | printed, `standard` and up |
 | `base` | bed contact is at least 20 mm² and 5 % of the footprint | printed, `standard` and up |
 | `overhang` | unsupported overhang area is within the printer's limit; over it is `warn` under `standard`, `fail` under `functional` | printed, `standard` and up |
@@ -218,6 +263,12 @@ that are not `skipped`; `pass`, `warn` and `waived` count as passed.
   a point that lies on the surface, fails and says so.
 - `min_wall`: from the thickness field (see Measuring).
 
+**Matches** compare the printed model to another part in the same project. Each entry in
+`matches` has `id`, `label`, `to` (the target part id), positive `tol` in millimetres, and optional
+`share` in (0, 1]. The index records a `matches` dependency on the target spec. Report freshness
+follows the target's state, including changes to a referenced scan. The gate reports both area
+shares and the place of the largest sampled difference.
+
 **Waivers** (`POST .../parts/:id/waive`) are a person's decision: the author `agent` gets
 `403 forbidden`. An empty reason removes the waiver. `parses` and `solid` cannot be waived. There is
 no authentication, so this is a rule the agent's tools keep (they have no waive tool), not a lock. **Print results** (`POST .../parts/:id/prints`)
@@ -234,25 +285,43 @@ else `draft`, else `pending`, else `passed`; `empty` without parts.
 ## Measuring
 
 All of it works on any `.scad` or mesh file (a part's model, a reference, a library part), is computed
-on the rendered mesh, and is cached beside the render.
+on the rendered mesh in the measuring worker, and is cached beside the mesh. Slice, probe and
+section skip the standard previews. Measure and compare also return previews.
 
 - `POST /projects/:slug/measure/<path>` → mesh info, analysis and a render.
   - *Shells*: connected components. *Watertight*: every edge has exactly two triangles.
   - *Base*: area of downward faces within 0.05 mm of the lowest z.
   - *Overhang*: area of faces whose normal points down more steeply than the printer's
     `maxOverhangDeg` from vertical, excluding the base.
-  - *Wall thickness*: from each triangle's centre a ray goes into the material against the normal;
+  - *Wall thickness* (closed surfaces only): from each triangle's centre a ray goes into the material against the normal;
     the distance to the first exit is that triangle's thickness. The reported minimum is the smallest
     thickness that covers at least 1 mm² and 0.2 % of the surface, so one sliver triangle does not
     decide it. The per-triangle values are served as `thickness.f32`.
 - `POST .../slice/<path>` → the closed outlines of the cross-section at `axis` = `at`, each with area,
-  bounding box and a best-fit circle.
+  bounding box and a best-fit circle. On an open mesh, section endpoints within the weld tolerance
+  join, and any remaining open chains appear in `open`. With `shadow: true` in place of `at`, the server
+  returns the union of the projected triangles along the axis.
+- `POST .../features/<path>` → up to 40 planes, cylinders and spheres, largest first. Each fit reports
+  its origin, direction, diameter and length where applicable, RMS, largest residual and coverage.
+  `features.f32` holds the feature index per full-resolution triangle (-1 for none). The result also
+  specifies the matching field and mesh URLs for display, using a remapped field for a light mesh.
+- `POST .../fit/<path>` with `{ at: [x, y, z], kind? }` → the fit on the surface nearest that point,
+  or 422 when no fit agrees with the surface. Both fitting routes work from the mesh cache.
+  They grow connected patches using normals and distance, then use least-squares fits following
+  [Forbes](https://eprintspublications.npl.co.uk/5050/) and [Shakarji](https://nvlpubs.nist.gov/nistpubs/jres/103/6/j36sha.pdf).
+  On a mesh file, the viewer can colour by feature or fit the picked point.
 - `POST .../probe/<path>` → whether a point is inside material and how long the run of material or
-  air through it is along an axis.
+  air through it is along an axis. Open meshes return `422 render_failed`.
 - `POST .../section/<path>` → a PNG of the part cut at `axis` = `at`, lower side kept.
-- `POST /projects/:slug/compare` → how B differs from A (two parts, files or revisions): signed
-  distance from B's surface to A's per triangle (`deviation-<key of A>.f32`), min, max, RMS, 95th
-  percentile, volume and size deltas. Positive means B has more material there.
+- `POST /projects/:slug/compare` → signed distance statistics in both directions, area shares within
+  the supplied positive `tol` (default 0.2 mm), volume and size deltas. B-to-A statistics appear at
+  the top level of `deviation`. A-to-B statistics appear in `reverse`. The `at` point is the largest
+  sampled difference in either direction. Signs follow angle-weighted pseudonormals
+  ([Bærentzen–Aanæs](https://doi.org/10.1109/tvcg.2005.49)) on both open
+  and closed meshes. The deviation field holds the mean signed distance per triangle of the
+  returned B mesh. The match gate uses the same area-weighted surface samples. Sample spacing
+  scales with tolerance. A comparison that would exceed eight million samples in either direction
+  asks for a larger tolerance or a retessellated mesh.
 
 ## Assembly
 
@@ -261,13 +330,15 @@ translation) and says how they must meet (`mates`). A part of the library is `_l
 /projects/:slug/assembly` validates and writes it and returns the report; `GET` returns the current
 report (`404` without an assembly); a write to any part it uses re-evaluates it.
 
-For every pair that is mated or whose bounding boxes come within 1 mm, the server measures the gap
-(smallest distance between the two surfaces) and the shared volume.
+For every pair that is mated or whose bounding boxes come within 1 mm, the server measures the gap between the surfaces. For two closed meshes it also measures shared
+volume. For an open surface, `overlapCm3` is null and `penetration` reports depth behind the
+surface and its limit. The open-scan clash limit is the larger of the printer's sliding clearance
+and twice the scan's measured noise. This threshold is a decision for review.
 
 | Gate | Passes when |
 |---|---|
 | `parts` | every instance's part exists, has a model and is not `failed`; `warn` while any is `draft` |
-| `clash` | no pair shares more than 0.5 mm³, except pairs mated as `press` |
+| `clash` | no closed pair shares more than 0.5 mm³ and no open pair exceeds its depth limit, except pairs mated as `press` |
 | `mate:<id>` | `clearance`: no overlap and the gap is within `min`..`max`. `contact`: no overlap and gap ≤ 0.05 mm. `press`: the two overlap or touch |
 | `floating` | every instance is within 0.5 mm of another (skipped with a single instance) |
 | `bom` | every bought part is a library part |
@@ -418,6 +489,7 @@ must come with `content-type: application/json`. No GET changes anything. The se
 | GET | `/projects/:slug/context/<path>` | → `ContextResponse` |
 | GET | `/projects/:slug/search` | `?q=&kind=&limit=` → `SearchResponse` |
 | POST | `/projects/:slug/render/<path>` | `RenderBody` → `RenderResult` |
+| POST | `/projects/:slug/scans` | `?name=&filename=&units=`, raw mesh bytes → `ScanResult` (201) |
 | POST | `/projects/:slug/import` | `ImportBody` → `ImportResult` |
 | POST | `/import/preview` | `{ url }` → `ImportPreview` |
 | GET | `/renders/<key>/<file>` | → bytes |
@@ -435,6 +507,9 @@ must come with `content-type: application/json`. No GET changes anything. The se
 | GET | `/projects/:slug/parts/:id/attempts` | → `AttemptsResponse` |
 | POST | `/projects/:slug/parts/:id/restore` | `RestoreBody` → `WriteResult` |
 | POST | `/projects/:slug/measure/<path>` | `MeasureBody` → `MeasureResult` |
+| POST | `/projects/:slug/align/<path>` | `AlignBody` → `AlignResult` |
+| POST | `/projects/:slug/features/<path>` | `FeaturesBody` → `FeaturesResult` |
+| POST | `/projects/:slug/fit/<path>` | `FitBody` → `Feature` |
 | POST | `/projects/:slug/slice/<path>` | `SliceBody` → `SliceResult` |
 | POST | `/projects/:slug/probe/<path>` | `ProbeBody` → `ProbeResult` |
 | POST | `/projects/:slug/section/<path>` | `SectionBody` → `SectionResult` |
@@ -488,22 +563,26 @@ drawer context <file> [--depth 2]
 drawer history <project> [path]
 drawer note <project> "<text>" [--file notes/log.md] [--category c]   append a fact line (creates the file)
 drawer import <project> <url> [--name n]
+drawer scan add <project> <file> --name n [--units mm|cm|m|in]
 drawer reindex
 
 drawer guide                                 the modelling guide the server gives every agent
 drawer overview <project>                    brief, memory, parts with status, printer and materials
 drawer parts <project>                       parts with status
-drawer part <project>/<id> [--title t] [--class c] [--material m] [--strictness s] [--source printed|bought]
+drawer part <project>/<id> [--title t] [--class c] [--material m] [--strictness s] [--source printed|bought|scanned]
             [--description d] [--spec file.json]     create the part or replace its spec (--spec: a PartSpecBody; flags win)
 drawer report <project>/<id> [--param name=value]... [--at <rev-id>]   the server's verdict; --param is a what-if
 drawer set <project>/<id> name=value...      write parameter values into the model
 drawer measure <file>                        mesh info and analysis of any model
-drawer slice <file> --axis z --at 5          cross-section outlines
+drawer align <file> [--to part-or-path]      propose a frame or align to another model
+drawer features <file> [--at <rev-id>]       planes, cylinders and spheres
+drawer fit <file> --at x,y,z [--kind plane|cylinder|sphere]
+drawer slice <file> --axis z (--at 5 | --shadow)
 drawer probe <file> --from x,y,z --axis x    run of material or air through a point
 drawer section <file> --axis x --at 0 [--size 800]   downloads the PNG, prints its local path
 drawer attempts <project>/<id>               the attempt tree
 drawer restore <project>/<id> <rev-id>       make an old attempt current
-drawer compare <project> <a> <b>             a, b: a part id or a path, optionally @<rev-id>
+drawer compare <project> <a> <b> [--tol mm]  a, b: part ids or paths, optionally @<rev-id>
 drawer assembly <project> [--set file.json]  the assembly report; --set replaces assembly.json first
 drawer printed <project>/<id> ok|issue "<note>"
 drawer sessions [project]                    agent sessions

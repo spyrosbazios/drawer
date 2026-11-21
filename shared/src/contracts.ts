@@ -2,12 +2,12 @@
  * Contracts between the server and its two helper packages. The server depends on these
  * interfaces only; @drawer/render and @drawer/importers implement them.
  */
-import type { Axis, Diagnostic, ImportFile, ImportPreview, ImportSite, MeshAnalysis, MeshInfo, ParamValues, ProbeResult, RenderStage, RenderView, ScadParam, SliceResult, Vec3 } from "./api";
+import type { AlignResult, OpenClash, Axis, DeviationStats, Diagnostic, Feature, FeatureKind, ImportFile, ImportPreview, ImportSite, MeshAnalysis, MeshInfo, ParamValues, ProbeResult, RenderStage, RenderView, ScadParam, SliceResult, Vec3, ScanUnit, MeshFormat } from "./api";
 
 // ---- @drawer/render ---------------------------------------------------------------------
 
 export interface RendererOptions {
-  /** Where outputs are cached: <cacheDir>/<key>/{mesh.stl,iso.png,front.png,top.png,side.png,sheet.png,meta.json} */
+  /** Cache root. Meshes and previews have separate directories and keys. */
   cacheDir: string;
   /** Command line prefix for OpenSCAD, split on spaces. Default "openscad". */
   openscadCmd?: string;
@@ -15,15 +15,20 @@ export interface RendererOptions {
   timeoutSeconds?: number;
 }
 
-export interface RenderRequest {
+export interface MeshRequest {
   /** Absolute path of the .scad or mesh file to render. */
   file: string;
   /** Directories for OPENSCADPATH, in order (project root, library root). */
   searchPaths: string[];
-  views: RenderView[];
-  size: number;
   /** SCAD only: top-level overrides passed as `-D name=value`. Part of the cache key. */
   params?: ParamValues;
+  /** Mesh sources only. Row-major rigid placement applied before measuring or drawing. */
+  matrix?: number[];
+}
+
+export interface RenderRequest extends MeshRequest {
+  views: RenderView[];
+  size: number;
   /** Called on every stage change, `queued` first. A cache hit stops after `analysing`. Must not throw. */
   onProgress?: (p: RenderProgress) => void;
 }
@@ -36,16 +41,21 @@ export interface RenderProgress {
   view: RenderView | null;
 }
 
-export interface RenderOutput {
+export interface MeshOutput {
   key: string;
   cached: boolean;
   seconds: number;
-  /** Absolute directory holding the outputs (= <cacheDir>/<key>). */
+  /** Absolute directory holding the outputs. */
   dir: string;
-  views: RenderView[];
   info: MeshInfo;
   log: string[];
   warnings: string[];
+}
+
+export interface RenderOutput extends MeshOutput {
+  meshKey: string;
+  proxy: boolean;
+  views: RenderView[];
 }
 
 /** Thrown by render() when OpenSCAD fails or times out; message carries its stderr. */
@@ -53,8 +63,8 @@ export class RenderError extends Error {
   override name = "RenderError";
 }
 
-/** A rendered solid: the key of a finished render, whose `<cacheDir>/<key>/mesh.stl` is read. */
-export type RenderKey = string;
+/** The key of a finished mesh in `<cacheDir>/meshes/`. */
+export type MeshKey = string;
 
 /** MeshAnalysis with the thickness field as a file name inside the render's cache directory (the server turns it into a URL). */
 export type MeshAnalysisOutput = Omit<MeshAnalysis, "thickness"> & { thicknessFile: string | null };
@@ -68,18 +78,15 @@ export interface CheckOutput {
 
 /** A solid placed in space: 4×4 row-major matrix applied to the render's mesh. */
 export interface PlacedMesh {
-  key: RenderKey;
+  key: MeshKey;
   matrix: number[];
 }
 
-export interface DeviationOutput {
-  min: number;
-  max: number;
-  rms: number;
-  p95: number;
+export interface DeviationOutput extends DeviationStats {
+  reverse: DeviationStats;
   at: Vec3 | null;
-  /** File name inside B's cache directory: Float32 LE per triangle of B's mesh.stl. */
   fieldFile: string;
+  meshFile: string;
 }
 
 export interface AssemblyRenderOutput {
@@ -89,13 +96,27 @@ export interface AssemblyRenderOutput {
   views: RenderView[];
 }
 
+export interface ScanNormalization {
+  bytes: Uint8Array;
+  info: MeshInfo;
+  originalTriangles: number;
+  degenerateTriangles: number;
+  debrisTriangles: number;
+  noiseMm: number;
+  unit: string;
+}
+
 export interface Renderer {
   /** OpenSCAD's version string, or null when it cannot be run. Cached after the first call. */
   version(): Promise<string | null>;
   /** Renders one at a time (internal queue). Throws RenderError. */
   render(req: RenderRequest): Promise<RenderOutput>;
+  /** Produce just the mesh and its metadata, without any PNG previews. */
+  mesh(req: MeshRequest): Promise<MeshOutput>;
   /** Pure parse of a mesh file on disk; no OpenSCAD. Throws on an unreadable file. */
   meshInfo(file: string): Promise<MeshInfo>;
+  /** Normalize uploaded scan bytes before any project files are written. */
+  normalizeScan(req: { format: MeshFormat; bytes: Uint8Array; units?: ScanUnit }): Promise<ScanNormalization>;
 
   /** Parses and evaluates a .scad file without building geometry (seconds, not minutes). Never throws for a broken file: that is `ok: false`. Throws RenderError only when OpenSCAD cannot be run. */
   check(req: { file: string; searchPaths: string[]; params?: ParamValues }): Promise<CheckOutput>;
@@ -104,22 +125,25 @@ export interface Renderer {
   /** The source with the values of the named top-level parameters replaced; everything else byte-for-byte unchanged. Throws RenderError for a name that is not a parameter or a value of the wrong type. Pure. */
   applyParams(source: string, values: ParamValues): string;
 
-  // Everything below works on a finished render and is cached beside it (`<cacheDir>/<key>/`).
+  // Everything below works on a finished mesh and is cached beside it (`<cacheDir>/meshes/<key>/`).
   // None of it may block the event loop for long: mesh maths runs in a worker.
   /** Shells, base, overhangs, wall thickness. `overhangDeg` is the steepest printable angle from vertical. */
-  analyse(req: { key: RenderKey; overhangDeg: number }): Promise<MeshAnalysisOutput>;
+  analyse(req: { key: MeshKey; overhangDeg: number }): Promise<MeshAnalysisOutput>;
   /** Cross-section outlines at `axis` = `at`. */
-  slice(req: { key: RenderKey; axis: Axis; at: number }): Promise<SliceResult>;
+  slice(req: { key: MeshKey; axis: Axis; at: number | null }): Promise<SliceResult>;
+  features(req: { key: MeshKey }): Promise<{ features: Feature[]; fieldFile: string; meshFile: string }>;
+  fit(req: { key: MeshKey; at: Vec3; kind?: FeatureKind }): Promise<Feature | null>;
+  align(req: { key: MeshKey; to?: MeshKey }): Promise<AlignResult>;
   /** The run of material or air through a point along an axis. */
-  probe(req: { key: RenderKey; from: Vec3; axis: Axis }): Promise<ProbeResult>;
+  probe(req: { key: MeshKey; from: Vec3; axis: Axis }): Promise<ProbeResult>;
   /** PNG of the solid cut at `axis` = `at` (the lower side kept), looking at the cut. Returns the file name inside the cache directory. Throws RenderError. */
-  section(req: { key: RenderKey; axis: Axis; at: number; size: number }): Promise<string>;
+  section(req: { key: MeshKey; axis: Axis; at: number; size: number }): Promise<string>;
   /** A view of a finished render scaled down to at most `size` pixels on its longer side. Returns the file name inside the cache directory. Throws RenderError. */
-  thumbnail(req: { key: RenderKey; view: RenderView; size: number }): Promise<string>;
+  thumbnail(req: { key: string; view: RenderView; size: number }): Promise<string>;
   /** Signed distance from B's surface to A's. */
-  deviation(req: { a: RenderKey; b: RenderKey }): Promise<DeviationOutput>;
+  deviation(req: { a: MeshKey; b: MeshKey; tol: number; proxy?: boolean }): Promise<DeviationOutput>;
   /** Smallest distance between two placed solids (0 when they touch or overlap) and the volume they share. */
-  interference(req: { a: PlacedMesh; b: PlacedMesh }): Promise<{ gapMm: number; overlapCm3: number }>;
+  interference(req: { a: PlacedMesh; b: PlacedMesh; clearanceMm?: number }): Promise<{ gapMm: number; overlapCm3: number | null; penetration?: OpenClash }>;
   /** Views and a contact sheet of several placed solids together, each in its own colour; `highlight` pairs are drawn in the warning colour. Cached under its own key. Throws RenderError. */
   renderAssembly(req: { instances: (PlacedMesh & { id: string })[]; highlight: string[]; views: RenderView[]; size: number }): Promise<AssemblyRenderOutput>;
 }

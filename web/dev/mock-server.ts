@@ -6,15 +6,19 @@
  *
  * Knobs: MOCK_LATENCY (ms per request), MOCK_RENDER_MS, MOCK_EVAL_MS, MOCK_AGENT_MS. Seeded data: dev/mock/seed.ts.
  */
-import { HEADER_AUTHOR, HEADER_MESSAGE, HEADER_REV, LIBRARY_SLUG, MATERIALS_FILE, PRINTER_FILE } from "../../shared/src/api";
+import { HEADER_AUTHOR, HEADER_MESSAGE, HEADER_REV, LIBRARY_SLUG, MATERIALS_FILE, PRINTER_FILE, SCAN_UNITS } from "../../shared/src/api";
 import type {
   PatchSettingsBody,
+  AlignBody,
+  AlignResult,
   AnswerBody,
   AssemblySpec,
   CompareBody,
   CreateProjectBody,
   CreateSessionBody,
   FileAttachmentBody,
+  FeaturesBody,
+  FitBody,
   EvaluateBody,
   LibraryProfile,
   MaterialsFile,
@@ -25,6 +29,7 @@ import type {
   PrinterProfile,
   ProbeBody,
   RenderResult,
+  ScanResult,
   SearchHit,
   SectionBody,
   SessionMessageBody,
@@ -32,7 +37,7 @@ import type {
   SliceBody,
   WaiveBody,
 } from "../../shared/src/api";
-import { meshInfoOfBoxes, png } from "./mock/geometry";
+import { cubeStl, meshInfoOfBoxes, meshInfoOfStl, png } from "./mock/geometry";
 import * as settings from "./mock/settings";
 import { HttpError, STATUS, body, broadcast, eventStream, fail, json, startHeartbeat } from "./mock/http";
 import * as parts from "./mock/parts";
@@ -87,7 +92,7 @@ function libraryKeeps(path: string): void {
 
 function renderOf(slug: string, path: string, at: string | undefined): RenderResult {
   const kind = kindOf(path);
-  if (kind !== "scad" && kind !== "mesh") throw new HttpError("invalid", "Only .scad and mesh files render");
+  if (kind !== "scad" && kind !== "mesh" && !path.endsWith(".part.json")) throw new HttpError("invalid", "Only .scad and mesh files render");
   const p = getProject(slug);
   const v = at ? p.files.get(path)?.versions.find((x) => x.revisionId === at) : head(p, path);
   if (!v) throw new HttpError("not_found", `No such file or revision: ${path}`);
@@ -198,7 +203,7 @@ async function handle(req: Request): Promise<Response> {
     const p = parts.projectOut(getProject(m[1]));
     if (!p.cover || !p.thumbnail?.endsWith(`/${m[2]}.png`)) return fail("not_found", "This thumbnail is out of date", 404);
     try {
-      const png = parts.renders.get(renderOf(m[1], p.cover, undefined).key)?.png;
+      const png = parts.previews.get(renderOf(m[1], p.cover, undefined).key);
       if (!png) return fail("not_found", "Nothing renders", 404);
       return new Response(png, { headers: { "content-type": "image/png", "cache-control": "public, max-age=31536000, immutable", etag: `"${m[2]}"` } });
     } catch {
@@ -334,8 +339,37 @@ async function handle(req: Request): Promise<Response> {
     return json(result);
   }
 
+  m = /^\/projects\/([^/]+)\/scans$/.exec(route);
+  if (m?.[1] && method === "POST") {
+    const project = m[1];
+    const p = getProject(project);
+    const name = url.searchParams.get("name") ?? "";
+    const filename = url.searchParams.get("filename") ?? "";
+    const units = SCAN_UNITS.find((unit) => unit === url.searchParams.get("units"));
+    const embedded = filename.toLowerCase().endsWith(".3mf");
+    if (project === LIBRARY_SLUG || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(name) || kindOf(filename) !== "mesh" || (!embedded && !units)) {
+      throw new HttpError("invalid", "Choose a scan name, mesh filename and original units");
+    }
+    if ((await req.arrayBuffer()).byteLength === 0) throw new HttpError("render_failed", "point cloud has no faces");
+    const path = `refs/${name}/scan.stl`;
+    const source = `refs/${name}/source.md`;
+    if (head(p, path) || head(p, source)) throw new HttpError("exists", `refs/${name} already exists`);
+    const size = units === "in" ? 25.4 : units === "m" ? 1000 : units === "cm" ? 10 : 1;
+    const stl = cubeStl(embedded ? 10 : size * 10);
+    const mesh = meshInfoOfStl(stl);
+    const noiseMm = 0.02;
+    const message = `add scan ${name}`;
+    const revision = record(p, author, message, [path, source]);
+    const note = encoder.encode(`# Scan source\n\n- [filename] ${JSON.stringify(filename)}\n- [closed] true\n- [noise_mm] ${noiseMm}\n`);
+    for (const [file, bytes] of [[path, stl], [source, note]] as const) {
+      const saved = put(p, file, bytes, author, message, revision);
+      broadcast({ type: "file", action: "written", project, path: file, rev: saved.rev, author });
+    }
+    return json({ project, path, source, revisionId: revision.id, mesh, noiseMm } satisfies ScanResult, 201);
+  }
+
   // ---- measuring ----
-  m = /^\/projects\/([^/]+)\/(measure|slice|probe|section)\/(.+)$/.exec(route);
+  m = /^\/projects\/([^/]+)\/(measure|align|features|fit|slice|probe|section)\/(.+)$/.exec(route);
   if (m?.[1] && m[2] && m[3] && method === "POST") {
     const [, slug, op, file] = m;
     await Bun.sleep(150);
@@ -344,9 +378,25 @@ async function handle(req: Request): Promise<Response> {
         const b = await body<MeasureBody>(req);
         return json(parts.measure(slug, validPath(file), b.revision));
       }
+      case "align": {
+        const b = await body<AlignBody>(req);
+        const shape = parts.boxesOfFile(slug, validPath(file), b.revision);
+        const { min } = meshInfoOfBoxes(shape).bbox;
+        return json({ rotate: [0, 0, 0], translate: [-min[0], -min[1], -min[2]], rms: b.to ? 0 : null, ambiguous: [] } satisfies AlignResult);
+      }
+      case "features": {
+        const b = await body<FeaturesBody>(req);
+        return json(parts.featuresOfFile(slug, validPath(file), b.revision));
+      }
+      case "fit": {
+        const b = await body<FitBody>(req);
+        const result = parts.featuresOfFile(slug, validPath(file), b.revision).features.find((feature) => !b.kind || feature.kind === b.kind);
+        if (!result) throw new HttpError("render_failed", "No fitting surface at that point");
+        return json(result);
+      }
       case "slice": {
         const b = await body<SliceBody>(req);
-        return json(parts.slice(slug, validPath(file), b.axis, b.at, b.revision));
+        return json(parts.slice(slug, validPath(file), b.axis, b.shadow ? null : b.at ?? 0, b.revision));
       }
       case "probe": {
         const b = await body<ProbeBody>(req);
@@ -363,7 +413,7 @@ async function handle(req: Request): Promise<Response> {
   if (m?.[1] && method === "POST") {
     const b = await body<CompareBody>(req);
     await Bun.sleep(300);
-    return json(parts.compare(m[1], b.a, b.b));
+    return json(parts.compare(m[1], b.a, b.b, b.tol));
   }
 
   // ---- parts ----
@@ -478,17 +528,18 @@ async function handle(req: Request): Promise<Response> {
   // ---- render outputs: meshes, views, fields ----
   m = /^\/renders\/([^/]+)\/(.+)$/.exec(route);
   if (m?.[1] && m[2]) {
-    const r = parts.renders.get(m[1]);
-    if (!r) throw new HttpError("not_found", "No such render");
     const immutable = { "cache-control": "public, max-age=31536000, immutable" };
-    if (m[2] === "mesh.stl") return new Response(r.stl, { headers: { "content-type": "model/stl", ...immutable } });
-    if (m[2].endsWith(".f32")) {
-      const field = r.fields.get(m[2]);
+    const mesh = parts.meshes.get(m[1]);
+    if (mesh && m[2] === "mesh.stl") return new Response(mesh.stl, { headers: { "content-type": "model/stl", ...immutable } });
+    if (mesh && m[2].endsWith(".f32")) {
+      const field = mesh.fields.get(m[2]);
       if (!field) throw new HttpError("not_found", `No field ${m[2]}`);
       return new Response(field, { headers: { "content-type": "application/octet-stream", ...immutable } });
     }
-    if (m[2].startsWith("section-")) return new Response(png(256, 256, 120), { headers: { "content-type": "image/png", ...immutable } });
-    return new Response(r.png, { headers: { "content-type": "image/png", ...immutable } });
+    if (mesh && m[2].startsWith("section-")) return new Response(png(256, 256, 120), { headers: { "content-type": "image/png", ...immutable } });
+    const view = parts.previews.get(m[1]);
+    if (!view) throw new HttpError("not_found", "No such render");
+    return new Response(view, { headers: { "content-type": "image/png", ...immutable } });
   }
 
   m = /^\/projects\/([^/]+)\/search$/.exec(route);

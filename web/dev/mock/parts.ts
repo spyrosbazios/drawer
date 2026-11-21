@@ -3,7 +3,7 @@
  * from the model's parameters, so changing a number (a what-if, set params, the fake agent) changes the
  * measurements and the gates the way the real server would.
  */
-import { ASSEMBLY_FILE, LIBRARY_SLUG, PART_DIR, PART_SPEC_SUFFIX } from "../../../shared/src/api";
+import { ASSEMBLY_FILE, DEFAULT_COMPARE_TOL, LIBRARY_SLUG, PART_DIR, PART_SPEC_SUFFIX, UNWAIVABLE_GATES } from "../../../shared/src/api";
 import type {
   AssemblyReport,
   AssemblySpec,
@@ -11,6 +11,8 @@ import type {
   CompareResult,
   CompareSide,
   Dimension,
+  Feature,
+  FeaturesResult,
   GateResult,
   MeasureResult,
   MeshAnalysis,
@@ -33,8 +35,13 @@ import type {
 import { bboxOf, box, boxesStl, gapMm, meshInfoOfBoxes, moveBoxes, overlapCm3, perTriangleField, png, round, thicknessOf, volumeCm3 } from "./geometry";
 import type { Box } from "./geometry";
 import { HttpError, broadcast } from "./http";
-import { decoder, encoder, getProject, head, now, projects, put, sha, textOf } from "./store";
+import { decoder, encoder, getProject, head, kindOf, now, projects, put, sha, textOf } from "./store";
 import type { StoredProject } from "./store";
+
+const isModelPath = (path: string): boolean => {
+  const kind = kindOf(path.toLowerCase());
+  return kind === "scad" || kind === "mesh";
+};
 
 export const PRINTER: PrinterProfile = {
   name: "Prusa MK4 (mock)",
@@ -143,25 +150,24 @@ const shapeOf = (id: string): Shape => SHAPES[id] ?? ((v) => [box([0, 0, 0], [n(
 
 // ---- renders ---------------------------------------------------------------------------------
 
-export interface StoredRender {
-  stl: Uint8Array;
-  png: Uint8Array;
-  fields: Map<string, Uint8Array>;
-}
+export const meshes = new Map<string, { stl: Uint8Array; fields: Map<string, Uint8Array> }>();
+export const previews = new Map<string, Uint8Array>();
 
-export const renders = new Map<string, StoredRender>();
-
-/** Registers the boxes as a render and returns its URLs; the thickness field matches the STL triangle for triangle. */
-export function renderBoxes(boxes: readonly Box[]): { ref: RenderRef; thickness: string } {
-  const key = sha(encoder.encode(JSON.stringify(boxes))).slice(0, 32);
-  if (!renders.has(key)) {
+/** The same geometry serves measurements and every set of preview views. */
+export function renderBoxes(boxes: readonly Box[]): { ref: RenderRef; meshKey: string; thickness: string } {
+  const meshKey = sha(encoder.encode(JSON.stringify(boxes))).slice(0, 32);
+  const key = sha(encoder.encode(`preview:${meshKey}`)).slice(0, 32);
+  if (!meshes.has(meshKey)) {
     const fields = new Map<string, Uint8Array>([["thickness.f32", perTriangleField(boxes.map(thicknessOf))]]);
-    renders.set(key, { stl: boxesStl(boxes), png: png(256, 256, Number.parseInt(key.slice(0, 2), 16)), fields });
+    meshes.set(meshKey, { stl: boxesStl(boxes), fields });
   }
+  if (!previews.has(key)) previews.set(key, png(256, 256, Number.parseInt(key.slice(0, 2), 16)));
   const base = `/api/renders/${key}`;
+  const meshBase = `/api/renders/${meshKey}`;
   return {
-    ref: { key, mesh: `${base}/mesh.stl`, views: { iso: `${base}/iso.png`, front: `${base}/front.png`, top: `${base}/top.png`, side: `${base}/side.png` }, sheet: `${base}/sheet.png` },
-    thickness: `${base}/thickness.f32`,
+    ref: { key, mesh: `${meshBase}/mesh.stl`, views: { iso: `${base}/iso.png`, front: `${base}/front.png`, top: `${base}/top.png`, side: `${base}/side.png` }, sheet: `${base}/sheet.png` },
+    meshKey,
+    thickness: `${meshBase}/thickness.f32`,
   };
 }
 
@@ -208,9 +214,11 @@ export function specOf(p: StoredProject, id: string, at?: string): PartSpec {
     class: s.class ?? "",
     description: s.description ?? "",
     source: s.source ?? "printed",
+    ...(s.scan ? { scan: s.scan } : {}),
     material: s.material ?? p.meta.defaults.material,
     strictness: s.strictness ?? p.meta.defaults.strictness,
     dimensions: s.dimensions ?? [],
+    matches: s.matches ?? [],
     waivers: s.waivers ?? [],
     prints: s.prints ?? [],
   };
@@ -311,7 +319,8 @@ function dimensionGate(d: Dimension, boxes: readonly Box[], values: Record<strin
   };
 }
 
-function gatesOf(spec: PartSpec, text: string, boxes: readonly Box[] | null, values: Record<string, number>): GateResult[] {
+/** `targets`: the boxes of each part a match points at, null when it has none. */
+function gatesOf(spec: PartSpec, text: string, boxes: readonly Box[] | null, values: Record<string, number>, targets: ReadonlyMap<string, readonly Box[] | null>): GateResult[] {
   const g = (id: string, label: string, status: GateResult["status"], measured: string | null, expected: string | null, hint: string | null = null, at: Vec3 | null = null, detail: string | null = null): GateResult => ({
     id,
     label,
@@ -326,7 +335,7 @@ function gatesOf(spec: PartSpec, text: string, boxes: readonly Box[] | null, val
   const standard = printed && spec.strictness !== "quick";
   if (!boxes) {
     const out = [g("parses", "Builds", "fail", null, null, "Fix the syntax error the check reports.", null, "Parser error: syntax error in line 1")];
-    for (const id of ["solid", "fits_bed", ...spec.dimensions.map((d) => `dim:${d.id}`)]) out.push(g(id, id, "skipped", null, null, null, null, "No mesh: the model does not build."));
+    for (const id of ["solid", "fits_bed", ...spec.dimensions.map((d) => `dim:${d.id}`), ...spec.matches.map((m) => `match:${m.id}`)]) out.push(g(id, id, "skipped", null, null, null, null, "No mesh: the model does not build."));
     return out;
   }
   const bb = bboxOf(boxes);
@@ -346,6 +355,11 @@ function gatesOf(spec: PartSpec, text: string, boxes: readonly Box[] | null, val
       out.push(g("min_wall", "Minimum wall", ok ? "pass" : "fail", `${fmt(thicknessOf(thin))} mm`, `≥ ${fmt(min)} mm`, ok ? null : `Thicken the wall at ${centre(thin).join(", ")} to ${fmt(min)} mm.`, centre(thin)));
     }
   }
+  for (const match of spec.matches) {
+    const target = targets.get(match.to);
+    const close = target ? bboxOf(target).size.every((size, i) => Math.abs(size - bb.size[i]!) <= match.tol) : false;
+    out.push(g(`match:${match.id}`, match.label, close ? "pass" : "fail", close ? "100% in both directions" : null, `±${match.tol} mm`, close ? null : `Compare the model with ${match.to} and fix the largest difference first.`));
+  }
   if (spec.strictness === "functional") for (const x of out) if (x.status === "warn") x.status = "fail";
   for (const x of out) {
     const w = spec.waivers.find((w) => w.gate === x.id);
@@ -358,12 +372,14 @@ function gatesOf(spec: PartSpec, text: string, boxes: readonly Box[] | null, val
 }
 
 function statusOf(gates: readonly GateResult[]): ReportStatus {
-  if (gates.some((x) => (x.id === "parses" || x.id === "solid") && x.status === "fail")) return "failed";
+  if (gates.some((x) => UNWAIVABLE_GATES.includes(x.id) && x.status === "fail")) return "failed";
   return gates.some((x) => x.status === "fail") ? "draft" : "passed";
 }
 
 export function boxesOfPart(slug: string, id: string, at?: string, overrides: ParamValues = {}): Box[] | null {
   const p = getProject(slug);
+  const scan = head(p, specPath(id)) ? specOf(p, id, at).scan : undefined;
+  if (scan) return head(p, scan.file) ? moveBoxes(boxesOfFile(slug, scan.file, at), scan.translate) : null;
   const text = textOf(p, modelPath(id), at);
   if (text === null || text.includes("FAIL")) return null;
   return shapeOf(id)(valuesOf(paramsOf(text), overrides));
@@ -374,7 +390,7 @@ export function computeReport(slug: string, id: string, opts: { at?: string; par
   const started = performance.now();
   const p = getProject(slug);
   const spec = specOf(p, id, opts.at);
-  const text = textOf(p, modelPath(id), opts.at);
+  const text = spec.scan ? (head(p, spec.scan.file) ? "" : "FAIL") : textOf(p, modelPath(id), opts.at);
   const revisionId = opts.at ?? p.revisions[0]?.id ?? "r0";
   const material = MATERIALS.find((m) => m.name === spec.material);
   const whatIf = opts.params !== undefined && Object.keys(opts.params).length > 0;
@@ -384,8 +400,9 @@ export function computeReport(slug: string, id: string, opts: { at?: string; par
   }
   const params = paramsOf(text);
   const values = valuesOf(params, opts.params);
-  const boxes = text.includes("FAIL") ? null : shapeOf(id)(values);
-  const gates = gatesOf(spec, text, boxes, values);
+  const boxes = spec.scan ? boxesOfPart(slug, id, opts.at) : text.includes("FAIL") ? null : shapeOf(id)(values);
+  const targets = new Map(spec.matches.map((m) => [m.to, head(p, specPath(m.to)) ? boxesOfPart(slug, m.to, opts.at) : null] as const));
+  const gates = gatesOf(spec, text, boxes, values, targets).filter((gate) => !spec.scan || gate.id === "parses" || gate.id.startsWith("dim:"));
   const counted = gates.filter((x) => x.status !== "skipped");
   const passed = counted.filter((x) => x.status !== "fail").length;
   return {
@@ -415,7 +432,8 @@ export function summaryOf(slug: string, id: string): PartSummary {
   const spec = specOf(p, id);
   const s = stateOf(slug, id);
   const r = s.evaluating && !s.report ? null : currentReport(slug, id);
-  const model = head(p, modelPath(id)) ? modelPath(id) : null;
+  const modelFile = spec.scan?.file ?? modelPath(id);
+  const model = head(p, modelFile) ? modelFile : null;
   const f = p.files.get(model ?? specPath(id));
   return {
     project: slug,
@@ -520,6 +538,7 @@ function specOf_defaults(p: StoredProject, spec: Partial<PartSpec> & { title: st
     material: p.meta.defaults.material,
     strictness: p.meta.defaults.strictness,
     dimensions: [],
+    matches: [],
     waivers: [],
     prints: [],
     ...spec,
@@ -590,6 +609,7 @@ export function recordPrint(slug: string, id: string, body: { outcome?: "ok" | "
 
 export function attemptsOf(slug: string, id: string): Attempt[] {
   specOf(getProject(slug), id);
+  if (specOf(getProject(slug), id).scan) return [];
   return stateOf(slug, id).attempts.map((a) => ({ ...a }));
 }
 
@@ -621,7 +641,7 @@ function boxesOfSide(slug: string, side: CompareSide): Box[] {
   throw new HttpError("invalid", "A side needs a part or a path");
 }
 
-export function compare(slug: string, a: CompareSide, b: CompareSide): CompareResult {
+export function compare(slug: string, a: CompareSide, b: CompareSide, tol = DEFAULT_COMPARE_TOL): CompareResult {
   const A = boxesOfSide(slug, a);
   const B = boxesOfSide(slug, b);
   // Per box of B: how much thicker it is than A's box at the same index. Plausible, signed, per triangle.
@@ -629,25 +649,35 @@ export function compare(slug: string, a: CompareSide, b: CompareSide): CompareRe
     const ab = A[i];
     return ab ? round(thicknessOf(bb) - thicknessOf(ab), 3) : round(thicknessOf(bb), 3);
   });
-  const ra = renderBoxes(A).ref;
-  const rb = renderBoxes(B).ref;
-  const name = `deviation-${ra.key}.f32`;
-  renders.get(rb.key)?.fields.set(name, perTriangleField(deltas));
+  const ra = renderBoxes(A);
+  const rb = renderBoxes(B);
+  const name = `deviation-${ra.meshKey}.f32`;
+  meshes.get(rb.meshKey)?.fields.set(name, perTriangleField(deltas));
   const abs = deltas.map(Math.abs).sort((x, y) => x - y);
   const worst = deltas.reduce((best, d, i) => (Math.abs(d) > Math.abs(deltas[best] ?? 0) ? i : best), 0);
   const wb = B[worst];
   const ma = meshInfoOfBoxes(A);
   const mb = meshInfoOfBoxes(B);
   return {
-    a: { render: ra, mesh: ma },
-    b: { render: rb, mesh: mb },
+    a: { render: ra.ref, mesh: ma },
+    b: { render: rb.ref, mesh: mb },
     deviation: {
       min: Math.min(...deltas),
       max: Math.max(...deltas),
       rms: round(Math.sqrt(deltas.reduce((s, d) => s + d * d, 0) / Math.max(1, deltas.length)), 3),
       p95: abs[Math.floor(abs.length * 0.95)] ?? 0,
+      within: abs.filter((n) => n <= tol).length / Math.max(1, abs.length),
+      reverse: {
+        min: -Math.max(...deltas),
+        max: -Math.min(...deltas),
+        rms: round(Math.sqrt(deltas.reduce((s, d) => s + d * d, 0) / Math.max(1, deltas.length)), 3),
+        p95: abs[Math.floor(abs.length * 0.95)] ?? 0,
+        within: abs.filter((n) => n <= tol).length / Math.max(1, abs.length),
+      },
+      tol,
+      mesh: rb.ref.mesh,
       at: wb && deltas[worst] !== 0 ? centre(wb) : null,
-      field: `/api/renders/${rb.key}/${name}`,
+      field: `/api/renders/${rb.meshKey}/${name}`,
     },
     volumeDeltaCm3: round((mb.volumeCm3 ?? 0) - (ma.volumeCm3 ?? 0), 4),
     sizeDelta: [round(mb.bbox.size[0] - ma.bbox.size[0]), round(mb.bbox.size[1] - ma.bbox.size[1]), round(mb.bbox.size[2] - ma.bbox.size[2])],
@@ -657,7 +687,7 @@ export function compare(slug: string, a: CompareSide, b: CompareSide): CompareRe
 /** Any .scad or mesh file: a part's model uses its shape, anything else a cube sized from the file. */
 export function boxesOfFile(slug: string, path: string, revision?: string): Box[] {
   const p = getProject(slug);
-  const id = /^parts\/([a-z0-9][a-z0-9-]*)\.scad$/.exec(path)?.[1];
+  const id = /^parts\/([a-z0-9][a-z0-9-]*)\.(?:scad|part\.json)$/.exec(path)?.[1];
   if (id) {
     const b = boxesOfPart(slug, id, revision);
     if (!b) throw new HttpError("render_failed", `ERROR: Parser error in file "${path}"`);
@@ -666,7 +696,7 @@ export function boxesOfFile(slug: string, path: string, revision?: string): Box[
   const f = p.files.get(path);
   const v = revision ? f?.versions.find((x) => x.revisionId === revision) : head(p, path);
   if (!v) throw new HttpError("not_found", `No file ${path}`);
-  if (!/\.(scad|stl|3mf|obj)$/i.test(path)) throw new HttpError("invalid", "Only .scad and mesh files can be measured");
+  if (!isModelPath(path)) throw new HttpError("invalid", "Only .scad and mesh files can be measured");
   const size = Number(/cube\(\s*(?:\[\s*)?(\d+(?:\.\d+)?)/.exec(decoder.decode(v.bytes.subarray(0, 4000)))?.[1] ?? 20);
   return [box([0, 0, 0], [size, size, size])];
 }
@@ -676,12 +706,27 @@ export function measure(slug: string, path: string, revision?: string): MeasureR
   return { project: slug, path, mesh: meshInfoOfBoxes(boxes), analysis: analysisOf(boxes), render: renderBoxes(boxes).ref };
 }
 
-export function slice(slug: string, path: string, axis: "x" | "y" | "z", at: number, revision?: string): SliceResult {
+export function featuresOfFile(slug: string, path: string, revision?: string): FeaturesResult {
+  const boxes = boxesOfFile(slug, path, revision);
+  const { ref, meshKey } = renderBoxes(boxes);
+  const features = boxes.map((b): Feature => ({
+    kind: "plane",
+    origin: [b.min[0], b.min[1], b.max[2]],
+    direction: [0, 0, 1],
+    diameter: null, length: null, side: null,
+    areaMm2: (b.max[0] - b.min[0]) * (b.max[1] - b.min[1]),
+    rms: 0, maxError: 0, coverage: 1,
+  })).sort((a, b) => b.areaMm2 - a.areaMm2);
+  meshes.get(meshKey)?.fields.set("features.f32", perTriangleField(boxes.map((_, i) => i)));
+  return { features, field: `/api/renders/${meshKey}/features.f32`, mesh: ref.mesh };
+}
+
+export function slice(slug: string, path: string, axis: "x" | "y" | "z", at: number | null, revision?: string): SliceResult {
   const boxes = boxesOfFile(slug, path, revision);
   const k = AXES[axis];
   const [u, v] = [0, 1, 2].filter((i) => i !== k) as [number, number];
   const contours = boxes
-    .filter((b) => (b.min[k] ?? 0) <= at && at <= (b.max[k] ?? 0))
+    .filter((b) => at === null || ((b.min[k] ?? 0) <= at && at <= (b.max[k] ?? 0)))
     .map((b) => {
       const min: [number, number] = [b.min[u] ?? 0, b.min[v] ?? 0];
       const max: [number, number] = [b.max[u] ?? 0, b.max[v] ?? 0];
@@ -697,7 +742,7 @@ export function slice(slug: string, path: string, axis: "x" | "y" | "z", at: num
         points: [min, [max[0], min[1]], max, [min[0], max[1]]] as [number, number][],
       };
     });
-  return { axis, at, contours };
+  return { axis, at, contours, open: [] };
 }
 
 export function probe(slug: string, path: string, from: Vec3, axis: "x" | "y" | "z", revision?: string): ProbeResult {
@@ -709,8 +754,8 @@ export function probe(slug: string, path: string, from: Vec3, axis: "x" | "y" | 
 }
 
 export function section(slug: string, path: string, axis: "x" | "y" | "z", at: number, revision?: string): { axis: "x" | "y" | "z"; at: number; image: string } {
-  const r = renderBoxes(boxesOfFile(slug, path, revision)).ref;
-  return { axis, at, image: `/api/renders/${r.key}/section-${axis}-${at}.png` };
+  const { meshKey } = renderBoxes(boxesOfFile(slug, path, revision));
+  return { axis, at, image: `/api/renders/${meshKey}/section-${axis}-${at}.png` };
 }
 
 // ---- assembly ----------------------------------------------------------------------------------
@@ -774,7 +819,7 @@ export function computeAssembly(slug: string): AssemblyReport {
     ),
   );
   const press = (a: string, b: string) => spec.mates.some((m) => m.fit === "press" && ((m.a === a && m.b === b) || (m.a === b && m.b === a)));
-  const clashes = pairs.filter((x) => x.overlapCm3 > 0.0005 && !press(x.a, x.b));
+  const clashes = pairs.filter((x) => (x.overlapCm3 ?? 0) > 0.0005 && !press(x.a, x.b));
   const first = clashes[0];
   const firstBoxes = first ? placed.find((x) => x.inst.id === first.a)?.boxes : undefined;
   gates.push(
@@ -782,7 +827,7 @@ export function computeAssembly(slug: string): AssemblyReport {
       "clash",
       "No parts overlap",
       clashes.length ? "fail" : "pass",
-      clashes.length ? clashes.map((c) => `${c.a} × ${c.b}: ${round(c.overlapCm3 * 1000, 1)} mm³`).join("; ") : "no overlap",
+      clashes.length ? clashes.map((c) => `${c.a} × ${c.b}: ${round((c.overlapCm3 ?? 0) * 1000, 1)} mm³`).join("; ") : "no overlap",
       "≤ 0.5 mm³",
       first ? `Move ${first.b} away from ${first.a}, or mate them as a press fit.` : null,
       firstBoxes ? bboxOf(firstBoxes).max : null,
@@ -911,7 +956,7 @@ export function projectStatus(slug: string): ProjectStatus {
 /** Like the server: `cover` is the effective cover, the chosen file or else a part's model, then any .scad or mesh. */
 export function projectOut(p: StoredProject): Project {
   const live = [...p.files.entries()].filter(([, f]) => !f.deleted).map(([path]) => path).sort();
-  const auto = live.find((f) => f.startsWith(`${PART_DIR}/`) && f.endsWith(".scad")) ?? live.find((f) => /\.(scad|stl|3mf|obj)$/i.test(f)) ?? null;
+  const auto = live.find((f) => f.startsWith(`${PART_DIR}/`) && f.endsWith(".scad")) ?? live.find((f) => isModelPath(f)) ?? null;
   const cover = p.meta.cover ?? auto;
   return { ...p.meta, cover, thumbnail: cover === null ? null : `/api/projects/${p.meta.slug}/thumbnail/${thumbnailKey(p, cover)}.png`, status: projectStatus(p.meta.slug) };
 }

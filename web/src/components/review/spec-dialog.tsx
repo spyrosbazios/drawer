@@ -1,4 +1,4 @@
-import type { DimensionKind, PartSpec } from "@drawer/shared/api";
+import { DIMENSION_KINDS, PART_SOURCES, type DimensionKind, type PartSpec } from "@drawer/shared/api";
 import { useForm } from "@tanstack/react-form";
 import { PlusIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useLibraryProfile } from "@/hooks/library";
 import { usePutPart } from "@/hooks/parts";
 import { InvalidError } from "@/services/api";
-import { AXES, DIMENSION_KINDS, KIND_HELP, STRICTNESS, dimensionFields, formToBody, newDimension, specFormSchema, specToForm } from "./spec-form";
+import { AXES, KIND_HELP, STRICTNESS, dimensionFields, formToBody, newDimension, specFormSchema, specToForm } from "./spec-form";
 
 interface Props {
   slug: string;
@@ -34,7 +34,7 @@ const firstError = (errors: readonly unknown[]): string | undefined =>
   errors.map((x) => (typeof x === "string" ? x : typeof x === "object" && x !== null && "message" in x && typeof x.message === "string" ? x.message : undefined)).find(Boolean);
 
 type DimText = "id" | "label" | "at" | "nominal" | "tol" | "min" | "max";
-type TextPath = "title" | "class" | "description" | `dimensions[${number}].${DimText}` | `dimensions[${number}].near[${0 | 1}]` | `dimensions[${number}].${"from" | "box"}[${0 | 1 | 2}]`;
+type TextPath = "title" | "class" | "description" | "scanFile" | "scanRotate" | "scanTranslate" | `dimensions[${number}].${DimText}` | `dimensions[${number}].near[${0 | 1}]` | `dimensions[${number}].${"from" | "box"}[${0 | 1 | 2}]`;
 
 const STRICT_HELP: Record<(typeof STRICTNESS)[number], string> = {
   quick: "builds, one body, fits the bed, spec dimensions",
@@ -118,18 +118,28 @@ function SpecEditor({ slug, part, spec, onClose }: { slug: string; part: string;
               <FieldLabel htmlFor="spec-source" className="text-xs">
                 Source
               </FieldLabel>
-              <Select value={f.state.value} onValueChange={(v) => f.handleChange(v === "bought" ? "bought" : "printed")}>
+              <Select value={f.state.value} onValueChange={(v) => f.handleChange(PART_SOURCES.find((source) => source === v) ?? "printed")}>
                 <SelectTrigger id="spec-source" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="printed">Printed</SelectItem>
                   <SelectItem value="bought">Bought (no printability gates)</SelectItem>
+                  <SelectItem value="scanned">Scanned</SelectItem>
                 </SelectContent>
               </Select>
             </Field>
           )}
         </form.Field>
+        <form.Subscribe selector={(state) => state.values.source}>
+          {(source) => source === "scanned" && (
+            <>
+              {text("scanFile", "Scan file")}
+              {text("scanRotate", "Rotate x, y, z (degrees)")}
+              {text("scanTranslate", "Translate x, y, z (mm)")}
+            </>
+          )}
+        </form.Subscribe>
         <form.Field name="material">
           {(f) => (
             <Field>

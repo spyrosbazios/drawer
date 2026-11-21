@@ -3,7 +3,9 @@
  * deviation and the gap between two solids. Pure and synchronous: the renderer runs these in a
  * worker (see measure-worker.ts), tests call them directly.
  */
-import type { Axis, MeshAnalysis, ProbeResult, SliceContour, Vec3 } from "@drawer/shared/api";
+import type { Axis, MeshAnalysis, ProbeResult, SliceContour, SliceResult, Vec3 } from "@drawer/shared/api";
+import { union, type MultiPolygon, type Polygon } from "polygon-clipping";
+import { buildTopology, weld, UnionFind, type Faces } from "./topology";
 import { type Bvh, buildBvh, isInside, nearestDist2, rayCrossings, rayFirst } from "./bvh";
 
 /** Bed contact: downward faces within this distance of the lowest z. */
@@ -18,172 +20,12 @@ const ROUND_RMS_SHARE = 0.02;
 
 const AXIS_INDEX: Record<Axis, number> = { x: 0, y: 1, z: 2 };
 
-// ---- welding ----------------------------------------------------------------------------
-
-export interface Welded {
-  /** Vertex index per corner, 3 per triangle. */
-  index: Uint32Array;
-  vertexCount: number;
-}
-
-/** Joins corners with bit-identical coordinates (OpenSCAD writes shared vertices exactly). */
-export function weld(pos: Float32Array): Welded {
-  const corners = pos.length / 3;
-  const norm = new Float32Array(pos.length);
-  for (let i = 0; i < pos.length; i++) norm[i] = pos[i]! + 0; // -0 → 0
-  const bits = new Uint32Array(norm.buffer);
-  let size = 1;
-  while (size < corners * 2) size <<= 1;
-  const mask = size - 1;
-  const table = new Int32Array(size).fill(-1); // corner index of the first occurrence
-  const vertexOf = new Uint32Array(corners);
-  const index = new Uint32Array(corners);
-  let vertexCount = 0;
-  for (let c = 0; c < corners; c++) {
-    const a = bits[c * 3]!, b = bits[c * 3 + 1]!, d = bits[c * 3 + 2]!;
-    let h = (Math.imul(a, 73856093) ^ Math.imul(b, 19349663) ^ Math.imul(d, 83492791)) & mask;
-    for (;;) {
-      const slot = table[h]!;
-      if (slot < 0) {
-        table[h] = c;
-        vertexOf[c] = vertexCount;
-        index[c] = vertexCount++;
-        break;
-      }
-      if (bits[slot * 3] === a && bits[slot * 3 + 1] === b && bits[slot * 3 + 2] === d) {
-        index[c] = vertexOf[slot]!;
-        break;
-      }
-      h = (h + 1) & mask;
-    }
-  }
-  return { index, vertexCount };
-}
-
-class UnionFind {
-  readonly parent: Uint32Array;
-  constructor(n: number) {
-    this.parent = new Uint32Array(n);
-    for (let i = 0; i < n; i++) this.parent[i] = i;
-  }
-  find(i: number): number {
-    let r = i;
-    while (this.parent[r] !== r) r = this.parent[r]!;
-    while (this.parent[i] !== r) {
-      const next = this.parent[i]!;
-      this.parent[i] = r;
-      i = next;
-    }
-    return r;
-  }
-  union(a: number, b: number): void {
-    const ra = this.find(a);
-    const rb = this.find(b);
-    if (ra !== rb) this.parent[ra] = rb;
-  }
-}
-
-// ---- per-triangle basics ----------------------------------------------------------------
-
-interface Faces {
-  /** Unit normal, 3 per triangle (0 for a degenerate triangle). */
-  normal: Float64Array;
-  area: Float64Array;
-  /** 3 per triangle. */
-  centroid: Float64Array;
-}
-
-function faces(pos: Float32Array): Faces {
-  const n = pos.length / 9;
-  const normal = new Float64Array(n * 3);
-  const area = new Float64Array(n);
-  const centroid = new Float64Array(n * 3);
-  for (let t = 0; t < n; t++) {
-    const b = t * 9;
-    const ax = pos[b]!, ay = pos[b + 1]!, az = pos[b + 2]!;
-    const ux = pos[b + 3]! - ax, uy = pos[b + 4]! - ay, uz = pos[b + 5]! - az;
-    const vx = pos[b + 6]! - ax, vy = pos[b + 7]! - ay, vz = pos[b + 8]! - az;
-    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    const len = Math.hypot(nx, ny, nz);
-    area[t] = len / 2;
-    if (len > 0) {
-      normal[t * 3] = nx / len;
-      normal[t * 3 + 1] = ny / len;
-      normal[t * 3 + 2] = nz / len;
-    }
-    centroid[t * 3] = (ax + pos[b + 3]! + pos[b + 6]!) / 3;
-    centroid[t * 3 + 1] = (ay + pos[b + 4]! + pos[b + 7]!) / 3;
-    centroid[t * 3 + 2] = (az + pos[b + 5]! + pos[b + 8]!) / 3;
-  }
-  return { normal, area, centroid };
-}
-
-/** Each corner's undirected edge (corner k to corner k+1 of its triangle), as a numeric key. */
-function edgeKeys(w: Welded): Float64Array {
-  const n = w.index.length;
-  const keys = new Float64Array(n);
-  for (let t = 0; t < n; t += 3) {
-    for (let k = 0; k < 3; k++) {
-      const a = w.index[t + k]!;
-      const b = w.index[t + ((k + 1) % 3)]!;
-      keys[t + k] = a < b ? a * w.vertexCount + b : b * w.vertexCount + a;
-    }
-  }
-  return keys;
-}
-
-/** Corner indices sorted by edge key, so the corners of one edge are adjacent. */
-function cornersByEdge(keys: Float64Array): Uint32Array {
-  const order = new Uint32Array(keys.length);
-  for (let i = 0; i < order.length; i++) order[i] = i;
-  order.sort((a, b) => keys[a]! - keys[b]!);
-  return order;
-}
-
-/** Every undirected edge shared by exactly two triangles. */
-function isWatertight(w: Welded): boolean {
-  const n = w.index.length;
-  if (n === 0) return false;
-  const keys = edgeKeys(w).sort();
-  let run = 1;
-  for (let i = 1; i <= n; i++) {
-    if (i < n && keys[i] === keys[i - 1]) run++;
-    else {
-      if (run !== 2) return false;
-      run = 1;
-    }
-  }
-  return true;
-}
-
-/**
- * Connected bodies: triangles join across an edge that exactly two triangles share. Two bodies that
- * only touch at a vertex, or along an edge (which then has four triangles), stay separate.
- */
-function countShells(w: Welded, triangles: number): number {
-  if (triangles === 0) return 0;
-  const keys = edgeKeys(w);
-  const order = cornersByEdge(keys);
-  const uf = new UnionFind(triangles);
-  let start = 0;
-  for (let i = 1; i <= order.length; i++) {
-    if (i < order.length && keys[order[i]!] === keys[order[start]!]) continue;
-    if (i - start === 2) uf.union(Math.floor(order[start]! / 3), Math.floor(order[start + 1]! / 3));
-    start = i;
-  }
-  let shells = 0;
-  for (let t = 0; t < triangles; t++) if (uf.find(t) === t) shells++;
-  return shells;
-}
-
 // ---- analyse ----------------------------------------------------------------------------
 
 export type AnalysisResult = Omit<MeshAnalysis, "thickness">;
 
-export function analyse(pos: Float32Array, overhangDeg: number, bvh?: Bvh): { analysis: AnalysisResult; thickness: Float32Array } {
+export function analyse(pos: Float32Array, overhangDeg: number, bvh?: Bvh, f = buildTopology(pos)): { analysis: AnalysisResult; thickness: Float32Array } {
   const n = pos.length / 9;
-  const w = weld(pos);
-  const f = faces(pos);
 
   let surface = 0;
   let minZ = Infinity;
@@ -198,8 +40,7 @@ export function analyse(pos: Float32Array, overhangDeg: number, bvh?: Bvh): { an
   minZ = lo[2]!;
   for (let t = 0; t < n; t++) surface += f.area[t]!;
 
-  const shells = countShells(w, n);
-  const watertight = isWatertight(w);
+  const { shells, closed: watertight } = f;
 
   // Base and overhang.
   const isBase = new Uint8Array(n);
@@ -214,22 +55,22 @@ export function analyse(pos: Float32Array, overhangDeg: number, bvh?: Bvh): { an
   }
   // A face's angle from vertical is asin(-nz) for a downward normal.
   const limit = Math.sin((Math.min(Math.max(overhangDeg, 0), 90) * Math.PI) / 180);
-  const overhangUf = new UnionFind(w.vertexCount);
+  const overhangUf = new UnionFind(f.vertexCount);
   const isOverhang = new Uint8Array(n);
   let overhangArea = 0;
   for (let t = 0; t < n; t++) {
     if (isBase[t] || f.area[t] === 0 || -f.normal[t * 3 + 2]! <= limit + 1e-9) continue;
     isOverhang[t] = 1;
     overhangArea += f.area[t]!;
-    overhangUf.union(w.index[t * 3]!, w.index[t * 3 + 1]!);
-    overhangUf.union(w.index[t * 3]!, w.index[t * 3 + 2]!);
+    overhangUf.union(f.index[t * 3]!, f.index[t * 3 + 1]!);
+    overhangUf.union(f.index[t * 3]!, f.index[t * 3 + 2]!);
   }
   let overhangAt: Vec3 | null = null;
   if (overhangArea > 0) {
     const regions = new Map<number, { area: number; x: number; y: number; z: number }>();
     for (let t = 0; t < n; t++) {
       if (!isOverhang[t]) continue;
-      const root = overhangUf.find(w.index[t * 3]!);
+      const root = overhangUf.find(f.index[t * 3]!);
       const a = f.area[t]!;
       const r = regions.get(root) ?? { area: 0, x: 0, y: 0, z: 0 };
       r.area += a;
@@ -298,9 +139,8 @@ export function planeAxes(axis: Axis): [number, number] {
   return axis === "x" ? [1, 2] : axis === "y" ? [0, 2] : [0, 1];
 }
 
-export function slice(pos: Float32Array, axis: Axis, at: number): SliceContour[] {
+export function slice(pos: Float32Array, axis: Axis, at: number, w = weld(pos), weldGap = 0): Pick<SliceResult, "contours" | "open"> {
   const n = pos.length / 9;
-  const w = weld(pos);
   const ai = AXIS_INDEX[axis];
   const [ui, vi] = planeAxes(axis);
   // A crossing edge, keyed by its welded vertices, gets one point; each crossing triangle one segment.
@@ -339,13 +179,49 @@ export function slice(pos: Float32Array, axis: Axis, at: number): SliceContour[]
     }
   }
 
+  // Snap boundary endpoints to each other within the surface weld tolerance.
+  if (weldGap > 0) {
+    const boundary = [...segsOf].filter(([, edges]) => edges.length === 1);
+    const cells = new Map<string, number[]>();
+    for (const [id, edges] of boundary) {
+      const [x, y] = pointOf.get(id)!;
+      const ix = Math.floor(x / weldGap), iy = Math.floor(y / weldGap);
+      let found: number | null = null;
+      let distance = weldGap;
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+        for (const candidate of cells.get(`${ix + i},${iy + j}`) ?? []) {
+          const q = pointOf.get(candidate)!;
+          const d = Math.hypot(x - q[0], y - q[1]);
+          if (d <= distance) {
+            found = candidate;
+            distance = d;
+          }
+        }
+      }
+      if (found !== null) {
+        const segment = edges[0]! * 2;
+        segs[segment + (segs[segment] === id ? 0 : 1)] = found;
+        segsOf.get(found)!.push(edges[0]!);
+        segsOf.delete(id);
+        const q = pointOf.get(found)!;
+        const bucket = cells.get(`${Math.floor(q[0] / weldGap)},${Math.floor(q[1] / weldGap)}`)!;
+        bucket.splice(bucket.indexOf(found), 1);
+      } else {
+        const key = `${ix},${iy}`;
+        const bucket = cells.get(key) ?? [];
+        bucket.push(id);
+        cells.set(key, bucket);
+      }
+    }
+  }
+
   const loops: [number, number][][] = [];
+  const open: [number, number][][] = [];
   const used = new Uint8Array(segs.length / 2);
-  for (let s0 = 0; s0 < used.length; s0++) {
-    if (used[s0]) continue;
+  const trace = (s0: number, start: number): void => {
+    if (used[s0]) return;
     used[s0] = 1;
-    const start = segs[s0 * 2]!;
-    let key = segs[s0 * 2 + 1]!;
+    let key = segs[s0 * 2] === start ? segs[s0 * 2 + 1]! : segs[s0 * 2]!;
     const keys = [start];
     let closed = false;
     for (;;) {
@@ -359,7 +235,6 @@ export function slice(pos: Float32Array, axis: Axis, at: number): SliceContour[]
       used[next] = 1;
       key = segs[next * 2] === key ? segs[next * 2 + 1]! : segs[next * 2]!;
     }
-    if (!closed) continue;
     const pts: [number, number][] = [];
     for (const k of keys) {
       const p = pointOf.get(k)!;
@@ -369,15 +244,55 @@ export function slice(pos: Float32Array, axis: Axis, at: number): SliceContour[]
     const first = pts[0];
     const lastP = pts[pts.length - 1];
     if (pts.length > 1 && first && lastP && Math.abs(first[0] - lastP[0]) <= 1e-9 && Math.abs(first[1] - lastP[1]) <= 1e-9) pts.pop();
-    const polygon = dropCollinear(pts);
-    if (polygon.length >= 3) loops.push(polygon);
-  }
+    if (closed) {
+      const polygon = dropCollinear(pts);
+      if (polygon.length >= 3) loops.push(polygon);
+    } else if (pts.length >= 2) {
+      const stride = Math.max(1, Math.ceil((pts.length - 1) / (MAX_CONTOUR_POINTS - 1)));
+      open.push(pts.filter((_, i) => i % stride === 0 || i === pts.length - 1).map(([x, y]) => [round(x), round(y)]));
+    }
+  };
+  for (const [start, edges] of segsOf) if (edges.length === 1) trace(edges[0]!, start);
+  for (let s0 = 0; s0 < used.length; s0++) trace(s0, segs[s0 * 2]!);
 
-  return loops.map((pts, i) => {
+  const contours = loops.map((pts, i) => {
     let depth = 0;
     for (let j = 0; j < loops.length; j++) if (j !== i && pointInPolygon(pts[0]!, loops[j]!)) depth++;
     return contour(pts, depth % 2 === 1);
   });
+  return { contours, open };
+}
+
+/** Orthographic silhouette, the union of all projected triangles. Merge in bounded batches. */
+export function shadow(pos: Float32Array, axis: Axis): SliceContour[] {
+  const [u, v] = planeAxes(axis);
+  const levels: (MultiPolygon | undefined)[] = [];
+  const batch: Polygon[] = [];
+  const flush = (): void => {
+    if (batch.length === 0) return;
+    let accumulated = union(batch[0]!, ...batch.slice(1));
+    batch.length = 0;
+    let level = 0;
+    while (levels[level] !== undefined) {
+      accumulated = union(levels[level]!, accumulated);
+      levels[level++] = undefined;
+    }
+    levels[level] = accumulated;
+  };
+  for (let t = 0; t < pos.length; t += 9) {
+    const a: [number, number] = [pos[t + u]!, pos[t + v]!];
+    const b: [number, number] = [pos[t + 3 + u]!, pos[t + 3 + v]!];
+    const c: [number, number] = [pos[t + 6 + u]!, pos[t + 6 + v]!];
+    if ((b[0] - a[0]) * (c[1] - a[1]) === (b[1] - a[1]) * (c[0] - a[0])) continue;
+    batch.push([[a, b, c, a]]);
+    if (batch.length >= 128) flush();
+  }
+  flush();
+  const merged = levels.filter((group): group is MultiPolygon => group !== undefined);
+  if (!merged.length) return [];
+  return union(merged[0]!, ...merged.slice(1)).flatMap((polygon) =>
+    polygon.map((ring, i) => contour(dropCollinear(ring.slice(0, -1)), i > 0)),
+  );
 }
 
 function pointInPolygon(p: [number, number], poly: [number, number][]): boolean {
@@ -575,59 +490,6 @@ export function probe(b: Bvh, from: Vec3, axis: Axis): ProbeResult {
   };
 }
 
-// ---- deviation --------------------------------------------------------------------------
-
-export interface DeviationResult {
-  min: number;
-  max: number;
-  rms: number;
-  p95: number;
-  at: Vec3 | null;
-  field: Float32Array;
-}
-
-/** Per triangle of B, the signed distance from its centroid to A's surface: negative inside A. */
-export function deviation(a: Bvh, bPos: Float32Array): DeviationResult {
-  const f = faces(bPos);
-  const n = bPos.length / 9;
-  const field = new Float32Array(n);
-  let min = Infinity, max = -Infinity, sq = 0, total = 0;
-  let worst = -1;
-  for (let t = 0; t < n; t++) {
-    const x = f.centroid[t * 3]!, y = f.centroid[t * 3 + 1]!, z = f.centroid[t * 3 + 2]!;
-    let d = Math.sqrt(nearestDist2(a, x, y, z));
-    if (d < 1e-6) d = 0;
-    else if (isInside(a, x, y, z)) d = -d;
-    field[t] = d;
-    if (d < min) min = d;
-    if (d > max) max = d;
-    const area = f.area[t]!;
-    sq += d * d * area;
-    total += area;
-    if (worst < 0 || Math.abs(d) > Math.abs(field[worst]!)) worst = t;
-  }
-  if (n === 0) return { min: 0, max: 0, rms: 0, p95: 0, at: null, field };
-  // Area-weighted 95th percentile of |d|.
-  const idx = Array.from({ length: n }, (_, i) => i).sort((i, j) => Math.abs(field[i]!) - Math.abs(field[j]!));
-  let acc = 0;
-  let p95 = Math.abs(field[idx[idx.length - 1]!]!);
-  for (const i of idx) {
-    acc += f.area[i]!;
-    if (acc >= 0.95 * total) {
-      p95 = Math.abs(field[i]!);
-      break;
-    }
-  }
-  return {
-    min: round(min),
-    max: round(max),
-    rms: round(total > 0 ? Math.sqrt(sq / total) : 0),
-    p95: round(p95),
-    at: [round(f.centroid[worst * 3]!), round(f.centroid[worst * 3 + 1]!), round(f.centroid[worst * 3 + 2]!)],
-    field,
-  };
-}
-
 // ---- interference -----------------------------------------------------------------------
 
 /** Applies a 4×4 row-major matrix to every corner. */
@@ -661,7 +523,7 @@ export function bounds(pos: Float32Array): { min: Vec3; max: Vec3 } {
  * crossing the other's surface, or a vertex of one inside the other, is contact. Otherwise the
  * smallest vertex-to-surface distance either way (edge-to-edge closest pairs are not searched).
  */
-export function gap(a: Bvh, b: Bvh): number {
+export function gap(a: Bvh, b: Bvh, aClosed = true, bClosed = true): number {
   for (const [p, q] of [[a, b], [b, a]] as const) {
     const pos = p.pos;
     for (let i = 0; i < pos.length; i += 9) {
@@ -674,10 +536,10 @@ export function gap(a: Bvh, b: Bvh): number {
     }
   }
   let best = Infinity;
-  for (const [p, q] of [[a, b], [b, a]] as const) {
+  for (const [p, q, closed] of [[a, b, bClosed], [b, a, aClosed]] as const) {
     const pos = p.pos;
     // A solid entirely inside the other: one vertex decides it.
-    if (pos.length >= 3 && isInside(q, pos[0]!, pos[1]!, pos[2]!)) return 0;
+    if (closed && pos.length >= 3 && isInside(q, pos[0]!, pos[1]!, pos[2]!)) return 0;
     for (let i = 0; i < pos.length; i += 3) {
       const d2 = nearestDist2(q, pos[i]!, pos[i + 1]!, pos[i + 2]!, best * best);
       if (d2 < best * best) best = Math.sqrt(d2);

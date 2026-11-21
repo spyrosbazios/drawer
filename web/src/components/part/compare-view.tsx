@@ -91,10 +91,10 @@ function SideBySide({ result, labelA, labelB, onScene }: { result: CompareResult
   return (
     <div className="grid size-full grid-rows-2 divide-y divide-line sm:grid-cols-2 sm:grid-rows-1 sm:divide-x sm:divide-y-0">
       <Suspense fallback={<CanvasFallback />}>
-        <PartCanvas url={result.a.render.mesh} caption={`A · ${labelA}`} onScene={setA} cube={false} />
+        <PartCanvas url={result.a.render.proxy ?? result.a.render.mesh} caption={`A · ${labelA}`} onScene={setA} cube={false} />
       </Suspense>
       <Suspense fallback={<CanvasFallback />}>
-        <PartCanvas url={result.b.render.mesh} caption={`B · ${labelB}`} onScene={sceneB} />
+        <PartCanvas url={result.b.render.proxy ?? result.b.render.mesh} caption={`B · ${labelB}`} onScene={sceneB} />
       </Suspense>
     </div>
   );
@@ -116,7 +116,7 @@ function DeviationPane({ slug, part, result, labelA, labelB, onScene }: { slug: 
     <>
       <Suspense fallback={<CanvasFallback />}>
         <PartCanvas
-          url={result.b.render.mesh}
+          url={result.deviation.mesh}
           field={field}
           markers={markers}
           onScene={onScene}
@@ -125,7 +125,7 @@ function DeviationPane({ slug, part, result, labelA, labelB, onScene }: { slug: 
         />
       </Suspense>
       {values.isError && <p className="absolute top-10 left-2 rounded border border-line bg-card/90 px-2 py-1 text-xs text-warn">{values.error.message}</p>}
-      <FieldLegend kind="deviation" domain={domain} caption={`Deviation B − A · rms ${formatLength(result.deviation.rms)} · p95 ${formatLength(result.deviation.p95)}`} />
+      <FieldLegend kind="deviation" domain={domain} caption={`Deviation B − A · rms ${formatLength(result.deviation.rms)} · p95 ${formatLength(result.deviation.p95)} · within ${formatLength(result.deviation.tol)}: A ${(result.deviation.reverse.within * 100).toFixed(1)}%, B ${(result.deviation.within * 100).toFixed(1)}%`} />
     </>
   );
 }

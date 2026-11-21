@@ -2,7 +2,7 @@ import { TriangleAlertIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MeshScene, webglAvailable } from "@/lib/mesh-scene";
-import type { MeshFormat } from "@/lib/mesh-scene";
+import type { MeshFormat } from "@drawer/shared/api";
 import { useLocalPref } from "@/lib/local-pref";
 import { realisticShading } from "@/lib/shading";
 import { FitButton } from "./fit-button";

@@ -4,12 +4,18 @@
  * time in its own queue and never holds the service lock while OpenSCAD works.
  */
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type {
+  AlignBody,
+  AlignResult,
   AssemblyReport,
   AssemblySpec,
   Attempt,
   CompareResult,
+  Feature,
+  FeaturesResult,
+  FitBody,
+  GateResult,
   CompareSide,
   Diagnostic,
   EvaluateBody,
@@ -38,17 +44,17 @@ import type {
   WaiveBody,
   WriteResult,
 } from "@drawer/shared/api";
-import { ASSEMBLY_FILE, BRIEF_FILE, LIBRARY_SLUG, MATERIALS_FILE, PART_DIR, PART_SPEC_SUFFIX, PRINTER_FILE } from "@drawer/shared/api";
-import { RenderError, type MeshAnalysisOutput, type Renderer } from "@drawer/shared/contracts";
+import { ASSEMBLY_FILE, BRIEF_FILE, DEFAULT_COMPARE_TOL, LIBRARY_SLUG, MATERIALS_FILE, PART_DIR, PART_SPEC_SUFFIX, PRINTER_FILE } from "@drawer/shared/api";
+import { RenderError, type MeshAnalysisOutput, type MeshOutput, type Renderer } from "@drawer/shared/contracts";
 import { ApiException, conflict, forbidden, invalid, notFound } from "../errors.ts";
 import type { EventBus } from "../events.ts";
 import type { Index } from "../index/indexer.ts";
 import { defaultMaterials, defaultPrinter } from "../store/starter.ts";
 import type { ProjectMeta, Store } from "../store/store.ts";
-import { errorMessage, isNodeError, isoSeconds, revOfBytes } from "../util.ts";
-import { assemblyGates, assemblyNext, assemblyStatus, bom, candidatePairs, placement, transformBox, type Box, type InstancePart, type PairMeasure } from "./assembly-gates.ts";
+import { errorMessage, isNodeError, isoSeconds, revOfBytes, revOfFile } from "../util.ts";
+import { assemblyGates, assemblyNext, assemblyStatus, bom, candidatePairs, isClash, placement, transformBox, type Box, type InstancePart, type PairMeasure } from "./assembly-gates.ts";
 import { deriveAttempts, type ModelRevision } from "./attempts.ts";
-import { countGates, lintSource, nextSteps, partGates, partStatus, worst, type DimMeasurement } from "./gates.ts";
+import { countGates, applyPolicy, lintSource, matchGate, nextSteps, partGates, partStatus, worst, type DimMeasurement } from "./gates.ts";
 import { measureDimension } from "./measure.ts";
 import { JobQueue } from "./queue.ts";
 import {
@@ -71,14 +77,15 @@ import {
 
 const ALL_VIEWS = ["iso", "front", "top", "side"] as const;
 const REPORT_SIZE = 800;
-const REPORT_VERSION = "drawer-report-1";
+const REPORT_VERSION = "drawer-report-6";
 const SCAD_RELATIONS = new Set(["uses", "includes", "imports"]);
 
 /** What the parts module needs from the service: writes go through it so they are validated, committed, indexed and announced. */
 export interface Workspace {
   writeFile(slug: string, path: string, bytes: Uint8Array, opts: { rev: string | undefined; author: string; message: string | undefined }): Promise<WriteResult>;
   writeMany(slug: string, writes: { path: string; bytes: Uint8Array }[], removes: string[], author: string, message: string): Promise<{ revisionId: string }>;
-  render(slug: string, path: string, body: RenderBody): Promise<RenderResult>;
+  render(slug: string, path: string, body: RenderBody, matrix?: number[]): Promise<RenderResult>;
+  mesh(slug: string, path: string, at?: string, matrix?: number[]): Promise<MeshOutput>;
 }
 
 export interface PartsDeps {
@@ -107,9 +114,17 @@ function sha(...parts: string[]): string {
 
 const paramsKey = (params: ParamValues | undefined): string => (params && Object.keys(params).length > 0 ? canonical(params) : "");
 
-function renderRef(key: string, views: readonly string[]): RenderRef {
+function renderRef(key: string, views: readonly string[]): Omit<RenderRef, "mesh"> {
   const base = `/api/renders/${key}`;
-  return { key, mesh: `${base}/mesh.stl`, views: Object.fromEntries(views.map((v) => [v, `${base}/${v}.png`])), sheet: `${base}/sheet.png` };
+  return { key, views: Object.fromEntries(views.map((v) => [v, `${base}/${v}.png`])), sheet: `${base}/sheet.png` };
+}
+
+function meshUrl(key: string): string {
+  return `/api/renders/${key}/mesh.stl`;
+}
+
+function meshKeyOf(r: RenderRef): string {
+  return basename(dirname(r.mesh));
 }
 
 function analysisView(key: string, a: MeshAnalysisOutput): MeshAnalysis {
@@ -118,7 +133,7 @@ function analysisView(key: string, a: MeshAnalysisOutput): MeshAnalysis {
 }
 
 function fromRenderResult(r: RenderResult): RenderRef {
-  return { key: r.key, mesh: r.mesh, views: r.views, sheet: r.sheet };
+  return { key: r.key, mesh: r.mesh, ...(r.proxy ? { proxy: r.proxy } : {}), views: r.views, sheet: r.sheet };
 }
 
 export class PartsService {
@@ -210,15 +225,24 @@ export class PartsService {
   // ---- structured-file validation and write hooks -------------------------------------------
 
   /** The validator for a write to `path`, or undefined when the file is not structured. Throws for a malformed spec path. */
-  validatorFor(slug: string, path: string, author: string): ((bytes: Uint8Array) => Promise<void>) | undefined {
+  validatorFor(slug: string, path: string, author: string, plannedFiles?: ReadonlySet<string>): ((bytes: Uint8Array) => Promise<void>) | undefined {
     const kind = structuredKind(slug, path);
-    if (!kind) return undefined;
+    if (!kind) {
+      const part = partOfPath(path);
+      if (part?.file !== "model") return undefined;
+      return async () => {
+        const spec = await this.readSpec(slug, part.id).catch(() => null);
+        if (spec?.scan) throw invalid("a scanned part uses scan.file as its model");
+      };
+    }
     return async (bytes) => {
       const value = parseJsonFile(bytes, path);
       switch (kind.kind) {
         case "part-spec": {
           const spec = validatePartSpec(value, await this.materialNames());
           if (slug === LIBRARY_SLUG && spec.source !== "bought") throw invalid(`a library part is bought hardware: give ${path} source "bought"; a printed part belongs in its project`);
+          if (spec.matches.some((match) => match.to === kind.id)) throw invalid("a part cannot match itself");
+          if (spec.scan && (plannedFiles?.has(modelPath(kind.id)) || await this.store.stat(slug, modelPath(kind.id)))) throw invalid("remove the OpenSCAD model before changing the source to scanned");
           if (author === "agent") {
             const stored = await this.readSpec(slug, kind.id).catch(() => null);
             if (canonical(stored?.waivers ?? []) !== canonical(spec.waivers)) throw forbidden("waivers are a person's decision: they change only through POST .../parts/<id>/waive, never by an agent");
@@ -260,8 +284,11 @@ export class PartsService {
     let assembly = false;
     for (const path of [...upserts, ...removes]) {
       const part = partOfPath(path);
-      if (part) add({ slug, id: part.id });
-      if (path.endsWith(".scad")) for (const ref of this.dependents(slug, path)) add(ref);
+      if (part) {
+        add({ slug, id: part.id });
+        if (part.file === "model") for (const ref of this.dependents(slug, specPath(part.id))) add(ref);
+      }
+      for (const ref of this.dependents(slug, path)) add(ref);
       if (slug === LIBRARY_SLUG && (path === PRINTER_FILE || path === MATERIALS_FILE)) everything = true;
       if (path === ASSEMBLY_FILE) assembly = true;
     }
@@ -302,13 +329,16 @@ export class PartsService {
     const queue: { project: string; path: string }[] = [{ project: slug, path }];
     while (queue.length > 0) {
       const item = queue.shift() as { project: string; path: string };
-      for (const link of this.index.incoming(item.project, item.path)) {
-        if (!SCAD_RELATIONS.has(link.relation)) continue;
+      const links = [...this.index.incoming(item.project, item.path).filter((link) => SCAD_RELATIONS.has(link.relation)), ...this.index.specDependents(item.project, item.path)];
+      for (const link of links) {
         const key = `${link.fromProject}/${link.from}`;
         if (seen.has(key)) continue;
         seen.add(key);
         const part = partOfPath(link.from);
-        if (part?.file === "model") out.push({ slug: link.fromProject, id: part.id });
+        if (part) {
+          out.push({ slug: link.fromProject, id: part.id });
+          if (part.file === "model") queue.push({ project: link.fromProject, path: specPath(part.id) });
+        }
         queue.push({ project: link.fromProject, path: link.from });
       }
     }
@@ -326,10 +356,17 @@ export class PartsService {
   }
 
   /** Revs of everything a part's report depends on, as far as the index knows: spec, model, the files it uses, printer and materials, and the renderer's version. */
-  stateKey(slug: string, id: string): string {
+  stateKey(slug: string, id: string, visited = new Set<string>()): string {
+    if (visited.has(id)) return `cycle:${id}`;
+    const seen = new Set(visited).add(id);
     const rev = (project: string, path: string): string => this.index.fileRow(project, path)?.rev ?? "-";
-    const revs = [this.rendererVersion, rev(slug, specPath(id)), rev(slug, modelPath(id)), rev(LIBRARY_SLUG, PRINTER_FILE), rev(LIBRARY_SLUG, MATERIALS_FILE)];
-    return sha(...revs, ...this.usedRevs(slug, modelPath(id)));
+    const revs = [REPORT_VERSION, this.rendererVersion, rev(slug, specPath(id)), rev(slug, modelPath(id)), rev(LIBRARY_SLUG, PRINTER_FILE), rev(LIBRARY_SLUG, MATERIALS_FILE)];
+    const scans = this.index.outgoing(slug, specPath(id)).filter((link) => link.relation === "scans").map((link) => `${link.target}=${rev(slug, link.target)}`).sort();
+    const matches = this.index.outgoing(slug, specPath(id)).filter((link) => link.relation === "matches").flatMap((link) => {
+      const target = partOfPath(link.target);
+      return target ? [`${target.id}=${this.stateKey(slug, target.id, seen)}`] : [];
+    }).sort();
+    return sha(...revs, ...this.usedRevs(slug, modelPath(id)), ...scans, ...matches);
   }
 
   /** What a render of `path` is made of, as far as the index knows: its rev, the revs of the files it uses, and the renderer's version. */
@@ -380,7 +417,8 @@ export class PartsService {
   }
 
   private summaryStatus(slug: string, id: string): { status: ReportStatus; passed: number; total: number; failing: string[] } {
-    if (!this.index.fileRow(slug, modelPath(id))) return { status: "empty", passed: 0, total: 0, failing: [] };
+    const scanned = this.index.outgoing(slug, specPath(id)).some((link) => link.relation === "scans");
+    if (!scanned && !this.index.fileRow(slug, modelPath(id))) return { status: "empty", passed: 0, total: 0, failing: [] };
     const row = this.index.partStatus(slug, id);
     if (row && row.state === this.stateKey(slug, id)) return { status: row.status, passed: row.passed, total: row.total, failing: row.failing };
     return { status: "pending", passed: row?.passed ?? 0, total: row?.total ?? 0, failing: [] };
@@ -398,7 +436,8 @@ export class PartsService {
       if (!(err instanceof ApiException) || err.code === "not_found") throw err;
     }
     const specRow = this.index.fileRow(slug, specPath(id));
-    const modelRow = this.index.fileRow(slug, modelPath(id));
+    const path = spec?.scan?.file ?? modelPath(id);
+    const modelRow = this.index.fileRow(slug, path);
     const newest = [specRow, modelRow].filter((r) => r !== null).sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0];
     const s = this.summaryStatus(slug, id);
     return {
@@ -410,7 +449,7 @@ export class PartsService {
       material: spec?.material ?? "",
       strictness: spec?.strictness ?? "standard",
       spec: specPath(id),
-      model: modelRow ? modelPath(id) : null,
+      model: modelRow ? path : null,
       status: spec === null ? "failed" : s.status,
       passed: s.passed,
       total: s.total,
@@ -464,7 +503,7 @@ export class PartsService {
   }
 
   async setParams(slug: string, id: string, body: SetParamsBody, author: string): Promise<WriteResult> {
-    await this.requirePart(slug, id);
+    if ((await this.requirePart(slug, id)).scan) throw invalid("a scanned part has no OpenSCAD parameters");
     const path = modelPath(id);
     const current = await this.store.currentRev(slug, path);
     if (current === null) throw notFound(`part ${id} has no model yet`);
@@ -583,6 +622,33 @@ export class PartsService {
     }
   }
 
+  /** The mesh of every part a match points at, with a digest of its state for the report key. */
+  private async matchTargets(slug: string, root: string, spec: PartSpec) {
+    const targets = new Map<string, { mesh?: MeshOutput; digest: string; error?: string }>();
+    for (const match of spec.matches) {
+      if (targets.has(match.to)) continue;
+      const isCurrent = root === this.store.projectDir(slug);
+      const state = isCurrent ? this.stateKey(slug, match.to) : "";
+      let digest = state;
+      try {
+        const target = await this.readSpec(slug, match.to, root);
+        digest = sha(state, canonical(target));
+        const path = target.scan?.file ?? modelPath(match.to);
+        const mesh = await this.renderer.mesh({
+          file: join(root, path),
+          searchPaths: this.searchPaths(root),
+          ...(target.scan ? { matrix: placement(target.scan.rotate, target.scan.translate) } : {}),
+        });
+        targets.set(match.to, { mesh, digest: sha(digest, mesh.key) });
+      } catch (err) {
+        if (!(err instanceof ApiException || err instanceof RenderError)) throw err;
+        const error = this.relativise(err.message, root);
+        targets.set(match.to, { digest: sha(digest, error), error });
+      }
+    }
+    return targets;
+  }
+
   /** Steps of an evaluation: render, analyse, measure, gates. `root` is the project tree to read the model from. */
   private async measure(
     slug: string,
@@ -600,6 +666,44 @@ export class PartsService {
     const context = [evalContext, paramsKey(params)];
     const base = { project: slug, part: id, revisionId, spec, whatIf };
     const finish = (r: Omit<PartReport, "seconds" | "evaluatedAt" | keyof typeof base>): PartReport => ({ ...base, ...r, seconds: Math.round((performance.now() - started) / 10) / 100, evaluatedAt: isoSeconds() });
+
+    if (spec.scan) {
+      if (whatIf) throw invalid("a scanned part has no OpenSCAD parameters");
+      const path = spec.scan.file;
+      const file = join(root, path);
+      const searchPaths = this.searchPaths(root);
+      const request = { file, searchPaths, matrix: placement(spec.scan.rotate, spec.scan.translate) };
+      let mesh: MeshOutput | null = null;
+      let error = "";
+      try {
+        mesh = await this.renderer.mesh(request);
+      } catch (err) {
+        if (!(err instanceof RenderError)) throw err;
+        error = this.relativise(err.message, root);
+      }
+      const sourceRev = await revOfFile(file).catch(() => "-");
+      const key = sha(REPORT_VERSION, "scan", sourceRev, mesh?.key ?? `failed:${error}`, ...context);
+      const cached = await this.readCached<PartReport>(key);
+      if (cached) return { report: { ...cached, revisionId, spec }, key, modelRev: null, context: evalContext };
+      const analysis = mesh ? await this.renderer.analyse({ key: mesh.key, overhangDeg: profile.printer.maxOverhangDeg }) : null;
+      const dimensions: Record<string, DimMeasurement> = {};
+      for (const d of spec.dimensions) if (mesh) dimensions[d.id] = await measureDimension(this.renderer, mesh.key, mesh.info, analysis, d);
+      const gates = partGates({ spec, printer: profile.printer, material: null, build: mesh ? { ok: true } : { ok: false, error }, mesh: mesh?.info ?? null, analysis, dimensions, lint: lintSource("", []) });
+      const status = partStatus(gates, true);
+      const counts = countGates(gates);
+      let render: RenderRef | null = null;
+      if (mesh) {
+        try {
+          const out = await this.renderer.render({ ...request, views: [...ALL_VIEWS], size: REPORT_SIZE });
+          if (out.meshKey === mesh.key) render = { ...renderRef(out.key, out.views), mesh: meshUrl(mesh.key), ...(out.proxy ? { proxy: `/api/renders/${mesh.key}/proxy.stl` } : {}) };
+        } catch (err) {
+          if (!(err instanceof RenderError)) throw err;
+        }
+      }
+      const report = finish({ status, passed: counts.passed, total: counts.total, gates, mesh: mesh?.info ?? null, analysis: mesh && analysis ? analysisView(mesh.key, analysis) : null, render, params: [], massG: null, next: nextSteps(gates, status, path) });
+      await this.writeCached(key, report);
+      return { report, key, modelRev: null, context: evalContext };
+    }
 
     const file = join(root, modelPath(id));
     let source: string;
@@ -623,6 +727,7 @@ export class PartsService {
       if (!(err instanceof RenderError)) throw err;
       const error = await this.buildError(file, searchPaths, params, root, err);
       const gates = partGates({ spec, printer: profile.printer, material, build: { ok: false, error }, mesh: null, analysis: null, dimensions: {}, lint: lintSource(source, scadParams) });
+      gates.push(...spec.matches.map((match) => matchGate(match, null)));
       const counts = countGates(gates);
       const status = partStatus(gates, true);
       const report = finish({ status, passed: counts.passed, total: counts.total, gates, mesh: null, analysis: null, render: null, params: scadParams, massG: null, next: nextSteps(gates, status, modelPath(id)) });
@@ -631,15 +736,33 @@ export class PartsService {
       return { report, key, modelRev, context: evalContext };
     }
 
-    const key = sha(REPORT_VERSION, render.key, ...context);
+    const targets = await this.matchTargets(slug, root, spec);
+    const targetKeys = [...targets.values()].map((target) => target.digest);
+    const key = sha(REPORT_VERSION, render.key, ...context, ...targetKeys);
     const cached = await this.readCached<PartReport>(key);
     if (cached) return { report: { ...cached, revisionId, spec, whatIf, seconds: Math.round((performance.now() - started) / 10) / 100 }, key, modelRev, context: evalContext };
 
     const built = render.info.triangles > 0;
-    const analysis = built ? await this.renderer.analyse({ key: render.key, overhangDeg: profile.printer.maxOverhangDeg }) : null;
+    const analysis = built ? await this.renderer.analyse({ key: render.meshKey, overhangDeg: profile.printer.maxOverhangDeg }) : null;
     const dimensions: Record<string, DimMeasurement> = {};
-    if (built) for (const d of spec.dimensions) dimensions[d.id] = await measureDimension(this.renderer, render.key, render.info, analysis, d);
+    if (built) for (const d of spec.dimensions) dimensions[d.id] = await measureDimension(this.renderer, render.meshKey, render.info, analysis, d);
     const gates = partGates({ spec, printer: profile.printer, material, build: { ok: true }, mesh: render.info, analysis, dimensions, lint: lintSource(source, scadParams) });
+    const copies: GateResult[] = [];
+    for (const match of spec.matches) {
+      const target = targets.get(match.to);
+      if (!built) copies.push(matchGate(match, null));
+      else if (!target?.mesh) copies.push(matchGate(match, { error: target?.error ?? `no model for ${match.to}` }));
+      else {
+        try {
+          const deviation = await this.renderer.deviation({ a: target.mesh.key, b: render.meshKey, tol: match.tol });
+          copies.push(matchGate(match, { forward: deviation.within, reverse: deviation.reverse.within, at: deviation.at }));
+        } catch (err) {
+          if (!(err instanceof RenderError)) throw err;
+          copies.push(matchGate(match, { error: this.relativise(err.message, root) }));
+        }
+      }
+    }
+    gates.push(...applyPolicy(copies, spec));
     const counts = countGates(gates);
     const status = partStatus(gates, true);
     const massG = render.info.volumeCm3 !== null && material ? Math.round(render.info.volumeCm3 * material.densityGCm3 * 100) / 100 : null;
@@ -649,8 +772,8 @@ export class PartsService {
       total: counts.total,
       gates,
       mesh: render.info,
-      analysis: analysis ? analysisView(render.key, analysis) : null,
-      render: renderRef(render.key, render.views),
+      analysis: analysis ? analysisView(render.meshKey, analysis) : null,
+      render: { ...renderRef(render.key, render.views), mesh: meshUrl(render.meshKey) },
       params: scadParams,
       massG,
       next: nextSteps(gates, status, modelPath(id)),
@@ -685,6 +808,7 @@ export class PartsService {
   /** Each attempt's status is from an evaluation of its model against the current spec, profile and renderer, or null. */
   async attempts(slug: string, id: string): Promise<Attempt[]> {
     const spec = await this.requirePart(slug, id);
+    if (spec.scan) return [];
     const context = this.evalContext(spec, await this.profile());
     const dir = this.store.projectDir(slug);
     const path = modelPath(id);
@@ -699,7 +823,7 @@ export class PartsService {
   }
 
   async restore(slug: string, id: string, revisionId: string, author: string): Promise<WriteResult> {
-    await this.requirePart(slug, id);
+    if ((await this.requirePart(slug, id)).scan) throw invalid("a scanned part has no attempts");
     const bytes = await this.store.readAt(slug, modelPath(id), revisionId);
     return this.ws.writeFile(slug, modelPath(id), bytes, { rev: "*", author, message: `restore ${revisionId}` });
   }
@@ -713,22 +837,54 @@ export class PartsService {
   async measureFile(slug: string, path: string, at: string | undefined, params: ParamValues | undefined): Promise<MeasureResult> {
     const r = await this.rendered(slug, path, at, params);
     const profile = await this.profile();
-    const analysis = await this.renderer.analyse({ key: r.key, overhangDeg: profile.printer.maxOverhangDeg });
-    return { project: slug, path, mesh: r.info, analysis: analysisView(r.key, analysis), render: fromRenderResult(r) };
+    const key = meshKeyOf(r);
+    const analysis = await this.renderer.analyse({ key, overhangDeg: profile.printer.maxOverhangDeg });
+    return { project: slug, path, mesh: r.info, analysis: analysisView(key, analysis), render: fromRenderResult(r) };
   }
 
-  async slice(slug: string, path: string, body: { axis: SliceResult["axis"]; at: number; revision?: string }): Promise<SliceResult> {
-    const r = await this.rendered(slug, path, body.revision);
-    return this.renderer.slice({ key: r.key, axis: body.axis, at: body.at });
+  async features(slug: string, path: string, revision?: string): Promise<FeaturesResult> {
+    const mesh = await this.ws.mesh(slug, path, revision);
+    try {
+      const result = await this.renderer.features({ key: mesh.key });
+      const base = `/api/renders/${mesh.key}`;
+      return { features: result.features, field: `${base}/${result.fieldFile}`, mesh: `${base}/${result.meshFile}` };
+    } catch (err) {
+      if (err instanceof RenderError) throw new ApiException("render_failed", err.message);
+      throw err;
+    }
+  }
+
+  async fit(slug: string, path: string, body: FitBody): Promise<Feature> {
+    const mesh = await this.ws.mesh(slug, path, body.revision);
+    let result: Feature | null;
+    try {
+      result = await this.renderer.fit({ key: mesh.key, at: body.at, ...(body.kind ? { kind: body.kind } : {}) });
+    } catch (err) {
+      if (err instanceof RenderError) throw new ApiException("render_failed", err.message);
+      throw err;
+    }
+    if (!result) throw new ApiException("render_failed", "no fitting surface at that point");
+    return result;
+  }
+
+  async slice(slug: string, path: string, body: { axis: SliceResult["axis"]; at: number | null; revision?: string }): Promise<SliceResult> {
+    const r = await this.ws.mesh(slug, path, body.revision);
+    try {
+      return await this.renderer.slice({ key: r.key, axis: body.axis, at: body.at });
+    } catch (err) {
+      if (err instanceof RenderError) throw new ApiException("render_failed", err.message);
+      throw err;
+    }
   }
 
   async probe(slug: string, path: string, body: { from: Vec3; axis: SliceResult["axis"]; revision?: string }): Promise<ProbeResult> {
-    const r = await this.rendered(slug, path, body.revision);
+    const r = await this.ws.mesh(slug, path, body.revision);
+    if (!r.info.closed) throw new ApiException("render_failed", "an open mesh has no inside; probe requires a closed mesh");
     return this.renderer.probe({ key: r.key, from: body.from, axis: body.axis });
   }
 
   async section(slug: string, path: string, body: { axis: SliceResult["axis"]; at: number; size?: number; revision?: string }): Promise<SectionResult> {
-    const r = await this.rendered(slug, path, body.revision);
+    const r = await this.ws.mesh(slug, path, body.revision);
     try {
       const file = await this.renderer.section({ key: r.key, axis: body.axis, at: body.at, size: body.size ?? REPORT_SIZE });
       return { axis: body.axis, at: body.at, image: `/api/renders/${r.key}/${file}` };
@@ -738,27 +894,57 @@ export class PartsService {
     }
   }
 
-  private sidePath(side: CompareSide, name: string): string {
-    if (side.part !== undefined) {
-      if (!PART_ID_RE.test(side.part)) throw invalid(`${name}.part must be a part id`);
-      return modelPath(side.part);
+  private async sideModel(slug: string, side: CompareSide): Promise<{ path: string; matrix?: number[] }> {
+    if (side.path !== undefined) return { path: side.path };
+    if (side.part === undefined || !PART_ID_RE.test(side.part)) throw invalid("part must be a part id");
+    let bytes: Uint8Array;
+    try {
+      bytes = side.at ? await this.store.readAt(slug, specPath(side.part), side.at) : await this.store.readBytes(slug, specPath(side.part));
+    } catch (err) {
+      if (err instanceof ApiException && err.code === "not_found") return { path: modelPath(side.part) };
+      throw err;
     }
-    if (side.path !== undefined) return side.path;
-    throw invalid(`${name} needs part or path`);
+    const { scan } = validatePartSpec(parseJsonFile(bytes, specPath(side.part)), []);
+    return scan ? { path: scan.file, matrix: placement(scan.rotate, scan.translate) } : { path: modelPath(side.part) };
   }
 
-  async compare(slug: string, a: CompareSide, b: CompareSide): Promise<CompareResult> {
+  async align(slug: string, path: string, body: AlignBody): Promise<AlignResult> {
+    const source = await this.ws.mesh(slug, path, body.revision);
+    let to: string | undefined;
+    if (body.to) {
+      const target = await this.sideModel(slug, body.to);
+      to = (await this.ws.mesh(slug, target.path, body.to.at, target.matrix)).key;
+    }
+    try {
+      return await this.renderer.align({ key: source.key, ...(to ? { to } : {}) });
+    } catch (err) {
+      if (err instanceof RenderError) throw new ApiException("render_failed", err.message);
+      throw err;
+    }
+  }
+
+  async compare(slug: string, a: CompareSide, b: CompareSide, tol = DEFAULT_COMPARE_TOL): Promise<CompareResult> {
     await this.store.requireProject(slug);
-    const ra = await this.rendered(slug, this.sidePath(a, "a"), a.at);
-    const rb = await this.rendered(slug, this.sidePath(b, "b"), b.at);
-    const dev = await this.renderer.deviation({ a: ra.key, b: rb.key });
+    const targetA = await this.sideModel(slug, a);
+    const targetB = await this.sideModel(slug, b);
+    const ra = await this.ws.render(slug, targetA.path, a.at ? { at: a.at } : {}, targetA.matrix);
+    const rb = await this.ws.render(slug, targetB.path, b.at ? { at: b.at } : {}, targetB.matrix);
+    let dev;
+    try {
+      dev = await this.renderer.deviation({ a: meshKeyOf(ra), b: meshKeyOf(rb), tol, proxy: rb.proxy !== undefined });
+    } catch (err) {
+      if (err instanceof RenderError) throw new ApiException("render_failed", err.message);
+      throw err;
+    }
+    const { fieldFile, meshFile, ...stats } = dev;
+    const base = `/api/renders/${meshKeyOf(rb)}`;
     const va = ra.info.volumeCm3;
     const vb = rb.info.volumeCm3;
     const round = (n: number): number => Math.round(n * 1e4) / 1e4;
     return {
       a: { render: fromRenderResult(ra), mesh: ra.info },
       b: { render: fromRenderResult(rb), mesh: rb.info },
-      deviation: { min: dev.min, max: dev.max, rms: dev.rms, p95: dev.p95, at: dev.at, field: `/api/renders/${rb.key}/${dev.fieldFile}` },
+      deviation: { ...stats, tol, field: `${base}/${fieldFile}`, mesh: `${base}/${meshFile}` },
       volumeDeltaCm3: va === null || vb === null ? null : round(vb - va),
       sizeDelta: [0, 1, 2].map((i) => round((rb.info.bbox.size[i] ?? 0) - (ra.info.bbox.size[i] ?? 0))) as Vec3,
     };
@@ -786,13 +972,13 @@ export class PartsService {
     try {
       spec = await this.readAssembly(slug);
     } catch {
-      return sha(this.rendererVersion, rev);
+      return sha(REPORT_VERSION, this.rendererVersion, rev);
     }
     const parts = [...new Set(spec.instances.map((i) => i.part))].sort().map((p) => {
       const ref = this.resolvePart(slug, p);
       return `${p}=${this.stateKey(ref.slug, ref.id)}`;
     });
-    return sha(this.rendererVersion, rev, ...parts);
+    return sha(REPORT_VERSION, this.rendererVersion, rev, ...parts);
   }
 
   private queueAssembly(slug: string, high: boolean): void {
@@ -873,15 +1059,22 @@ export class PartsService {
       const report = keyed?.report ?? null;
       reportKeys.push(`${inst.id}=${keyed?.key ?? "-"}`);
       const matrix = placement(inst.rotate, inst.translate);
-      const usable = report?.render && report.mesh && report.status !== "failed";
+      let meshPath = report?.render?.mesh ?? null;
+      let drawablePath = report?.render?.proxy ?? meshPath;
+      if (report?.spec.scan && report.mesh && !meshPath) {
+        const { scan } = report.spec;
+        const out = await this.ws.mesh(ref.slug, scan.file, undefined, placement(scan.rotate, scan.translate));
+        drawablePath = meshPath = meshUrl(out.key);
+      }
+      const usable = meshPath !== null && report?.mesh && report.status !== "failed";
       parts.push({ instance: inst, status: report?.status ?? null, title: report?.spec.title ?? inst.part, source: report?.spec.source ?? "printed", material: report?.spec.material ?? null, massG: report?.massG ?? null, meshed: Boolean(usable) });
       placed.push({
         id: inst.id,
         part: inst.part,
         partStatus: report?.status ?? "empty",
-        mesh: usable ? (report.render?.mesh ?? null) : null,
+        mesh: usable ? drawablePath : null,
         matrix,
-        key: usable ? (report.render?.key ?? null) : null,
+        key: usable && meshPath ? basename(dirname(meshPath)) : null,
         box: usable && report.mesh ? transformBox({ min: report.mesh.bbox.min, max: report.mesh.bbox.max }, matrix) : null,
       });
     }
@@ -896,12 +1089,13 @@ export class PartsService {
     const boxes = new Map(placed.filter((p) => p.box !== null).map((p) => [p.id, p.box as Box]));
     const byId = new Map(placed.map((p) => [p.id, p]));
     const pairs: PairMeasure[] = [];
+    const clearanceMm = (await this.profile()).printer.clearance.sliding;
     for (const [a, b] of candidatePairs(spec, boxes)) {
       const pa = byId.get(a);
       const pb = byId.get(b);
       if (!pa?.key || !pb?.key) continue;
-      const m = await this.renderer.interference({ a: { key: pa.key, matrix: pa.matrix }, b: { key: pb.key, matrix: pb.matrix } });
-      pairs.push({ a, b, gapMm: m.gapMm, overlapCm3: m.overlapCm3 });
+      const m = await this.renderer.interference({ a: { key: pa.key, matrix: pa.matrix }, b: { key: pb.key, matrix: pb.matrix }, clearanceMm });
+      pairs.push({ a, b, ...m });
     }
     const gates = assemblyGates({ spec, parts, pairs });
     const status = assemblyStatus(gates);
@@ -910,7 +1104,7 @@ export class PartsService {
 
     const highlight = new Set<string>();
     for (const gate of gates.filter((x) => x.status === "fail")) {
-      if (gate.id === "clash") for (const p of pairs.filter((p) => p.overlapCm3 * 1000 > 0.5)) highlight.add(p.a).add(p.b);
+      if (gate.id === "clash") for (const p of pairs.filter(isClash)) highlight.add(p.a).add(p.b);
       if (gate.id.startsWith("mate:")) {
         const mate = spec.mates.find((m) => `mate:${m.id}` === gate.id);
         if (mate) highlight.add(mate.a).add(mate.b);
@@ -921,7 +1115,7 @@ export class PartsService {
     if (drawable.length > 0) {
       try {
         const out = await this.renderer.renderAssembly({ instances: drawable.map((p) => ({ id: p.id, key: p.key as string, matrix: p.matrix })), highlight: [...highlight], views: [...ALL_VIEWS], size: REPORT_SIZE });
-        const { mesh: _mesh, ...ref } = renderRef(out.key, out.views);
+        const ref = renderRef(out.key, out.views);
         render = ref;
       } catch (err) {
         if (!(err instanceof RenderError)) throw err;
@@ -936,7 +1130,7 @@ export class PartsService {
       gates,
       spec,
       instances: placed.map((p) => ({ id: p.id, part: p.part, partStatus: p.partStatus, mesh: p.mesh, matrix: p.matrix })),
-      pairs: pairs.map((p) => ({ a: p.a, b: p.b, gapMm: p.gapMm, overlapCm3: p.overlapCm3 })),
+      pairs,
       bom: billed.lines,
       totalPrintedMassG: billed.totalPrintedMassG,
       render,

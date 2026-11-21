@@ -1,7 +1,7 @@
 /**
  * Assembly maths and gates (docs/SPEC.md → Assembly) as pure functions.
  */
-import type { AssemblyInstance, AssemblySpec, BomLine, GateResult, Mate, ReportStatus, Vec3 } from "@drawer/shared/api";
+import type { AssemblyInstance, AssemblySpec, BomLine, GateResult, Mate, OpenClash, PartSource, ReportStatus, Vec3 } from "@drawer/shared/api";
 import { LIBRARY_SLUG } from "@drawer/shared/api";
 import { fmt } from "./gates.ts";
 
@@ -91,7 +91,8 @@ export interface PairMeasure {
   a: string;
   b: string;
   gapMm: number;
-  overlapCm3: number;
+  overlapCm3: number | null;
+  penetration?: OpenClash;
 }
 
 export interface InstancePart {
@@ -99,7 +100,7 @@ export interface InstancePart {
   /** Null when the part does not exist. */
   status: ReportStatus | null;
   title: string;
-  source: "printed" | "bought";
+  source: PartSource;
   material: string | null;
   massG: number | null;
   /** Whether the instance has a mesh to measure (its part built). Only these take part in `floating`. */
@@ -120,18 +121,24 @@ function findPair(pairs: PairMeasure[], a: string, b: string): PairMeasure | und
   return pairs.find((p) => (p.a === a && p.b === b) || (p.a === b && p.b === a));
 }
 
-const overlapMm3 = (p: PairMeasure): number => p.overlapCm3 * 1000;
+const overlapMm3 = (p: PairMeasure): number => (p.overlapCm3 ?? 0) * 1000;
+
+export const isClash = (p: PairMeasure): boolean => p.penetration ? p.penetration.depthMm > p.penetration.limitMm : overlapMm3(p) > CLASH_MM3;
+
+const intrusion = (p: PairMeasure): string => p.penetration
+  ? `${fmt(p.penetration.depthMm, 3)} mm behind the surface (limit ${fmt(p.penetration.limitMm, 3)} mm)`
+  : `overlap ${fmt(overlapMm3(p), 3)} mm³`;
 
 function mateGate(m: Mate, pair: PairMeasure | undefined): GateResult {
   const id = `mate:${m.id}`;
   if (!pair) return g(id, m.label, "skipped", { detail: `${m.a} or ${m.b} has no mesh to measure` });
-  const overlap = overlapMm3(pair);
-  const measured = overlap > 0 ? `overlap ${fmt(overlap, 3)} mm³` : `gap ${fmt(pair.gapMm, 3)} mm`;
+  const overlap = pair.penetration ? isClash(pair) : overlapMm3(pair) > 0;
+  const measured = overlap ? intrusion(pair) : `gap ${fmt(pair.gapMm, 3)} mm`;
   if (m.fit === "press") {
-    const ok = overlap > 0 || pair.gapMm <= CONTACT_MM;
+    const ok = overlap || pair.gapMm <= CONTACT_MM;
     return g(id, m.label, ok ? "pass" : "fail", { measured, expected: "overlap or touch", hint: `Press fit ${m.a}/${m.b}: close the ${fmt(pair.gapMm, 3)} mm gap so the parts overlap slightly.` });
   }
-  if (overlap > 0) return g(id, m.label, "fail", { measured, expected: m.fit === "contact" ? `gap ≤ ${CONTACT_MM} mm, no overlap` : "no overlap", hint: `${m.a} and ${m.b} intersect by ${fmt(overlap, 3)} mm³: move them apart or reduce the mating feature.` });
+  if (overlap) return g(id, m.label, "fail", { measured, expected: m.fit === "contact" ? `gap ≤ ${CONTACT_MM} mm, no overlap` : "no overlap", hint: `Move ${m.a} and ${m.b} apart or reduce the mating feature.` });
   if (m.fit === "contact") {
     const ok = pair.gapMm <= CONTACT_MM;
     return g(id, m.label, ok ? "pass" : "fail", { measured, expected: `gap ≤ ${CONTACT_MM} mm`, hint: `Bring ${m.a} and ${m.b} into contact: close the ${fmt(pair.gapMm, 3)} mm gap.` });
@@ -164,12 +171,12 @@ export function assemblyGates(input: AssemblyGateInput): GateResult[] {
   );
 
   const pressed = new Set(spec.mates.filter((m) => m.fit === "press").map((m) => pairKey(m.a, m.b)));
-  const clashes = pairs.filter((p) => overlapMm3(p) > CLASH_MM3 && !pressed.has(pairKey(p.a, p.b)));
+  const clashes = pairs.filter((p) => isClash(p) && !pressed.has(pairKey(p.a, p.b)));
   out.push(
     clashes.length > 0
       ? g("clash", "No collisions", "fail", {
-          measured: clashes.map((p) => `${p.a}/${p.b} ${fmt(overlapMm3(p), 2)} mm³`).join(", "),
-          expected: `≤ ${CLASH_MM3} mm³ shared`,
+          measured: clashes.map((p) => `${p.a}/${p.b} ${intrusion(p)}`).join(", "),
+          expected: clashes.some((p) => p.penetration) ? "open surface depth within limit" : `≤ ${CLASH_MM3} mm³ shared`,
           hint: `Separate the colliding instances (${clashes.map((p) => `${p.a} and ${p.b}`).join("; ")}), or mate them as press if the interference is intended.`,
         })
       : g("clash", "No collisions", "pass", { measured: `${pairs.length} pair${pairs.length === 1 ? "" : "s"} checked` }),

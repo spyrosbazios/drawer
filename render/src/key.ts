@@ -6,31 +6,35 @@ import { createHash } from "node:crypto";
 import type { RenderView } from "@drawer/shared/api";
 
 /** Bump when the pipeline itself changes what it writes (colours, sheet layout, file set) or what a cached measurement beside the render means. */
-export const PIPELINE_VERSION = "drawer-render/3";
+export const PIPELINE_VERSION = "drawer-render/8";
 
-export interface KeyInputs {
+interface MeshKeyInputs {
   /** Bytes of the file being rendered. */
   file: Uint8Array;
   /** Bytes of each dependency OpenSCAD reported, in a stable (path-sorted) order. */
   deps: Uint8Array[];
-  views: RenderView[];
-  size: number;
+  format: string;
+  matrix?: number[];
   openscadVersion: string;
   /** The `-D` arguments, in their stable (name-sorted) order. */
   defines: string[];
 }
 
-export function cacheKey(inputs: KeyInputs): string {
+export function meshKey(inputs: MeshKeyInputs): string {
   return hashParts([
     PIPELINE_VERSION,
     inputs.openscadVersion,
-    inputs.views.join(","),
-    String(inputs.size),
+    inputs.format,
+    inputs.matrix?.join(",") ?? "",
     inputs.defines.join("\n"),
     inputs.file,
     String(inputs.deps.length),
     ...inputs.deps,
   ]);
+}
+
+export function renderKey(mesh: string, views: RenderView[], size: number, openscad: string): string {
+  return hashParts([PIPELINE_VERSION, mesh, views.join(","), String(size), openscad]);
 }
 
 /** SHA-256 hex over length-prefixed parts. */

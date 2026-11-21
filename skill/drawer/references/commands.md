@@ -1,5 +1,7 @@
 # drawer command reference
 
+<!-- reviewed: 2026-11-21 -->
+
 `drawer help` lists everything; `drawer help <cmd>` and `drawer <cmd> --help` give details. A file argument is
 `<project>/<path>`; a part argument is `<project>/<id>`. Server: `DRAWER_URL`, else saved by `drawer server <url>`.
 Author recorded on writes: `DRAWER_AUTHOR` (default `agent`).
@@ -33,6 +35,39 @@ always; `context` prints text and takes `--json`. Errors: one line on stderr. Ex
 | `reindex` | rebuild the index |
 | `import <project> <url> [--name n] [--file-id id]...`, `preview <url>` | import a model page into `refs/<name>/`; show what it would fetch |
 
+
+## Scan intake
+
+```
+drawer scan add <project> <file> --name <name> [--units mm|cm|m|in]
+drawer align <file> [--to part-or-path] [--at <revision>]
+drawer features <file> [--at <revision>]
+drawer fit <file> --at x,y,z [--kind plane|cylinder|sphere]
+drawer slice <file> --axis z --shadow
+```
+
+Use the original units for STL, OBJ or PLY. A 3MF supplies its own units. Read
+`refs/<name>/source.md` for the noise estimate and closedness, and measure
+`refs/<name>/scan.stl`. `probe` returns 422 on open surfaces. The volume and wall thickness
+fields are unavailable on those surfaces. Use `features` and `fit` for surface dimensions. Read the
+fit's RMS and coverage before using a diameter. A slice returns unclosed outlines in `open` and
+`--shadow` gives the entire silhouette along the chosen axis.
+
+### Working from a scan
+
+The guide's chapter "Working from a scan" is the method; these are its steps as commands.
+
+| Step | Command |
+|---|---|
+| 1. Read the source | `drawer cat <p>/refs/<name>/source.md`: closed or open, `noise_mm`, what was removed |
+| 2. Frame it as a part | `drawer align <p>/refs/<name>/scan.stl --json`, save `rotate`/`translate` in `drawer part <p>/<id> --spec spec.json` with `source: "scanned"` ([specs.md](specs.md)); look at the views; an `alternative:` line means ask the person which way is up |
+| 3. Read the features | `drawer features <p>/parts/<id>.part.json`, then `fit`, `slice`, `slice --shadow` on the same path |
+| 4. Trust by coverage and RMS | under a third of a cylinder: say the diameter is uncertain |
+| 5. Record what you build on | a `boss`/`hole`/`size` dimension on the scanned part, tolerance at least twice `noise_mm` |
+| 6. Model the intent | round a fitted 5.93 mm to the 6 mm it was meant to be, and say so |
+| 7. Check against the scan | copy: a `match` on the printed part, `drawer compare <p> <scanned> <copy> --tol <same>`; fit: an assembly with a `mate` per meeting surface |
+| 8. Inside or behind | ask for a second scan or a calliper reading |
+
 ## Parts, reports, measuring
 
 | Command | Does |
@@ -40,7 +75,7 @@ always; `context` prints text and takes `--json`. Errors: one line on stderr. Ex
 | `guide` | the modelling guide, markdown on stdout. Read it first |
 | `overview <project>` | brief, project memory, parts with status, assembly, references, notes, printer, materials, library |
 | `parts <project>` | parts with status and failing gates |
-| `part <project>/<id> [--title --class --material --strictness --source printed\|bought --description] [--spec file.json]` | create a part or change its spec; `--spec` is a `PartSpecBody` ([specs.md](specs.md)), flags win; flags alone change the existing spec |
+| `part <project>/<id> [--title --class --material --strictness --source printed\|bought\|scanned --description] [--spec file.json]` | create a part or change its spec; `--spec` is a `PartSpecBody` ([specs.md](specs.md)), flags win; flags alone change the existing spec |
 | `report <project>/<id> [--param name=value]... [--at id] [--require-passed]` | the verdict: status, gates, next steps, pictures. `--param` is a what-if (nothing written); `--at` a past revision; exit 0 whatever the status, `--require-passed` exits 1 unless `passed` |
 | `set <project>/<id> name=value... [-m msg] [--no-report]` | write parameter values into the model's parameter block (one revision), then print the report |
 | `measure <file> [--param name=value]... [--at id]` | shells, watertight, base, overhang, thinnest wall; downloads the render |
@@ -78,3 +113,5 @@ then pass `--rev`.
 Renders, sections and sheets are cached in `${XDG_CACHE_HOME:-~/.cache}/drawer/renders/<key>/` (the key is a content
 hash: kept, never re-downloaded, safe to delete). Open them with your image Read tool; look at the sheet first,
 then single views.
+
+Slice, probe and section build the mesh without generating the standard preview views.

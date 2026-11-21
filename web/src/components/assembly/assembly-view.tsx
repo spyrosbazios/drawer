@@ -143,7 +143,7 @@ function AssemblyBody({ slug, report, refreshing }: { slug: string; report: Asse
           <ul className="absolute top-2 left-2 space-y-1 text-xs">
             {clashes.map((p) => (
               <li key={`${p.a}|${p.b}`} className="rounded-md border border-down/40 bg-card/90 px-2 py-1 text-down">
-                {p.a} × {p.b}: {formatOverlap(p.overlapCm3)} overlap
+                {p.a} × {p.b}: {formatOverlap(p.overlapCm3, p.penetration)}
               </li>
             ))}
           </ul>
@@ -330,7 +330,7 @@ function MatesTable({ slug, report, selected }: { slug: string; report: Assembly
                     </TableCell>
                     <TableCell className="text-dim">{r.expected}</TableCell>
                     <TableCell className="text-right tabular-nums">{r.pair ? formatLength(r.pair.gapMm) : "-"}</TableCell>
-                    <TableCell className={cn("text-right tabular-nums", r.pair && r.pair.overlapCm3 > 0 && "text-down")}>{r.pair ? formatOverlap(r.pair.overlapCm3) : "-"}</TableCell>
+                    <TableCell className={cn("text-right tabular-nums", r.pair && (r.pair.overlapCm3 ?? 0) > 0 && "text-down")}>{r.pair ? formatOverlap(r.pair.overlapCm3, r.pair.penetration) : "-"}</TableCell>
                     <TableCell>{r.gate ? <StatusChip kind="gate" status={r.gate.status} /> : <span className="text-faint">-</span>}</TableCell>
                   </TableRow>
                 );

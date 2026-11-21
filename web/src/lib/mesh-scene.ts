@@ -1,22 +1,22 @@
 import { BackSide, Box3, BufferAttribute, BufferGeometry, Color, DoubleSide, FrontSide, MeshBasicMaterial, Plane, Raycaster, Vector2, GridHelper, Group, Mesh, MeshStandardMaterial, Sphere, Vector3 } from "three";
 import type { Object3D } from "three";
 import { ThreeMFLoader } from "three/addons/loaders/3MFLoader.js";
+import { PLYLoader } from "three/addons/loaders/PLYLoader.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { VIEW_DIRECTIONS } from "./camera-rig";
 import type { ViewControl } from "./camera-rig";
 import { Viewport, token, tokenHex } from "./viewport";
-import type { Vec3 } from "@drawer/shared/api";
+import { isMeshFormat, type MeshFormat, type Vec3 } from "@drawer/shared/api";
 import { colorAt, fieldToVertexColors, hexToRgb } from "./field-colors";
 import type { FieldScale } from "./field-colors";
 
-export type MeshFormat = "stl" | "3mf" | "obj";
 export type Axis3 = "x" | "y" | "z";
 export type Point3 = [number, number, number];
 
 /** A per-triangle field drawn on the model: `thickness` on the sequential scale, `deviation` on the diverging one. */
 export interface FieldPaint {
-  kind: "thickness" | "deviation";
+  kind: "thickness" | "deviation" | "features";
   values: Float32Array;
   domain: readonly [number, number];
 }
@@ -45,6 +45,10 @@ const CLICK_SLOP = 4;
 
 /** The theme's field scales, read from the CSS variables (so a theme switch repaints). */
 export function themeScale(kind: FieldPaint["kind"], domain: readonly [number, number]): FieldScale {
+  if (kind === "features") {
+    const stops = ["--app-brand", "--app-dev-pos", "--app-scale-mid", "--app-dev-neg", "--app-run"].map((name) => hexToRgb(tokenHex(name)));
+    return { stops, domain, unknown: hexToRgb(tokenHex("--app-model")), categorical: true };
+  }
   return kind === "thickness"
     ? { stops: ["--app-scale-lo", "--app-scale-mid", "--app-scale-hi"].map((n) => hexToRgb(tokenHex(n))), domain, unknown: hexToRgb(tokenHex("--app-dev-zero")) }
     : { stops: ["--app-dev-neg", "--app-dev-zero", "--app-dev-pos"].map((n) => hexToRgb(tokenHex(n))), domain, unknown: hexToRgb(tokenHex("--app-dev-zero")) };
@@ -74,7 +78,7 @@ export function webglAvailable(): boolean {
 
 export function formatOf(path: string): MeshFormat | null {
   const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-  return ext === "stl" || ext === "3mf" || ext === "obj" ? ext : null;
+  return ext && isMeshFormat(ext) ? ext : null;
 }
 
 /**
@@ -241,8 +245,9 @@ export class MeshScene implements ViewControl {
   }
 
   private async fetchModel(url: string, format: MeshFormat): Promise<Object3D> {
-    if (format === "stl") {
-      const geometry = await new STLLoader().loadAsync(url);
+    if (format === "stl" || format === "ply") {
+      const loader = format === "stl" ? new STLLoader() : new PLYLoader();
+      const geometry = await loader.loadAsync(url);
       // Many STL exporters write zero normals; recomputing gives correct flat shading either way.
       geometry.computeVertexNormals();
       return this.inLight(new Mesh(geometry, this.material));

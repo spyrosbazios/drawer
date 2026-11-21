@@ -58,7 +58,7 @@ export function isPressFit(mates: readonly Mate[], p: { a: string; b: string }):
 
 /** Pairs that collide: they share more than the tolerance and are not a press fit. */
 export function clashingPairs(report: Pick<AssemblyReport, "pairs" | "spec">): AssemblyPair[] {
-  return report.pairs.filter((p) => p.overlapCm3 > CLASH_TOLERANCE_CM3 && !isPressFit(report.spec.mates, p));
+  return report.pairs.filter((p) => (p.penetration ? p.penetration.depthMm > p.penetration.limitMm : (p.overlapCm3 ?? 0) > CLASH_TOLERANCE_CM3) && !isPressFit(report.spec.mates, p));
 }
 
 const failing = (g: GateResult | undefined) => g !== undefined && (g.status === "fail" || g.status === "warn");
@@ -154,12 +154,13 @@ export function sendBackMessage(report: Pick<AssemblyReport, "pairs" | "spec" | 
   for (const g of gates) lines.push(`- ${g.label} (${g.id}): ${g.status}${g.measured ? `, measured ${g.measured}` : ""}${g.expected ? `, expected ${g.expected}` : ""}`);
   for (const p of pairs) {
     const m = pairOf(report, p.a, p.b);
-    lines.push(`- pair ${p.a} × ${p.b}${m ? `: gap ${fmt(m.gapMm)} mm, overlap ${fmt(m.overlapCm3)} cm³` : ""}`);
+    lines.push(`- pair ${p.a} × ${p.b}${m ? `: gap ${fmt(m.gapMm)} mm, ${formatOverlap(m.overlapCm3, m.penetration)}` : ""}`);
   }
   return lines.join("\n");
 }
 
 /** Shared volume of a pair, in mm³: clash-sized overlaps vanish when written in cm³. */
-export function formatOverlap(cm3: number): string {
-  return `${formatNumber(cm3 * 1000)} mm³`;
+export function formatOverlap(cm3: number | null, penetration?: AssemblyReport["pairs"][number]["penetration"]): string {
+  if (penetration) return `${formatNumber(penetration.depthMm)} mm behind (limit ${formatNumber(penetration.limitMm)} mm)`;
+  return cm3 === null ? "—" : `${formatNumber(cm3 * 1000)} mm³`;
 }

@@ -18,7 +18,7 @@ import {
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-export const MESH_INFO: MeshInfo = { format: "stl", triangles: 12, bbox: { min: [0, 0, 0], max: [10, 20, 30], size: [10, 20, 30] }, volumeCm3: 6 };
+export const MESH_INFO: MeshInfo = { format: "stl", closed: true, triangles: 12, bbox: { min: [0, 0, 0], max: [10, 20, 30], size: [10, 20, 30] }, volumeCm3: 6 };
 
 export interface FakeRenderer extends Renderer {
   /** What version() answers; change it before a restart to simulate an OpenSCAD upgrade. */
@@ -100,7 +100,7 @@ function fakeSolid(text: string, params: ParamValues | undefined): FakeSolid {
   const probe = marker("probe");
   const [where, len] = (probe ?? "").split(",");
   return {
-    info: { format: "stl", triangles: one("triangles", 12), bbox: { min, max: [min[0] + size[0], min[1] + size[1], min[2] + size[2]], size }, volumeCm3: one("volume", 6) },
+    info: { format: "stl", closed: marker("leaky") === null, triangles: one("triangles", 12), bbox: { min, max: [min[0] + size[0], min[1] + size[1], min[2] + size[2]], size }, volumeCm3: one("volume", 6) },
     shells: one("shells", 1),
     watertight: marker("leaky") === null,
     base: one("base", 200),
@@ -136,6 +136,8 @@ const sha = (...parts: string[]): string => new Bun.CryptoHasher("sha256").updat
 /** Writes the cache layout the real renderer writes. Answers come from markers in the source (see fakeSolid). */
 export function fakeRenderer(cacheDir: string): FakeRenderer {
   const renders: RenderRequest[] = [];
+  const meshCache = join(cacheDir, "meshes");
+  const renderCache = join(cacheDir, "renders");
   const seen: FakeRenderer["seen"] = [];
   const calls: Record<string, number> = {};
   const solids = new Map<string, FakeSolid>();
@@ -161,23 +163,44 @@ export function fakeRenderer(cacheDir: string): FakeRenderer {
       const total = req.views.length + 3;
       req.onProgress?.({ stage: "queued", step: 0, total, view: null });
       req.onProgress?.({ stage: "geometry", step: 1, total, view: null });
-      const bytes = await Bun.file(req.file).bytes();
-      const text = new TextDecoder().decode(bytes);
-      seen.push({ file: req.file, text, searchPaths: req.searchPaths });
-      if (text.includes("FAIL")) throw new RenderError("ERROR: Parser error in line 1: syntax error");
-      const key = sha(text, req.views.join(","), String(req.size), JSON.stringify(req.params ?? {}));
-      const s = fakeSolid(text, req.params);
-      solids.set(key, s);
-      const dir = join(cacheDir, key);
+      const mesh = await fake.mesh(req);
+      const key = sha(mesh.key, req.views.join(","), String(req.size));
+      const dir = join(renderCache, key);
       const cached = await Bun.file(join(dir, "meta.json")).exists();
       if (!cached) {
         await mkdir(dir, { recursive: true });
-        await writeFile(join(dir, "mesh.stl"), "solid fake\nendsolid fake\n");
         for (const view of req.views) await writeFile(join(dir, `${view}.png`), PNG);
         await writeFile(join(dir, "sheet.png"), PNG);
         await writeFile(join(dir, "meta.json"), "{}");
       }
-      return { key, cached, seconds: 0.01, dir, views: req.views as RenderView[], info: s.info, log: ["ECHO: hello"], warnings: [] };
+      return { ...mesh, key, meshKey: mesh.key, proxy: false, cached, dir, views: req.views as RenderView[] };
+    },
+    async mesh(req) {
+      count("mesh");
+      const text = await Bun.file(req.file).text().catch((err: Error) => { throw new RenderError(err.message); });
+      seen.push({ file: req.file, text, searchPaths: req.searchPaths });
+      if (text.includes("FAIL")) throw new RenderError("ERROR: Parser error in line 1: syntax error");
+      const key = sha(text, JSON.stringify(req.params ?? {}), req.matrix?.join(",") ?? "");
+      const s = fakeSolid(text, req.params);
+      if (req.matrix) {
+        const { min, max } = placedBox(s.info, req.matrix);
+        s.info.bbox = { min: min as MeshInfo["bbox"]["min"], max: max as MeshInfo["bbox"]["max"], size: max.map((n, i) => n - min[i]!) as MeshInfo["bbox"]["size"] };
+      }
+      solids.set(key, s);
+      const dir = join(meshCache, key);
+      const path = join(dir, "mesh.stl");
+      const cached = await Bun.file(path).exists();
+      if (!cached) {
+        await mkdir(dir, { recursive: true });
+        await writeFile(path, "solid fake\nendsolid fake\n");
+      }
+      return { key, cached, seconds: 0.01, dir, info: s.info, log: ["ECHO: hello"], warnings: [] };
+    },
+    async normalizeScan({ bytes, units }) {
+      const text = new TextDecoder().decode(bytes);
+      if (text.includes("POINT_CLOUD")) throw new RenderError("point cloud has no faces; export a triangulated surface");
+      const info = fakeSolid(text, undefined).info;
+      return { bytes, info, originalTriangles: info.triangles, degenerateTriangles: 0, debrisTriangles: 0, noiseMm: 0.02, unit: units ?? "millimeter" };
     },
     async meshInfo(file: string): Promise<MeshInfo> {
       if (basename(file).startsWith("bad")) throw new Error("unreadable mesh");
@@ -206,7 +229,7 @@ export function fakeRenderer(cacheDir: string): FakeRenderer {
       count("analyse");
       const s = solid(req.key);
       const [x, y] = s.info.bbox.size;
-      await writeFile(join(cacheDir, req.key, "thickness.f32"), new Uint8Array(4 * s.info.triangles));
+      await writeFile(join(meshCache, req.key, "thickness.f32"), new Uint8Array(4 * s.info.triangles));
       return {
         shells: s.shells,
         watertight: s.watertight,
@@ -238,7 +261,22 @@ export function fakeRenderer(cacheDir: string): FakeRenderer {
       const contours: SliceResult["contours"] = [];
       if (s.hole !== null) contours.push(round(s.hole, true));
       if (s.boss !== null) contours.push(round(s.boss, false));
-      return { axis: req.axis, at: req.at, contours };
+      return { axis: req.axis, at: req.at, contours, open: [] };
+    },
+    async features(req) {
+      const s = solid(req.key);
+      const fieldFile = "features.f32";
+      await writeFile(join(meshCache, req.key, fieldFile), new Uint8Array(s.info.triangles * 4));
+      return { features: [{ kind: "plane", origin: [0, 0, 0], direction: [0, 0, 1], diameter: null, length: null, side: null, areaMm2: 100, rms: 0, maxError: 0, coverage: 1 }], fieldFile, meshFile: "mesh.stl" };
+    },
+    async align(req) {
+      const { info } = solid(req.key);
+      const target = req.to ? solid(req.to).info.bbox.min : [0, 0, 0];
+      return { rotate: [0, 0, 0], translate: info.bbox.min.map((x, i) => target[i]! - x) as MeshInfo["bbox"]["min"], rms: req.to ? 0 : null, ambiguous: [] };
+    },
+    async fit(req) {
+      const { features } = await fake.features(req);
+      return req.kind && req.kind !== "plane" ? null : features[0] ?? null;
     },
     async probe(req): Promise<ProbeResult> {
       count("probe");
@@ -250,24 +288,24 @@ export function fakeRenderer(cacheDir: string): FakeRenderer {
       count("section");
       solid(req.key);
       const name = `section-${req.axis}-${req.at}-${req.size}.png`;
-      await writeFile(join(cacheDir, req.key, name), PNG);
+      await writeFile(join(meshCache, req.key, name), PNG);
       return name;
     },
     async thumbnail(req): Promise<string> {
       count("thumbnail");
-      solid(req.key);
       const name = `thumb-${req.view}-${req.size}.png`;
-      await writeFile(join(cacheDir, req.key, name), PNG);
+      await writeFile(join(renderCache, req.key, name), PNG);
       return name;
     },
     async deviation(req): Promise<DeviationOutput> {
       count("deviation");
       const a = solid(req.a);
       const b = solid(req.b);
-      const name = `deviation-${req.a}.f32`;
-      await writeFile(join(cacheDir, req.b, name), new Uint8Array(4 * b.info.triangles));
+      const name = `deviation-${req.a}-${req.tol}.f32`;
+      await writeFile(join(meshCache, req.b, name), new Uint8Array(4 * b.info.triangles));
       const d = (b.info.bbox.size[0] ?? 0) - (a.info.bbox.size[0] ?? 0);
-      return { min: Math.min(0, d), max: Math.max(0, d), rms: Math.abs(d) / 2, p95: Math.abs(d), at: d === 0 ? null : [0, 0, 0], fieldFile: name };
+      const stats = { min: Math.min(0, d), max: Math.max(0, d), rms: Math.abs(d) / 2, p95: Math.abs(d), within: Math.abs(d) <= req.tol ? 1 : 0.5 };
+      return { ...stats, reverse: { ...stats, min: -stats.max, max: -stats.min }, at: d === 0 ? null : [0, 0, 0], fieldFile: name, meshFile: "mesh.stl" };
     },
     async interference(req) {
       count("interference");
@@ -285,7 +323,7 @@ export function fakeRenderer(cacheDir: string): FakeRenderer {
     async renderAssembly(req): Promise<AssemblyRenderOutput> {
       count("renderAssembly");
       const key = sha("assembly", JSON.stringify(req));
-      const dir = join(cacheDir, key);
+      const dir = join(renderCache, key);
       const cached = await Bun.file(join(dir, "sheet.png")).exists();
       if (!cached) {
         await mkdir(dir, { recursive: true });
@@ -383,7 +421,7 @@ export async function harness(): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), "drawer-test-"));
   const dataDir = join(dir, "data");
   const webDist = join(dir, "web-dist");
-  const renderer = fakeRenderer(join(dataDir, "cache", "renders"));
+  const renderer = fakeRenderer(join(dataDir, "cache"));
   const importers = fakeImporters();
   const app = createApp({ dataDir, renderer, importers, webDist, allowedHosts: [TEST_HOST] });
   await app.ready;

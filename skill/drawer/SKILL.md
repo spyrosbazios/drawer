@@ -96,6 +96,8 @@ An assembly report reads the same, with gates `parts`, `clash`, `mate:<id>`, `fl
   downloads into `<p>/refs/<name>/` with `source.md`. Keep the licence; link derived work with `based_on`.
   `drawer new <slug> --from <url>` starts a project from an import. Missing files are listed as skipped: say so
   instead of inventing geometry.
+- **Work from a 3D scan:** `drawer scan add <p> <file> --name <name> --units mm`, then follow the guide's
+"Working from a scan"; its steps as commands: [references/commands.md](references/commands.md#working-from-a-scan).
 - **Hand a job to drawer's own agent:** `drawer ask <p> "<message>"`, follow with `drawer session <id> --text`,
   talk with `drawer say <id> "<message>"`; `drawer sessions [p]` lists them. `--attach <local-file>` (repeatable)
   on `ask` and `say` sends a photo, mesh or datasheet with the message. Answer the agent's open question with

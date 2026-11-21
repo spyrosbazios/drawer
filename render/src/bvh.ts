@@ -1,8 +1,9 @@
 /**
  * A bounding volume hierarchy over the triangles of a soup, with the queries the mesh maths
  * needs: first hit along a ray, every hit along a ray, and the nearest surface point.
- * Flat typed arrays, no allocation per query.
+ * Flat typed arrays. Ray queries reuse their traversal stack.
  */
+import type { Vec3 } from "@drawer/shared/api";
 
 const LEAF_SIZE = 4;
 const STACK_SIZE = 4096;
@@ -308,7 +309,7 @@ function boxDist2(b: Bvh, node: number, x: number, y: number, z: number): number
 }
 
 /** Squared distance from a point to a triangle (Ericson, Real-Time Collision Detection 5.1.5). */
-export function pointTriangleDist2(pos: Float32Array, t: number, px: number, py: number, pz: number): number {
+export function pointTriangleDist2(pos: Float32Array, t: number, px: number, py: number, pz: number, point?: Vec3): number {
   const b = t * 9;
   const ax = pos[b]!, ay = pos[b + 1]!, az = pos[b + 2]!;
   const bx = pos[b + 3]!, by = pos[b + 4]!, bz = pos[b + 5]!;
@@ -355,37 +356,86 @@ export function pointTriangleDist2(pos: Float32Array, t: number, px: number, py:
       }
     }
   }
+  if (point) {
+    point[0] = qx;
+    point[1] = qy;
+    point[2] = qz;
+  }
   const ex = px - qx, ey = py - qy, ez = pz - qz;
   return ex * ex + ey * ey + ez * ez;
 }
 
-/** Squared distance from a point to the nearest triangle, searching no farther than sqrt(max2). */
-export function nearestDist2(b: Bvh, x: number, y: number, z: number, max2 = Infinity): number {
+export interface SurfacePoint {
+  triangle: number;
+  point: Vec3;
+  distance2: number;
+}
+
+/** Closest point on the surface, or null when no triangle is within the bound. */
+export function closestPoint(b: Bvh, x: number, y: number, z: number, max2 = Infinity): SurfacePoint | null {
   let best = max2;
+  let triangle = -1;
   let sp = 0;
   stack[sp++] = 0;
   while (sp > 0) {
     const node = stack[--sp]!;
-    if (boxDist2(b, node, x, y, z) >= best) continue;
+    if (boxDist2(b, node, x, y, z) > best) continue;
     const c = b.count[node]!;
     if (c > 0) {
       const s = b.first[node]!;
       for (let i = s; i < s + c; i++) {
-        const d = pointTriangleDist2(b.pos, b.order[i]!, x, y, z);
-        if (d < best) best = d;
+        const t = b.order[i]!;
+        const d = pointTriangleDist2(b.pos, t, x, y, z);
+        if (d < best || (d === best && triangle < 0)) {
+          best = d;
+          triangle = t;
+        }
       }
     } else if (b.first[node]! > 0) {
       const l = b.first[node]!;
       const dl = boxDist2(b, l, x, y, z);
       const dr = boxDist2(b, l + 1, x, y, z);
       if (dl <= dr) {
-        if (dr < best) stack[sp++] = l + 1;
-        if (dl < best) stack[sp++] = l;
+        if (dr <= best) stack[sp++] = l + 1;
+        if (dl <= best) stack[sp++] = l;
       } else {
-        if (dl < best) stack[sp++] = l;
-        if (dr < best) stack[sp++] = l + 1;
+        if (dl <= best) stack[sp++] = l;
+        if (dr <= best) stack[sp++] = l + 1;
       }
     }
   }
-  return best;
+  if (triangle < 0) return null;
+  const point: Vec3 = [0, 0, 0];
+  pointTriangleDist2(b.pos, triangle, x, y, z, point);
+  return { triangle, point, distance2: best };
+}
+
+/** Squared distance to the nearest triangle, capped at max2. */
+export function nearestDist2(b: Bvh, x: number, y: number, z: number, max2 = Infinity): number {
+  return closestPoint(b, x, y, z, max2)?.distance2 ?? max2;
+}
+
+/** Triangles whose surface intersects a sphere about the query point. */
+export function withinRadius(b: Bvh, x: number, y: number, z: number, radius: number): number[] {
+  if (radius < 0 || !Number.isFinite(radius)) throw new Error("radius must be finite and non-negative");
+  const radius2 = radius * radius;
+  const result: number[] = [];
+  let sp = 0;
+  stack[sp++] = 0;
+  while (sp > 0) {
+    const node = stack[--sp]!;
+    if (boxDist2(b, node, x, y, z) > radius2) continue;
+    const start = b.first[node]!;
+    const count = b.count[node]!;
+    if (count > 0) {
+      for (let i = start; i < start + count; i++) {
+        const triangle = b.order[i]!;
+        if (pointTriangleDist2(b.pos, triangle, x, y, z) <= radius2) result.push(triangle);
+      }
+    } else if (start > 0) {
+      stack[sp++] = start;
+      stack[sp++] = start + 1;
+    }
+  }
+  return result;
 }

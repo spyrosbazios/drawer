@@ -3,9 +3,11 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join as joinPath } from "node:path";
+import { deviation } from "../src/deviation";
+import { buildTopology } from "../src/topology";
 import { buildBvh } from "../src/bvh";
 import { createRenderer } from "../src/index";
-import { analyse, deviation, gap, probe, slice, transform, volume } from "../src/measure";
+import { analyse, gap, probe, slice, transform, volume } from "../src/measure";
 import { toBinaryStl } from "../src/mesh";
 import { MeasureClient } from "../src/measure-client";
 import { box, hollowBox, join, prism, pyramid, torus, washer } from "./shapes";
@@ -87,7 +89,7 @@ describe("analyse", () => {
 
 describe("slice", () => {
   test("plate with a 6 mm through hole: a round hole of diameter 6", () => {
-    const contours = slice(washer(20, 3, 4, 64), "z", 2);
+    const contours = slice(washer(20, 3, 4, 64), "z", 2).contours;
     expect(contours.length).toBe(2);
     const hole = contours.find((c) => c.hole);
     const outer = contours.find((c) => !c.hole);
@@ -105,7 +107,7 @@ describe("slice", () => {
     for (const n of [6, 10, 32, 64]) {
       const mesh = prism(n, 5, 10);
       const circles = heights.map((at) => {
-        const [c, ...rest] = slice(mesh, "z", at);
+        const [c, ...rest] = slice(mesh, "z", at).contours;
         expect(rest).toEqual([]);
         expect(c?.points.length).toBe(n);
         return c!.circle;
@@ -127,7 +129,7 @@ describe("slice", () => {
   });
 
   test("cube cut along y: one 10 × 10 square in x-z", () => {
-    const [c, ...rest] = slice(cube(), "y", 5);
+    const [c, ...rest] = slice(cube(), "y", 5).contours;
     expect(rest).toEqual([]);
     expect(c?.hole).toBe(false);
     expect(c?.areaMm2).toBeCloseTo(100, 6);
@@ -137,11 +139,11 @@ describe("slice", () => {
   });
 
   test("a cut that misses gives nothing", () => {
-    expect(slice(cube(), "x", 20)).toEqual([]);
+    expect(slice(cube(), "x", 20)).toEqual({ contours: [], open: [] });
   });
 
   test("long outlines are simplified to 200 points", () => {
-    const [c] = slice(washer(20, 3, 4, 500), "z", 1).filter((x) => !x.hole);
+    const [c] = slice(washer(20, 3, 4, 500), "z", 1).contours.filter((x) => !x.hole);
     expect(c?.points.length).toBe(200);
   });
 });
@@ -180,7 +182,7 @@ describe("measure client", () => {
     const client = new MeasureClient({ workerUrl });
     try {
       await expect(client.ask({ op: "probe", mesh: "x", from: [0, 0, 0], axis: "x" })).rejects.toThrow("measuring worker");
-      expect(await client.ask({ op: "slice", mesh: "x", axis: "z", at: 0 })).toMatchObject({ ok: true, contours: [] });
+      expect(await client.ask({ op: "slice", mesh: "x", axis: "z", at: 0 })).toMatchObject({ ok: true, result: { contours: [], open: [] } });
     } finally {
       client.terminate();
     }
@@ -189,7 +191,7 @@ describe("measure client", () => {
     const client = new MeasureClient({ workerUrl, timeoutMs: 300 });
     try {
       await expect(client.ask({ op: "probe", mesh: "x", from: [0, 0, 0], axis: "y" })).rejects.toThrow("did not answer");
-      expect(await client.ask({ op: "slice", mesh: "x", axis: "z", at: 0 })).toMatchObject({ ok: true, contours: [] });
+      expect(await client.ask({ op: "slice", mesh: "x", axis: "z", at: 0 })).toMatchObject({ ok: true, result: { contours: [], open: [] } });
     } finally {
       client.terminate();
     }
@@ -200,7 +202,7 @@ describe("deviation", () => {
   test("a cube shifted by 1 mm in x", () => {
     const a = buildBvh(cube());
     const shifted = transform(cube(), translate(1, 0, 0));
-    const r = deviation(a, shifted);
+    const r = deviation(a, buildTopology(a.pos), buildBvh(shifted), buildTopology(shifted), 0.2);
     expect(r.min).toBeCloseTo(-1, 6);
     expect(r.max).toBeCloseTo(1, 6);
     expect(r.field.length).toBe(12);
@@ -209,8 +211,27 @@ describe("deviation", () => {
   });
 
   test("identical meshes deviate by nothing", () => {
-    const r = deviation(buildBvh(cube()), cube());
+    const a = cube(), b = cube();
+    const r = deviation(buildBvh(a), buildTopology(a), buildBvh(b), buildTopology(b), 0.2);
     expect([r.min, r.max, r.rms, r.p95]).toEqual([0, 0, 0, 0]);
+  });
+
+  test("both area shares expose a large missing boss", () => {
+    const a = join(cube(), box([3, 3, 10], [7, 7, 16]));
+    const b = cube();
+    const result = deviation(buildBvh(a), buildTopology(a), buildBvh(b), buildTopology(b), 0.2);
+    expect(result.within).toBe(1);
+    expect(result.reverse.within).toBeLessThan(0.9);
+    expect(result.at?.[2]).toBeGreaterThan(15.9);
+  });
+
+  test("open surfaces get their signs from the local normal", () => {
+    const a = new Float32Array([0, 0, 0, 10, 0, 0, 10, 10, 0, 0, 0, 0, 10, 10, 0, 0, 10, 0]);
+    const b = transform(a, translate(0, 0, 1));
+    const result = deviation(buildBvh(a), buildTopology(a), buildBvh(b), buildTopology(b), 0.5);
+    expect([result.min, result.max, result.reverse.min, result.reverse.max]).toEqual([1, 1, -1, -1]);
+    expect([...result.field]).toEqual([1, 1]);
+    expect(result.within).toBe(0);
   });
 });
 
@@ -242,37 +263,37 @@ describe("renderer measuring methods (worker, cached files)", () => {
     const cacheDir = await mkdtemp(joinPath(tmpdir(), "drawer-measure-"));
     const keyA = "a".repeat(64);
     const keyB = "b".repeat(64);
-    await mkdir(joinPath(cacheDir, keyA));
-    await mkdir(joinPath(cacheDir, keyB));
-    await writeFile(joinPath(cacheDir, keyA, "mesh.stl"), toBinaryStl(hollowBox()));
-    await writeFile(joinPath(cacheDir, keyB, "mesh.stl"), toBinaryStl(transform(hollowBox(), translate(0.5, 0, 0))));
+    await mkdir(joinPath(cacheDir, "meshes", keyA), { recursive: true });
+    await mkdir(joinPath(cacheDir, "meshes", keyB));
+    await writeFile(joinPath(cacheDir, "meshes", keyA, "mesh.stl"), toBinaryStl(hollowBox()));
+    await writeFile(joinPath(cacheDir, "meshes", keyB, "mesh.stl"), toBinaryStl(transform(hollowBox(), translate(0.5, 0, 0))));
     const r = createRenderer({ cacheDir, openscadCmd: "/nonexistent/openscad" });
 
     const a = await r.analyse({ key: keyA, overhangDeg: 45 });
     expect(a.wall?.minMm).toBeCloseTo(2, 4);
     expect(a.thicknessFile).toBe("thickness.f32");
-    const field = new Float32Array((await readFile(joinPath(cacheDir, keyA, "thickness.f32"))).buffer.slice(0));
+    const field = new Float32Array((await readFile(joinPath(cacheDir, "meshes", keyA, "thickness.f32"))).buffer.slice(0));
     expect(field.length).toBe(24);
-    const written = (await stat(joinPath(cacheDir, keyA, "analysis-45.json"))).mtimeMs;
+    const written = (await stat(joinPath(cacheDir, "meshes", keyA, "analysis-45.json"))).mtimeMs;
     expect(await r.analyse({ key: keyA, overhangDeg: 45 })).toEqual(a);
-    expect((await stat(joinPath(cacheDir, keyA, "analysis-45.json"))).mtimeMs).toBe(written);
+    expect((await stat(joinPath(cacheDir, "meshes", keyA, "analysis-45.json"))).mtimeMs).toBe(written);
 
     const s = await r.slice({ key: keyA, axis: "z", at: 10 });
     expect(s.contours.map((c) => c.hole).sort()).toEqual([false, true]);
-    expect(await stat(joinPath(cacheDir, keyA, "slice-z-10.json")).then(() => true)).toBe(true);
+    expect(await stat(joinPath(cacheDir, "meshes", keyA, "slice-z-10.json")).then(() => true)).toBe(true);
 
     expect(await r.probe({ key: keyA, from: [10, 10, -0.5], axis: "z" })).toEqual({ inside: false, onSurface: false, low: null, high: 0, distance: null });
-    expect(await stat(joinPath(cacheDir, keyA, "probe-z-10_10_-0.5.json")).then(() => true)).toBe(true);
+    expect(await stat(joinPath(cacheDir, "meshes", keyA, "probe-z-10_10_-0.5.json")).then(() => true)).toBe(true);
 
-    const d = await r.deviation({ a: keyA, b: keyB });
-    expect(d.fieldFile).toBe(`deviation-${keyA}.f32`);
+    const d = await r.deviation({ a: keyA, b: keyB, tol: 0.2 });
+    expect(d.fieldFile).toBe(`deviation-${keyA}-0.2.f32`);
     expect(d.max).toBeCloseTo(0.5, 5);
     expect(d.min).toBeCloseTo(-0.5, 5);
 
     const i = await r.interference({ a: { key: keyA, matrix: IDENTITY }, b: { key: keyA, matrix: translate(25, 0, 0) } });
     expect(i).toEqual({ gapMm: 5, overlapCm3: 0 });
 
-    await expect(r.analyse({ key: "c".repeat(64), overhangDeg: 45 })).rejects.toThrow("no finished render");
+    await expect(r.analyse({ key: "c".repeat(64), overhangDeg: 45 })).rejects.toThrow("no finished mesh");
     await expect(r.analyse({ key: "../x", overhangDeg: 45 })).rejects.toThrow("not a render key");
   });
 });

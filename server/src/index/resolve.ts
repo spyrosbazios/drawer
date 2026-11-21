@@ -114,6 +114,10 @@ export function resolveScadTarget(ctx: ResolveContext, project: string, fromPath
 const SCAD_RELATIONS = new Set(["uses", "includes", "imports"]);
 
 export function resolveLink(ctx: ResolveContext, project: string, fromPath: string, relation: string, target: string): Resolved | null {
+  if (relation === "scans" || relation === "matches") {
+    const path = exact(ctx, project, target, false);
+    return path ? { project, path } : null;
+  }
   return fromPath.toLowerCase().endsWith(".scad") && SCAD_RELATIONS.has(relation)
     ? resolveScadTarget(ctx, project, fromPath, target)
     : resolveWikiTarget(ctx, project, fromPath, target);

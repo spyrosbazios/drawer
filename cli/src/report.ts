@@ -69,7 +69,7 @@ export function assemblyReportText(report: LocalAssemblyReport): string {
   lines.push(...nextText(report.next, report.status));
   if (report.pairs.length > 0) {
     lines.push("pairs:");
-    for (const p of report.pairs) lines.push(`  ${p.a} - ${p.b}  gap ${num(p.gapMm)} mm  overlap ${num(p.overlapCm3)} cm3`);
+    for (const p of report.pairs) lines.push(`  ${p.a} - ${p.b}  gap ${num(p.gapMm)} mm  ${p.penetration ? `depth ${num(p.penetration.depthMm)} mm (limit ${num(p.penetration.limitMm)} mm)` : `overlap ${num(p.overlapCm3 ?? 0)} cm3`}`);
   }
   if (report.bom.length > 0) {
     lines.push("bom:");

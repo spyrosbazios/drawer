@@ -2,7 +2,8 @@
  * The part gates (docs/SPEC.md → Parts and gates) as pure functions: measurements in, gate results,
  * status and next steps out. Nothing here touches the disk or the renderer.
  */
-import type { Dimension, GateResult, GateStatus, Material, MeshAnalysis, MeshInfo, PartSpec, PrinterProfile, ReportStatus, ScadParam, Strictness, Vec3 } from "@drawer/shared/api";
+import { UNWAIVABLE_GATES } from "@drawer/shared/api";
+import type { Dimension, GateResult, GateStatus, Match, Material, MeshAnalysis, MeshInfo, PartSpec, PrinterProfile, ReportStatus, ScadParam, Strictness, Vec3 } from "@drawer/shared/api";
 
 /** What was measured for one dimension. `size` for an envelope; `value` otherwise. */
 export type DimMeasurement =
@@ -223,10 +224,27 @@ export function minWallRequired(printer: PrinterProfile, material: Material | nu
   return material?.minWallMm ?? printer.minWallMm;
 }
 
+export function matchGate(spec: Match, result: { forward: number; reverse: number; at: Vec3 | null } | { error: string } | null): GateResult {
+  const id = `match:${spec.id}`;
+  if (!result) return skipped(id, spec.label, "no mesh to compare");
+  const share = spec.share ?? 0.95;
+  const expected = `both surfaces ≥ ${fmt(share * 100, 2)}% within ±${fmt(spec.tol, 4)} mm`;
+  if ("error" in result) return gate(id, spec.label, "fail", { expected, detail: result.error });
+  const { forward, reverse, at } = result;
+  const ok = forward >= share && reverse >= share;
+  return gate(id, spec.label, ok ? "pass" : "fail", {
+    measured: `model ${fmt(forward * 100, 2)}%, ${spec.to} ${fmt(reverse * 100, 2)}%`,
+    expected,
+    at,
+    hint: ok ? null : `Compare the model with ${spec.to} and fix the largest difference first.`,
+  });
+}
+
 /** Every gate that applies to the part, in a stable order, with strictness and waivers applied. */
 export function partGates(input: PartGateInput): GateResult[] {
   const { spec, printer, mesh, analysis } = input;
   const printed = spec.source === "printed";
+  const scanned = spec.source === "scanned";
   const standard = RANK[spec.strictness] >= RANK.standard;
   const built = input.build.ok && mesh !== null;
   const out: GateResult[] = [];
@@ -236,12 +254,12 @@ export function partGates(input: PartGateInput): GateResult[] {
       ? mesh && mesh.triangles > 0
         ? gate("parses", "Builds", "pass", { measured: `${mesh.triangles} triangles` })
         : gate("parses", "Builds", "fail", { measured: "empty", expected: "a non-empty solid", detail: "the model evaluates but builds no geometry", hint: "The top level draws nothing: call the part's module, and check that no difference() removes everything." })
-      : gate("parses", "Builds", "fail", { expected: "no errors", detail: input.build.error, hint: `Fix the OpenSCAD error first, nothing else can be measured until it builds: ${input.build.error}` }),
+      : gate("parses", "Builds", "fail", { expected: "no errors", detail: input.build.error, hint: scanned ? "Check that scan.file points to an uploaded mesh with faces." : `Fix the OpenSCAD error first, nothing else can be measured until it builds: ${input.build.error}` }),
   );
   const solid = built && (mesh?.triangles ?? 0) > 0;
 
-  if (!solid || !analysis) out.push(skipped("solid", "One closed body", "no mesh to analyse"));
-  else {
+  if (!scanned && (!solid || !analysis)) out.push(skipped("solid", "One closed body", "no mesh to analyse"));
+  else if (!scanned && analysis) {
     const ok = analysis.shells === 1 && analysis.watertight;
     const problems = [analysis.shells !== 1 ? `${analysis.shells} separate bodies` : null, analysis.watertight ? null : "not watertight"].filter((p): p is string => p !== null);
     out.push(
@@ -324,15 +342,12 @@ export function partGates(input: PartGateInput): GateResult[] {
   return applyPolicy(out, spec);
 }
 
-/** Gates no waiver applies to: a model that does not build, or is not one closed body, is never acceptable. */
-export const UNWAIVABLE: readonly string[] = ["parses", "solid"];
-
 /** `functional` turns warnings into failures; waivers turn a failure or warning into `waived`, except on the unwaivable gates. */
 export function applyPolicy(gates: GateResult[], spec: Pick<PartSpec, "strictness" | "waivers">): GateResult[] {
   return gates.map((g) => {
     let status = g.status;
     if (status === "warn" && spec.strictness === "functional") status = "fail";
-    const waiver = UNWAIVABLE.includes(g.id) ? undefined : spec.waivers.find((w) => w.gate === g.id);
+    const waiver = UNWAIVABLE_GATES.includes(g.id) ? undefined : spec.waivers.find((w) => w.gate === g.id);
     if (waiver && (status === "fail" || status === "warn")) return { ...g, status: "waived", detail: waiver.reason, hint: null };
     return status === g.status ? g : { ...g, status };
   });

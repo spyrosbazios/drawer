@@ -3,11 +3,14 @@
  * `shared/src/api.ts` with `satisfies`, so a change there is a compile error here.
  */
 import type {
+  AlignResult,
   AssemblyReport,
   AttemptsResponse,
   CompareResult,
   FileAttachmentResult,
   FileInfo,
+  Feature,
+  FeaturesResult,
   HistoryResponse,
   ImportPreview,
   ImportResult,
@@ -25,6 +28,7 @@ import type {
   RunnersResponse,
   SearchResponse,
   SectionResult,
+  ScanResult,
   Session,
   SessionAttachment,
   SessionDetail,
@@ -35,7 +39,7 @@ import type {
   WriteResult,
   Settings,
 } from "@drawer/shared/api";
-import { PROVIDER_KINDS } from "@drawer/shared/api";
+import { DIMENSION_KINDS, FEATURE_KINDS, MESH_FORMATS, PART_SOURCES, PROVIDER_KINDS } from "@drawer/shared/api";
 import { z } from "zod";
 
 const kind = z.enum(["markdown", "scad", "mesh", "image", "pdf", "text", "binary"]);
@@ -46,7 +50,7 @@ const importSite = z.enum(["printables", "thingiverse", "makerworld", "cults3d",
 const reportStatus = z.enum(["passed", "draft", "failed", "empty", "pending"]);
 const strictness = z.enum(["quick", "standard", "functional"]);
 const axis = z.enum(["x", "y", "z"]);
-const partSource = z.enum(["printed", "bought"]);
+const partSource = z.enum(PART_SOURCES);
 
 const importSource = z.object({
   site: importSite,
@@ -97,11 +101,21 @@ export const treeSchema = z.object({
 }) satisfies z.ZodType<TreeResponse>;
 
 const meshInfo = z.object({
-  format: z.enum(["stl", "3mf", "obj"]),
+  format: z.enum(MESH_FORMATS),
   triangles: z.number(),
+  closed: z.boolean(),
   bbox: z.object({ min: vec3, max: vec3, size: vec3 }),
   volumeCm3: z.number().nullable(),
 });
+
+export const scanResultSchema = z.object({
+  project: z.string(),
+  path: z.string(),
+  source: z.string(),
+  revisionId: z.string(),
+  mesh: meshInfo,
+  noiseMm: z.number(),
+}) satisfies z.ZodType<ScanResult>;
 
 const link = z.object({
   from: z.string(),
@@ -158,6 +172,7 @@ export const renderResultSchema = z.object({
   cached: z.boolean(),
   seconds: z.number(),
   mesh: z.string(),
+  proxy: z.string().optional(),
   views,
   sheet: z.string(),
   info: meshInfo,
@@ -188,7 +203,7 @@ export const importResultSchema = z.object({
 const dimension = z.object({
   id: z.string(),
   label: z.string(),
-  kind: z.enum(["size", "envelope", "hole", "boss", "gap", "wall", "min_wall", "volume"]),
+  kind: z.enum(DIMENSION_KINDS),
   axis: axis.optional(),
   at: z.number().optional(),
   near: vec2.optional(),
@@ -200,14 +215,18 @@ const dimension = z.object({
   max: z.number().optional(),
 });
 
+const match = z.object({ id: z.string(), label: z.string(), to: z.string(), tol: z.number(), share: z.number().optional() });
+
 const partSpec = z.object({
   title: z.string(),
   class: z.string(),
   description: z.string(),
   source: partSource,
+  scan: z.object({ file: z.string(), rotate: vec3, translate: vec3 }).optional(),
   material: z.string(),
   strictness,
   dimensions: z.array(dimension),
+  matches: z.array(match),
   waivers: z.array(z.object({ gate: z.string(), reason: z.string(), by: z.string(), at: z.string() })),
   prints: z.array(z.object({ revisionId: z.string(), at: z.string(), outcome: z.enum(["ok", "issue"]), note: z.string() })),
 });
@@ -249,7 +268,7 @@ const meshAnalysis = z.object({
   thickness: z.string().nullable(),
 });
 
-const renderRef = z.object({ key: z.string(), mesh: z.string(), views, sheet: z.string() });
+const renderRef = z.object({ key: z.string(), mesh: z.string(), proxy: z.string().optional(), views, sheet: z.string() });
 
 export const partSummarySchema = z.object({
   project: z.string(),
@@ -309,10 +328,12 @@ export const attemptsSchema = z.object({
   ),
 }) satisfies z.ZodType<AttemptsResponse>;
 
+const deviationStats = z.object({ min: z.number(), max: z.number(), rms: z.number(), p95: z.number(), within: z.number() });
+
 export const compareSchema = z.object({
   a: z.object({ render: renderRef, mesh: meshInfo }),
   b: z.object({ render: renderRef, mesh: meshInfo }),
-  deviation: z.object({ min: z.number(), max: z.number(), rms: z.number(), p95: z.number(), at: vec3.nullable(), field: z.string() }),
+  deviation: deviationStats.extend({ reverse: deviationStats, tol: z.number(), at: vec3.nullable(), field: z.string(), mesh: z.string() }),
   volumeDeltaCm3: z.number().nullable(),
   sizeDelta: vec3,
 }) satisfies z.ZodType<CompareResult>;
@@ -327,9 +348,36 @@ export const measureSchema = z.object({
   render: renderRef,
 }) satisfies z.ZodType<MeasureResult>;
 
+const pose = { rotate: vec3, translate: vec3 };
+export const alignSchema = z.object({
+  ...pose,
+  rms: z.number().nullable(),
+  ambiguous: z.array(z.object({ ...pose, rms: z.number().nullable() })),
+}) satisfies z.ZodType<AlignResult>;
+
+export const featureSchema = z.object({
+  kind: z.enum(FEATURE_KINDS),
+  origin: vec3,
+  direction: vec3.nullable(),
+  diameter: z.number().nullable(),
+  length: z.number().nullable(),
+  side: z.enum(["hole", "boss"]).nullable(),
+  areaMm2: z.number(),
+  rms: z.number(),
+  maxError: z.number(),
+  coverage: z.number(),
+}) satisfies z.ZodType<Feature>;
+
+export const featuresSchema = z.object({
+  features: z.array(featureSchema),
+  field: z.string(),
+  mesh: z.string(),
+}) satisfies z.ZodType<FeaturesResult>;
+
 export const sliceSchema = z.object({
   axis,
-  at: z.number(),
+  at: z.number().nullable(),
+  open: z.array(z.array(vec2)),
   contours: z.array(
     z.object({
       hole: z.boolean(),
@@ -407,7 +455,7 @@ export const assemblyReportSchema = z.object({
     ),
   }),
   instances: z.array(z.object({ id: z.string(), part: z.string(), partStatus: reportStatus, mesh: z.string().nullable(), matrix: z.array(z.number()) })),
-  pairs: z.array(z.object({ a: z.string(), b: z.string(), gapMm: z.number(), overlapCm3: z.number() })),
+  pairs: z.array(z.object({ a: z.string(), b: z.string(), gapMm: z.number(), overlapCm3: z.number().nullable(), penetration: z.object({ depthMm: z.number(), limitMm: z.number() }).optional() })),
   bom: z.array(
     z.object({
       part: z.string(),

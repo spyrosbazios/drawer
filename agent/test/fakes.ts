@@ -42,6 +42,7 @@ const spec: PartSpec = {
   material: "PETG",
   strictness: "standard",
   dimensions: [],
+  matches: [],
   waivers: [],
   prints: [],
 };
@@ -69,7 +70,7 @@ export function report(overrides: Partial<PartReport> = {}): PartReport {
       { id: "overhang", label: "Overhang", status: "warn", measured: "40 mm²", expected: "≤ 25 mm²", detail: null, hint: "Chamfer the underside", at: null },
     ],
     spec,
-    mesh: { format: "stl", triangles: 100, bbox: { min: [0, 0, 0], max: [20, 10, 8], size: [20, 10, 8] }, volumeCm3: 1.2 },
+    mesh: { format: "stl", closed: true, triangles: 100, bbox: { min: [0, 0, 0], max: [20, 10, 8], size: [20, 10, 8] }, volumeCm3: 1.2 },
     analysis: null,
     render: { key: "k", mesh: "/api/renders/k/mesh.stl", views: { iso: "/api/renders/k/iso.png" }, sheet: "/api/renders/k/sheet.png" },
     params: [{ name: "bore_d", type: "number", value: 5.6, group: "Fit", description: "", min: 4, max: 8, step: 0.1, options: null, line: 4 }],

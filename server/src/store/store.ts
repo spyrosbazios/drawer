@@ -53,6 +53,7 @@ export class Store {
   readonly trashDir: string;
   readonly tmpDir: string;
   readonly renderCacheDir: string;
+  readonly meshCacheDir: string;
   readonly reportCacheDir: string;
   readonly thumbnailDir: string;
   readonly git: Git;
@@ -62,13 +63,14 @@ export class Store {
     this.trashDir = join(dataDir, "trash");
     this.tmpDir = join(dataDir, "tmp");
     this.renderCacheDir = join(dataDir, "cache", "renders");
+    this.meshCacheDir = join(dataDir, "cache", "meshes");
     this.reportCacheDir = join(dataDir, "cache", "reports");
     this.thumbnailDir = join(dataDir, "cache", "thumbnails");
     this.git = new Git(this.projectsDir);
   }
 
   async init(): Promise<void> {
-    await Promise.all([this.projectsDir, this.trashDir, this.renderCacheDir, this.reportCacheDir, this.thumbnailDir].map((dir) => mkdir(dir, { recursive: true })));
+    await Promise.all([this.projectsDir, this.trashDir, this.renderCacheDir, this.meshCacheDir, this.reportCacheDir, this.thumbnailDir].map((dir) => mkdir(dir, { recursive: true })));
     // Leftovers of an interrupted write, import or render are garbage by definition.
     await rm(this.tmpDir, { recursive: true, force: true });
     await mkdir(this.tmpDir, { recursive: true });
@@ -403,6 +405,32 @@ export class Store {
     }
     const { commit, revisionId } = await this.commit(slug, opts.author, opts.message);
     return { commit, revisionId, upserts: writes.map((w) => w.path), removes: removed };
+  }
+
+  /** Publish the files of a new directory together before committing them. The caller holds the write lock. */
+  async createFileDirectory(slug: string, dir: string, writes: { path: string; bytes: Uint8Array }[], opts: { author: string; message: string }): Promise<Change> {
+    if (await this.stat(slug, dir)) throw exists(`${dir} already exists: pick another name`);
+    await this.ensureParents(slug, dir);
+    const staging = join(this.tmpDir, `directory-${randomId()}`);
+    await mkdir(staging);
+    try {
+      for (const { path, bytes } of writes) {
+        if (posix.dirname(path) !== dir) throw invalid(`expected a file in ${dir}`);
+        await Bun.write(join(staging, posix.basename(path)), bytes);
+      }
+      const target = this.abs(slug, dir);
+      await rename(staging, target);
+      let result;
+      try {
+        result = await this.commit(slug, opts.author, opts.message);
+      } catch (err) {
+        await rm(target, { recursive: true, force: true });
+        throw err;
+      }
+      return { ...result, upserts: writes.map(({ path }) => path), removes: [] };
+    } finally {
+      await rm(staging, { recursive: true, force: true });
+    }
   }
 
   /** Commits whatever is in the work tree (import, bulk writes). */

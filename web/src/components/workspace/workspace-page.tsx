@@ -21,12 +21,13 @@ import { partIdOf } from "@/core/parts";
 import { newestSession } from "@/core/sessions";
 import type { TreeNode } from "@/core/tree";
 import { useAssembly } from "@/hooks/assembly";
-import { fileTextQuery, infoQuery, useTree, useUploadFiles } from "@/hooks/files";
+import { fileTextQuery, infoQuery, useAddScan, useTree, useUploadFiles } from "@/hooks/files";
 import { useParts } from "@/hooks/parts";
 import { useProject } from "@/hooks/projects";
 import { useSessions } from "@/hooks/sessions";
 import { useIsDesktop } from "@/hooks/use-media";
 import { drafts, useDirtyPaths } from "@/lib/drafts";
+import { isMeshFormat } from "@drawer/shared/api";
 import { useProjectNav } from "@/lib/nav";
 import { useLocalPref } from "@/lib/local-pref";
 import { PROJECT_DEFAULTS, selectionOf, withSelection } from "@/lib/route-search";
@@ -39,6 +40,7 @@ import { ImportDialog } from "./import-dialog";
 import { Kickstart } from "./kickstart-view";
 import { PanelToggle } from "./panel-toggle";
 import { ProjectSettingsDialog } from "./project-settings";
+import { ScanDropDialog } from "./scan-drop-dialog";
 import { Sidebar } from "./sidebar";
 import { WorkspaceHeader } from "./workspace-header";
 import { WorkspaceLayout, outlineHidden } from "./workspace-layout";
@@ -83,6 +85,7 @@ export function WorkspacePage() {
   const tree = useTree(slug);
   const sessions = useSessions(slug);
   const upload = useUploadFiles();
+  const addScan = useAddScan(slug);
   const dirtyPaths = useDirtyPaths(slug);
 
   const entries = tree.data;
@@ -100,6 +103,7 @@ export function WorkspacePage() {
   const folder = selectedFolder ?? (activeFile ? dirName(activeFile) : REFS);
   const [settings, setSettings] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [scanDrops, setScanDrops] = useState<{ target: string; file: File }[]>([]);
   const [newFile, setNewFile] = useState<string | null>(null);
   const [newFolder, setNewFolder] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<TreeNode | null>(null);
@@ -169,6 +173,8 @@ export function WorkspacePage() {
     picker.current?.click();
   };
 
+  const nextScan = () => setScanDrops((queue) => queue.slice(1));
+  const drop = scanDrops[0];
   const treeActions = {
     onOpen: openFile,
     onIntent,
@@ -178,7 +184,17 @@ export function WorkspacePage() {
     onNewFile: setNewFile,
     onNewFolder: setNewFolder,
     onUpload: startUpload,
-    onDropFiles: (target: string, dropped: File[]) => void handleFiles(target === "" ? REFS : target, dropped),
+    onDropFiles: (folder: string, dropped: File[]) => {
+      const target = folder || REFS;
+      const ordinary: File[] = [];
+      const scans: { target: string; file: File }[] = [];
+      for (const file of dropped) {
+        if (slug !== LIBRARY_SLUG && isMeshFormat(file.name.slice(file.name.lastIndexOf(".") + 1).toLowerCase())) scans.push({ target, file });
+        else ordinary.push(file);
+      }
+      if (scans.length) setScanDrops((queue) => [...queue, ...scans]);
+      if (ordinary.length) void handleFiles(target, ordinary);
+    },
   };
 
   const sidebar = (
@@ -253,6 +269,19 @@ export function WorkspacePage() {
           e.target.value = "";
         }}
       />
+      {drop && (
+        <ScanDropDialog
+          key={scanDrops.length + drop.file.name}
+          file={drop.file}
+          onScan={async (name, units) => {
+            const { path } = await addScan({ name, filename: drop.file.name, ...(units ? { units } : {}) }, drop.file);
+            nextScan();
+            nav.selectFile(path);
+          }}
+          onReference={() => { void handleFiles(drop.target, [drop.file]); nextScan(); }}
+          onCancel={nextScan}
+        />
+      )}
       {projectData && <ProjectSettingsDialog project={projectData} entries={entries ?? []} open={settings} onOpenChange={setSettings} isLibrary={slug === LIBRARY_SLUG} />}
       <ImportDialog slug={slug} open={importing} onOpenChange={setImporting} onImported={(dir) => setSelectedFolder(dir)} />
       <NewFileDialog

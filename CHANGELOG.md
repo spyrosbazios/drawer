@@ -1,9 +1,28 @@
 # Changelog
 
+<!-- reviewed: 2026-11-21 -->
+
 All notable changes to drawer. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 version is one semver number for the whole repository, set by the git tag (see [CONTRIBUTING.md](CONTRIBUTING.md#versioning)).
 
 ## Unreleased
+
+### Added
+
+- The modelling guide and the skill have a chapter on working from a scan.
+
+- Check a printed copy against another part with a `match` gate. Compare reports how much of each surface is within tolerance.
+
+- Place scans as parts and propose their frames with `align`. Assemblies can measure open scans.
+
+- Measure planes, cylinders and spheres on a scan or model. Slice returns open outlines and can project the full silhouette.
+
+- Drop a scan onto a project or run `drawer scan add` to store a cleaned mesh in millimetres and a source note.
+- Mesh info reports whether the surface is closed. Large mesh previews use a lightweight STL.
+
+### Changed
+
+- Mesh exports and measurements are cached independently of preview views and sizes.
 
 ### Fixed
 

@@ -1,6 +1,6 @@
 import { posix } from "node:path";
 import type { FileKind } from "@drawer/shared/api";
-import { LIBRARY_SLUG } from "@drawer/shared/api";
+import { isMeshFormat, LIBRARY_SLUG } from "@drawer/shared/api";
 import { invalid } from "../errors.ts";
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -58,9 +58,6 @@ export function extOf(path: string): string {
 const KIND_BY_EXT: Record<string, FileKind> = {
   md: "markdown",
   scad: "scad",
-  stl: "mesh",
-  "3mf": "mesh",
-  obj: "mesh",
   png: "image",
   jpg: "image",
   jpeg: "image",
@@ -84,7 +81,8 @@ const KIND_BY_EXT: Record<string, FileKind> = {
 
 /** Kind from the extension alone; null when the content has to be sniffed. */
 export function kindFromExtension(path: string): FileKind | null {
-  return KIND_BY_EXT[extOf(path)] ?? null;
+  const ext = extOf(path);
+  return isMeshFormat(ext) ? "mesh" : KIND_BY_EXT[ext] ?? null;
 }
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -105,6 +103,7 @@ const MIME_BY_EXT: Record<string, string> = {
   stl: "model/stl",
   "3mf": "model/3mf",
   obj: "model/obj",
+  ply: "application/octet-stream",
   png: "image/png",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",

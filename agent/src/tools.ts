@@ -6,9 +6,13 @@
 import { ApiFailure, type Client } from "@drawer/cli/client";
 import {
   ASSEMBLY_FILE,
+  DIMENSION_KINDS,
+  FEATURE_KINDS,
   LIBRARY_SLUG,
   MATERIALS_FILE,
   PART_DIR,
+  PART_SOURCES,
+  PART_SPEC_SUFFIX,
   PRINTER_FILE,
   type NewSessionItem,
   type PartReport,
@@ -47,6 +51,9 @@ export type ToolClient = Pick<
   | "setParams"
   | "render"
   | "measure"
+  | "align"
+  | "features"
+  | "fit"
   | "slice"
   | "probe"
   | "section"
@@ -303,7 +310,7 @@ const notePath = z
 const dimension = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/),
   label: z.string(),
-  kind: z.enum(["size", "envelope", "hole", "boss", "gap", "wall", "min_wall", "volume"]),
+  kind: z.enum(DIMENSION_KINDS),
   axis: axis.optional().describe("size, hole, gap, wall"),
   at: z.number().optional().describe("hole, boss: cutting plane position along axis"),
   near: vec2.optional().describe("hole, boss: the other two coordinates (x-y-z order without axis) the centre is nearest to"),
@@ -529,14 +536,17 @@ const setPartSpec = defineTool({
     title: z.string().min(1),
     class: z.string().optional().describe('What kind of part, e.g. "snap-fit clip"'),
     description: z.string().optional(),
-    source: z.enum(["printed", "bought"]).optional(),
+    source: z.enum(PART_SOURCES).optional(),
+    scan: z.object({ file: filePath.refine((p) => pathProblem(p) === null && !p.startsWith(`${LIBRARY_SLUG}/`), "must be a mesh path within the project"), rotate: vec3, translate: vec3 }).optional(),
     material: z.string().optional(),
     strictness: z.enum(["quick", "standard", "functional"]).optional(),
     dimensions: z.array(dimension).optional(),
+    matches: z.array(z.object({ id: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/), label: z.string().min(1), to: partId, tol: z.number().positive(), share: z.number().positive().max(1).optional() })).optional(),
   },
-  async run(ctx, { part, dimensions, ...rest }) {
+  async run(ctx, { part, dimensions, scan, ...rest }) {
     const spec = {
       ...rest,
+      ...(scan ? { scan: { file: scan.file, rotate: toVec3(scan.rotate), translate: toVec3(scan.translate) } } : {}),
       ...(dimensions === undefined
         ? {}
         : {
@@ -550,6 +560,7 @@ const setPartSpec = defineTool({
     };
     const summary = await ctx.client.putPart(ctx.project, part, spec);
     const lead = `Spec of ${part} saved (${spec.dimensions?.length ?? 0} dimension(s)).`;
+    if (!summary.model && summary.source === "scanned") return output(`${lead} The scan file is missing.`, `spec ${part}`);
     if (!summary.model) return output(`${lead} No model yet: write parts/${part}.scad with write_model.`, `spec ${part}`);
     return afterModelWrite(ctx, part, [lead]);
   },
@@ -649,7 +660,15 @@ const viewPart = defineTool({
     views: views.optional().describe("Default: iso"),
   },
   async run(ctx, { part, path, views: chosen }) {
-    const target = path ?? (part ? modelPath(part) : null);
+    let target = path ?? (part ? modelPath(part) : null);
+    if (path === undefined && part) {
+      const specPath = `${PART_DIR}/${part}${PART_SPEC_SUFFIX}`;
+      const file = await ctx.client.readFile(ctx.project, specPath).catch((err: unknown) => {
+        if (err instanceof ApiFailure && err.code === "not_found") return null;
+        throw err;
+      });
+      if (file && (JSON.parse(new TextDecoder().decode(file.bytes)) as { source?: string }).source === "scanned") target = specPath;
+    }
     if (!target) return { ...output("Give part or path.", "view: nothing to view"), ok: false };
     const where = locate(ctx, target);
     const wanted: RenderView[] = chosen && chosen.length > 0 ? chosen : ["iso"];
@@ -664,7 +683,7 @@ const viewPart = defineTool({
 
 const measureFile = defineTool({
   name: "measure_file",
-  description: "Measure any .scad or mesh file (a reference, a library part, a model): size, volume, shells, watertightness, base, overhang, thinnest wall, and an iso picture.",
+  description: "Measure any .scad or mesh file (a reference, a library part, a model): size, shells, watertightness, base, overhang, and an iso picture. Volume and wall thickness require a closed mesh.",
   input: { path: filePath, params: paramValues.optional() },
   async run(ctx, { path, params }) {
     const where = locate(ctx, path);
@@ -681,22 +700,56 @@ const measureFile = defineTool({
   },
 });
 
+const align = defineTool({
+  name: "align",
+  description: "Propose a frame for a scan, or align it onto a part or mesh. Review alternatives before saving the transform in a scanned part spec.",
+  input: { path: filePath, to: compareSide.optional() },
+  async run(ctx, { path, to }) {
+    const where = locate(ctx, path);
+    if (to?.path?.startsWith(`${LIBRARY_SLUG}/`) || to?.part?.startsWith(`${LIBRARY_SLUG}/`)) return { ...output("Alignment target must be in this project.", "alignment target outside project"), ok: false };
+    const result = await ctx.client.align(where.slug, where.path, to ? { to } : {});
+    return output(JSON.stringify(result), `aligned ${path}`);
+  },
+});
+
+const features = defineTool({
+  name: "features",
+  description: "List up to 40 measured planar, cylindrical and spherical features on a model or scan, largest first.",
+  input: { path: filePath },
+  async run(ctx, { path }) {
+    const where = locate(ctx, path);
+    const result = await ctx.client.features(where.slug, where.path);
+    return output(JSON.stringify(result.features), `${result.features.length} features on ${path}`);
+  },
+});
+
+const fit = defineTool({
+  name: "fit",
+  description: "Fit the surface nearest a picked point. Optionally specify plane, cylinder or sphere. Read coverage and RMS along with diameter.",
+  input: { path: filePath, at: vec3, kind: z.enum(FEATURE_KINDS).optional() },
+  async run(ctx, { path, at, kind }) {
+    const where = locate(ctx, path);
+    const feature = await ctx.client.fit(where.slug, where.path, { at: at as Vec3, ...(kind ? { kind } : {}) });
+    return output(JSON.stringify(feature), `fit ${feature.kind} on ${path}`);
+  },
+});
+
 const slice = defineTool({
   name: "slice",
   description:
-    "Cut a .scad or mesh file at axis = at and list the closed outlines: area, bounding box, centre, best-fit circle (diameter, roundness). Use it to find where a hole or slot really is before changing a spec.",
-  input: { path: filePath, axis, at: z.number() },
-  async run(ctx, { path, axis: ax, at }) {
+    "Cut a model at axis = at, or use shadow to project its full shape along the axis. Closed outlines include area and a best-fit circle. Open outlines contain points.",
+  input: { path: filePath, axis, at: z.number().optional(), shadow: z.boolean().optional() },
+  async run(ctx, { path, axis: ax, at, shadow }) {
     const where = locate(ctx, path);
-    const res = await ctx.client.slice(where.slug, where.path, { axis: ax, at });
+    const res = await ctx.client.slice(where.slug, where.path, { axis: ax, ...(at === undefined ? {} : { at }), ...(shadow === undefined ? {} : { shadow }) });
     const lines = res.contours.map(
       (c, i) =>
         `${i + 1}. ${c.hole ? "hole" : "outline"}: area ${c.areaMm2.toFixed(2)} mm², centre ${vec(c.centre)}, box ${vec(c.bbox.min)}–${vec(c.bbox.max)}, circle Ø${c.circle.diameter.toFixed(3)} at ${vec(c.circle.centre)} (${c.circle.round ? "round" : "not round"}, rms ${c.circle.rms.toFixed(3)})`,
     );
-    return output(
-      [`${path} cut at ${ax} = ${at}: ${res.contours.length} outline(s). Coordinates are the other two axes in x-y-z order.`, ...lines].join("\n"),
-      `slice ${path} ${ax}=${at}: ${res.contours.length} outline(s)`,
-    );
+    const place = res.at === null ? `shadow along ${ax}` : `cut at ${ax} = ${res.at}`;
+    const header = `${path} ${place}: ${res.contours.length} closed and ${res.open.length} open outlines. Coordinates are the other two axes in x-y-z order.`;
+    if (res.open.length) lines.push(JSON.stringify(res.open));
+    return output([header, ...lines].join("\n"), `${place} on ${path}`);
   },
 });
 
@@ -729,13 +782,14 @@ const section = defineTool({
 const compare = defineTool({
   name: "compare",
   description:
-    "How B differs from A: each side is a part, a file, or either at a revision (from attempts). Signed surface distance (positive = B has more material), RMS, 95th percentile, where the largest difference is, volume and size deltas.",
-  input: { a: compareSide, b: compareSide },
-  async run(ctx, { a, b }) {
-    const res = await ctx.client.compare(ctx.project, { a, b });
+    "How B differs from A: each side is a part, a file, or either at a revision (from attempts). Signed surface distances and area within tolerance in both directions, the largest difference, volume and size deltas.",
+  input: { a: compareSide, b: compareSide, tol: z.number().positive().optional() },
+  async run(ctx, { a, b, tol }) {
+    const res = await ctx.client.compare(ctx.project, { a, b, ...(tol === undefined ? {} : { tol }) });
     const d = res.deviation;
     const text = [
       `Deviation of B from A: min ${d.min.toFixed(3)}, max ${d.max.toFixed(3)}, RMS ${d.rms.toFixed(3)}, p95 ${d.p95.toFixed(3)} mm${d.at ? `, largest at ${vec(d.at)}` : ""}`,
+      `Within ±${d.tol} mm: A ${(d.reverse.within * 100).toFixed(2)}%, B ${(d.within * 100).toFixed(2)}%.`,
       `Size delta ${vec(res.sizeDelta)} mm${res.volumeDeltaCm3 !== null ? `, volume delta ${res.volumeDeltaCm3.toFixed(3)} cm³` : ""}`,
     ].join("\n");
     return output(text, `compare: p95 ${d.p95.toFixed(2)} mm`);
@@ -964,6 +1018,9 @@ export const drawerTools: readonly DrawerTool[] = [
   setParams,
   viewPart,
   measureFile,
+  align,
+  features,
+  fit,
   slice,
   probe,
   section,

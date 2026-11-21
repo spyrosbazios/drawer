@@ -106,12 +106,40 @@ export interface TreeResponse {
   entries: TreeEntry[];
 }
 
+export const MESH_FORMATS = ["stl", "3mf", "obj", "ply"] as const;
+export type MeshFormat = (typeof MESH_FORMATS)[number];
+
+export function isMeshFormat(value: string): value is MeshFormat {
+  return MESH_FORMATS.some((format) => format === value);
+}
+
 export interface MeshInfo {
-  format: "stl" | "3mf" | "obj";
+  format: MeshFormat;
   triangles: number;
+  closed: boolean;
   /** Millimetres. */
   bbox: { min: [number, number, number]; max: [number, number, number]; size: [number, number, number] };
   volumeCm3: number | null;
+}
+
+export const SCAN_UNITS = ["mm", "cm", "m", "in"] as const;
+export type ScanUnit = (typeof SCAN_UNITS)[number];
+export const MAX_SCAN_TRIANGLES = 2_000_000;
+
+/** POST /projects/:slug/scans, with raw bytes in the body. */
+export interface ScanQuery {
+  name: string;
+  filename: string;
+  units?: ScanUnit;
+}
+
+export interface ScanResult {
+  project: string;
+  path: string;
+  source: string;
+  revisionId: string;
+  mesh: MeshInfo;
+  noiseMm: number;
 }
 
 export interface Link {
@@ -210,7 +238,9 @@ export interface RenderResult {
   cached: boolean;
   seconds: number;
   /** URL paths (start with /api/renders/). */
-  mesh: string; // binary STL (for a mesh input: the file itself, converted to STL when needed)
+  mesh: string; // full binary STL
+  /** Lightweight STL for drawing a large mesh. Measurements always use the full mesh. */
+  proxy?: string;
   views: Partial<Record<RenderView, string>>;
   /** One PNG with all requested views in a grid. */
   sheet: string;
@@ -369,7 +399,11 @@ export type ReportStatus = "passed" | "draft" | "failed" | "empty" | "pending";
  * - min_wall: the thinnest wall anywhere in the part must be at least `min`.
  * - volume:   solid volume in cm³.
  */
-export type DimensionKind = "size" | "envelope" | "hole" | "boss" | "gap" | "wall" | "min_wall" | "volume";
+export const DIMENSION_KINDS = ["size", "envelope", "hole", "boss", "gap", "wall", "min_wall", "volume"] as const;
+export type DimensionKind = (typeof DIMENSION_KINDS)[number];
+
+/** A model that fails to build or has no single closed body cannot be waived. */
+export const UNWAIVABLE_GATES: readonly string[] = ["parses", "solid"] as const;
 
 export interface Dimension {
   /** Unique in the spec: [a-z0-9][a-z0-9_-]*. */
@@ -404,16 +438,41 @@ export interface PrintResult {
 }
 
 /** parts/<id>.part.json. Written through PUT .../parts/<id>; the server validates it. */
+export const PART_SOURCES = ["printed", "bought", "scanned"] as const;
+export type PartSource = (typeof PART_SOURCES)[number];
+
+export interface Pose {
+  /** Euler rotations about x, then y, then z, in degrees. */
+  rotate: Vec3;
+  translate: Vec3;
+}
+
+export interface ScanPlacement extends Pose {
+  file: string;
+}
+
+export interface Match {
+  id: string;
+  label: string;
+  /** Part id in the project. */
+  to: string;
+  tol: number;
+  /** Required area share in both directions. Defaults to 0.95. */
+  share?: number;
+}
+
 export interface PartSpec {
   title: string;
   /** What kind of part it is, in a few words ("snap-fit clip", "enclosure lid"). Guides the modeller; no gate reads it. */
   class: string;
   description: string;
   /** `bought`: hardware that is not printed; only its model and size matter (no printability gates). */
-  source: "printed" | "bought";
+  source: PartSource;
+  scan?: ScanPlacement;
   material: string;
   strictness: Strictness;
   dimensions: Dimension[];
+  matches: Match[];
   waivers: Waiver[];
   prints: PrintResult[];
 }
@@ -492,7 +551,50 @@ export interface MeshAnalysis {
   thickness: string | null;
 }
 
-/** One closed outline of a cross-section. Coordinates are the two axes other than the cutting axis, in x-y-z order. */
+export const FEATURE_KINDS = ["plane", "cylinder", "sphere"] as const;
+export type FeatureKind = (typeof FEATURE_KINDS)[number];
+
+export interface Feature {
+  kind: FeatureKind;
+  /** A point on the plane or axis, or the sphere centre. */
+  origin: Vec3;
+  /** Plane normal or cylinder axis. */
+  direction: Vec3 | null;
+  diameter: number | null;
+  length: number | null;
+  side: "hole" | "boss" | null;
+  areaMm2: number;
+  rms: number;
+  maxError: number;
+  coverage: number;
+}
+
+export interface AlignBody extends FeaturesBody {
+  to?: CompareSide;
+}
+
+/** `rms` is null for a datum frame, which fits nothing; set for a registration against `to`. */
+export interface AlignResult extends Pose {
+  rms: number | null;
+  /** Other poses that score about as well: other base planes for a datum, symmetric fits for a registration. */
+  ambiguous: (Pose & { rms: number | null })[];
+}
+
+export interface FeaturesBody { revision?: string }
+
+export interface FeaturesResult {
+  features: Feature[];
+  field: string;
+  /** Mesh that the feature values index, one value per displayed triangle. */
+  mesh: string;
+}
+
+export interface FitBody extends FeaturesBody {
+  at: Vec3;
+  kind?: FeatureKind;
+}
+
+/** One closed section outline, in the two remaining axes in x-y-z order. */
 export interface SliceContour {
   /** True when material is outside the outline (a hole in the section). */
   hole: boolean;
@@ -507,7 +609,8 @@ export interface SliceContour {
 
 export interface SliceResult {
   axis: Axis;
-  at: number;
+  at: number | null;
+  open: [number, number][][];
   contours: SliceContour[];
 }
 
@@ -526,6 +629,8 @@ export interface ProbeResult {
 export interface RenderRef {
   key: string;
   mesh: string;
+  /** Lightweight STL for drawing a large mesh. Measurements always use the full mesh. */
+  proxy?: string;
   views: Partial<Record<RenderView, string>>;
   sheet: string;
 }
@@ -536,7 +641,7 @@ export interface PartSummary {
   id: string;
   title: string;
   class: string;
-  source: "printed" | "bought";
+  source: PartSource;
   material: string;
   strictness: Strictness;
   /** Project-relative paths. `model` is null until the part has one. */
@@ -613,7 +718,8 @@ export interface MeasureResult {
 /** POST /projects/:slug/slice/<path>, /probe/<path>, /section/<path>: the same files as measure. */
 export interface SliceBody {
   axis: Axis;
-  at: number;
+  at?: number;
+  shadow?: boolean;
   /** The file as of this revision; default current. */
   revision?: string;
 }
@@ -624,7 +730,10 @@ export interface ProbeBody {
   revision?: string;
 }
 
-export interface SectionBody extends SliceBody {
+export interface SectionBody {
+  axis: Axis;
+  at: number;
+  revision?: string;
   size?: number; // px, default 800
 }
 
@@ -680,21 +789,29 @@ export interface CompareSide {
   at?: string;
 }
 
-/** POST /projects/:slug/compare { a, b }: how B differs from A. */
+export const DEFAULT_COMPARE_TOL = 0.2;
+
+export interface DeviationStats {
+  min: number;
+  max: number;
+  rms: number;
+  p95: number;
+  /** Area share within the tolerance. */
+  within: number;
+}
+
+/** POST /projects/:slug/compare: how B differs from A. */
 export interface CompareResult {
   a: { render: RenderRef; mesh: MeshInfo };
   b: { render: RenderRef; mesh: MeshInfo };
-  /** Signed distance from B's surface to A's, mm: positive where B has more material. */
-  deviation: {
-    min: number;
-    max: number;
-    rms: number;
-    /** 95 % of B's surface is within this distance of A. */
-    p95: number;
-    /** Where the largest difference is, on B. */
+  /** B to A. Positive lies on the normal side of A. Reverse is A to B. */
+  deviation: DeviationStats & {
+    tol: number;
+    reverse: DeviationStats;
     at: Vec3 | null;
-    /** URL of the distance per triangle of B's mesh.stl: Float32 little-endian, mm. */
     field: string;
+    /** The mesh indexed by the field painted on B. */
+    mesh: string;
   };
   volumeDeltaCm3: number | null;
   sizeDelta: Vec3;
@@ -783,9 +900,14 @@ export interface BomLine {
   part: string;
   title: string;
   count: number;
-  source: "printed" | "bought";
+  source: PartSource;
   material: string | null;
   massG: number | null; // per piece
+}
+
+export interface OpenClash {
+  depthMm: number;
+  limitMm: number;
 }
 
 export interface AssemblyReport {
@@ -799,7 +921,7 @@ export interface AssemblyReport {
   /** Each instance with the mesh to draw and its 4×4 placement, row-major. */
   instances: { id: string; part: string; partStatus: ReportStatus; mesh: string | null; matrix: number[] }[];
   /** Every pair that is mated or whose bounding boxes come within 1 mm. */
-  pairs: { a: string; b: string; gapMm: number; overlapCm3: number }[];
+  pairs: { a: string; b: string; gapMm: number; overlapCm3: number | null; penetration?: OpenClash }[];
   bom: BomLine[];
   totalPrintedMassG: number | null;
   render: Omit<RenderRef, "mesh"> | null;
@@ -1076,6 +1198,7 @@ export interface AttemptsResponse {
 export interface CompareBody {
   a: CompareSide;
   b: CompareSide;
+  tol?: number;
 }
 
 /** GET /projects/:slug/overview: what an agent reads first. */

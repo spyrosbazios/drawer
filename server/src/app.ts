@@ -58,7 +58,7 @@ export function createApp(opts: AppOptions): App {
     await settings.init();
     index = new Index(join(opts.dataDir, "index.db"), store.projectsDir, opts.renderer);
     service = new Service({ store, index, bus, renderer: opts.renderer, importers: opts.importers });
-    router = buildRouter({ service, bus, sse, sessions, settings, renderCacheDir: store.renderCacheDir });
+    router = buildRouter({ service, bus, sse, sessions, settings, renderCacheDir: store.renderCacheDir, meshCacheDir: store.meshCacheDir });
     await service.start(index.needsRebuild);
     await sessions.init();
   })();

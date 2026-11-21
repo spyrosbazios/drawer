@@ -87,7 +87,7 @@ function ReviewBody({ slug, part, report: r }: { slug: string; part: string; rep
           </Fold>
 
           <Fold id="gates" title="Gates" summary={gates.text} status={gates.failing ? { kind: "gate", status: "fail" } : undefined}>
-            {r.spec.source === "bought" && <p className="px-3 pb-2 text-xs text-dim">Bought part: no printability gates.</p>}
+            {r.spec.source !== "printed" && <p className="px-3 pb-2 text-xs text-dim">{r.spec.source === "scanned" ? "Scanned part" : "Bought part"}. No printability gates.</p>}
             {r.gates.length === 0 ? <p className="px-3 text-sm text-dim">None yet.</p> : <GateList gates={r.gates} failingFirst onLocate={locate} expanded={(g) => isFailing(g) || g.status === "waived"} />}
           </Fold>
 

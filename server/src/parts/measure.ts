@@ -68,6 +68,7 @@ export async function measureDimension(renderer: Renderer, key: string, mesh: Me
       case "gap":
       case "wall": {
         const from = d.from ?? [0, 0, 0];
+        if (!mesh.closed) return { ok: false, error: "an open mesh has no inside", at: from };
         const axis = d.axis ?? "x";
         const probe = await renderer.probe({ key, from, axis });
         if (probe.onSurface) return { ok: false, error: `the point ${pt(from)} lies on a face`, hint: `Move the point ${pt(from)} into the ${d.kind === "gap" ? "air of the gap" : "material of the wall"}, away from its faces.`, at: from };

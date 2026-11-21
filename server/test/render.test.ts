@@ -20,7 +20,8 @@ describe("render route", () => {
     expect(res.status).toBe(200);
     expect(res.json).toMatchObject({ project: "r", path: "src/a.scad", cached: false, info: MESH_INFO, log: ["ECHO: hello"], warnings: [] });
     const { key } = res.json;
-    expect(res.json.mesh).toBe(`/api/renders/${key}/mesh.stl`);
+    expect(res.json.mesh).toMatch(/^\/api\/renders\/[a-f0-9]{64}\/mesh\.stl$/);
+    expect(res.json.mesh).not.toBe(`/api/renders/${key}/mesh.stl`);
     expect(res.json.sheet).toBe(`/api/renders/${key}/sheet.png`);
     expect(Object.keys(res.json.views).sort()).toEqual(["front", "iso", "side", "top"]);
     expect(res.json.views.iso).toBe(`/api/renders/${key}/iso.png`);

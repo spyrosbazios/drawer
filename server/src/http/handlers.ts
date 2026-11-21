@@ -1,6 +1,6 @@
 import { posix } from "node:path";
 import type { CreateProjectBody, FileKind, ImportBody, PatchProjectBody, RenderBody, RenderView, SearchResponse } from "@drawer/shared/api";
-import { HEADER_AUTHOR, HEADER_MESSAGE, HEADER_REV } from "@drawer/shared/api";
+import { HEADER_AUTHOR, HEADER_MESSAGE, HEADER_REV, SCAN_UNITS } from "@drawer/shared/api";
 import { ApiException, forbidden, invalid, notFound } from "../errors.ts";
 import { ALL_VIEWS, type Service } from "../service.ts";
 import { mimeFor, normalizePath } from "../store/paths.ts";
@@ -103,9 +103,10 @@ export interface HandlerDeps {
   sessions: Sessions;
   settings: SettingsStore;
   renderCacheDir: string;
+  meshCacheDir: string;
 }
 
-export function buildRouter({ service, bus, sse, sessions, settings, renderCacheDir }: HandlerDeps): Router {
+export function buildRouter({ service, bus, sse, sessions, settings, renderCacheDir, meshCacheDir }: HandlerDeps): Router {
   const r = new Router();
   registerSessionRoutes(r, sessions);
 
@@ -196,6 +197,19 @@ export function buildRouter({ service, bus, sse, sessions, settings, renderCache
   r.add("POST", "/projects/:slug/render/*", async (ctx) =>
     json(await service.render(ctx.params.slug as string, filePath(ctx), renderBody(await readJsonBody(ctx.req, { optional: true })))),
   );
+  r.add("POST", "/projects/:slug/scans", async ({ params, url, req }) => {
+    const filename = url.searchParams.get("filename");
+    const name = url.searchParams.get("name");
+    if (!name || !filename) throw invalid("name and filename are required");
+    const rawUnit = url.searchParams.get("units");
+    const units = SCAN_UNITS.find((unit) => unit === rawUnit);
+    if (rawUnit !== null && !units) throw invalid("units must be mm, cm, m or in");
+    if (Number(req.headers.get("content-length") ?? 0) > MAX_UPLOAD) throw invalid("upload exceeds the 200 MB limit");
+    const bytes = new Uint8Array(await req.arrayBuffer());
+    if (bytes.length > MAX_UPLOAD) throw invalid("upload exceeds the 200 MB limit");
+    return json(await service.addScan(params.slug as string, { name, filename, ...(units ? { units } : {}) }, bytes, author(req)), 201);
+  });
+
   r.add("POST", "/projects/:slug/import", async ({ req, params }) => {
     const body = await readJsonBody(req);
     const name = optString(body, "name");
@@ -214,7 +228,8 @@ export function buildRouter({ service, bus, sse, sessions, settings, renderCache
     if (key === undefined || file === undefined || extra.length > 0 || !RENDER_KEY_RE.test(key) || type === undefined) throw notFound("no such render");
     const headers = { "content-type": type, "cache-control": IMMUTABLE, etag: `"${key}/${file}"`, "x-content-type-options": "nosniff" };
     if (req.headers.get("if-none-match") === headers.etag) return new Response(null, { status: 304, headers });
-    const handle = Bun.file(`${renderCacheDir}/${key}/${file}`);
+    const root = ext === "stl" || ext === "f32" || file.startsWith("section-") ? meshCacheDir : renderCacheDir;
+    const handle = Bun.file(`${root}/${key}/${file}`);
     if (!(await handle.exists())) throw notFound("no such render");
     return new Response(handle, { headers });
   });

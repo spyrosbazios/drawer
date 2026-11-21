@@ -50,7 +50,7 @@ test("a symmetric cube exposes distinct alternative fits", () => {
   const fit = register(moved, buildTopology(moved), buildBvh(solid), buildTopology(solid));
   expect(fit.rms).toBeLessThan(0.005);
   expect(fit.ambiguous.length).toBeGreaterThan(0);
-  expect(fit.ambiguous.every((p) => p.rms < 0.01)).toBe(true);
+  expect(fit.ambiguous.every((p) => p.rms !== null && p.rms < 0.01)).toBe(true);
 });
 
 test("a datum puts the largest plane at Z=0", () => {
@@ -60,6 +60,19 @@ test("a datum puts the largest plane at Z=0", () => {
   expect(fit.rms).toBeNull();
   const framed = transform(moved, matrix(fit));
   expect(Math.max(...framed.filter((_, i) => i % 3 === 2).map(Math.abs))).toBeLessThan(0.001);
+});
+
+test("a datum on a part with two equal faces offers the other way up", () => {
+  const slab = transform(box([0, 0, 0], [30, 20, 3]), matrix({ rotate: [14, 55, 31], translate: [8, -10, 34] }));
+  const fit = datum(slab, buildTopology(slab), 0);
+  expect(fit.ambiguous).toHaveLength(1);
+  const zs = (pose: Pose) => transform(slab, matrix(pose)).filter((_, i) => i % 3 === 2);
+  for (const pose of [fit, fit.ambiguous[0]!]) {
+    expect(Math.min(...zs(pose))).toBeCloseTo(0, 3);
+    expect(Math.max(...zs(pose))).toBeCloseTo(3, 3);
+  }
+  expect(fit.ambiguous[0]!.rms).toBeNull();
+  expect(fit.ambiguous[0]!.rotate).not.toEqual(fit.rotate);
 });
 
 test("interference against an open scan measures depth and uses the printer clearance", async () => {

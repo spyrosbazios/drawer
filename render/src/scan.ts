@@ -185,7 +185,8 @@ export function normalizeScan(format: MeshFormat, bytes: Uint8Array, units?: Sca
   if (remaining === 0) throw new Error("no surface remains after cleaning; export a triangulated surface with larger connected pieces");
   const surface = pos.subarray(0, remaining * 9);
   const topology = remaining === kept ? all : buildTopology(surface);
-  const noiseMm = scanNoise(surface, topology);
+  /** Reported to the micrometre: the estimate is not finer than that. */
+  const noiseMm = Math.round(scanNoise(surface, topology) * 1000) / 1000;
   orient(surface, topology);
   const info = computeMeshInfo({ format: "stl", positions: surface }, { ...topology, oriented: topology.closed });
   return { bytes: toBinaryStl(surface), info, originalTriangles, degenerateTriangles, debrisTriangles: kept - remaining, noiseMm, unit };

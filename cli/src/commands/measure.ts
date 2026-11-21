@@ -225,7 +225,7 @@ export const align: Command = {
       `rotate ${result.rotate.map(num).join(", ")}°`,
       `translate ${result.translate.map(num).join(", ")} mm`,
       ...(result.rms === null ? [] : [`RMS ${num(result.rms)} mm`]),
-      ...result.ambiguous.map((p) => `alternative: rotate ${p.rotate.map(num).join(", ")}°, translate ${p.translate.map(num).join(", ")} mm, RMS ${num(p.rms)} mm`),
+      ...result.ambiguous.map((p) => `alternative: rotate ${p.rotate.map(num).join(", ")}°, translate ${p.translate.map(num).join(", ")} mm${p.rms === null ? "" : `, RMS ${num(p.rms)} mm`}`),
     ].join("\n"));
   },
 };

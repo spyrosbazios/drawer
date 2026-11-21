@@ -206,7 +206,8 @@ Historical evaluation uses the spec and mesh from the requested revision.
 
 `POST .../align/<path>` proposes a pose without making a revision. With no target it uses the
 largest fitted plane as the datum, the longest remaining direction for x, and the box corner or
-main revolution axis as the origin. With `to`, the renderer tries the 24 proper principal-axis
+main revolution axis as the origin; every other plane with at least 90 % of the datum's area is
+offered in `ambiguous` as the other way up, with `rms` null. With `to`, the renderer tries the 24 proper principal-axis
 orientations and refines them with point-to-plane ICP. The result includes the RMS distance and
 other poses with similar scores when alignment is ambiguous.
 

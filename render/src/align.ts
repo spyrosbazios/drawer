@@ -1,5 +1,5 @@
 /** Principal-axis starts refined by Chen–Medioni point-to-plane ICP. */
-import type { AlignResult, Pose, Vec3 } from "@drawer/shared/api";
+import type { AlignResult, Feature, Pose, Vec3 } from "@drawer/shared/api";
 import { closestPoint, type Bvh } from "./bvh";
 import { centroid, principal } from "./fit";
 import { solveCholesky } from "./linalg";
@@ -198,11 +198,10 @@ export function register(sourcePos: Float32Array, sourceTopology: Topology, targ
   return { ...poseOf(best, source.centre), ambiguous: alternatives.filter((c) => c !== best).map((c) => poseOf(c, source.centre)) };
 }
 
-export function datum(pos: Float32Array, topology: Topology, noiseMm: number): AlignResult {
-  const source = locate(pos, topology);
-  const { features } = extractFeatures(pos, topology, noiseMm);
-  const plane = features.find((f) => f.kind === "plane");
-  const cylinder = features.find((f) => f.kind === "cylinder");
+/** A plane at least this share of the largest plane's area is an equally good base: the other way up is offered too. */
+const RIVAL_BASE = 0.9;
+
+function datumPose(pos: Float32Array, source: Located, plane: Feature | undefined, cylinder: Feature | undefined): Pose {
   const z = plane?.direction ? scale(plane.direction, -1) : (cylinder?.direction ?? source.axes[2]);
   const flat = source.samples.map(({ p }) => reject(sub(p, source.centre), z));
   const x = unit(reject(principal(flat, [0, 0, 0])[2]!.vector, z));
@@ -218,5 +217,15 @@ export function datum(pos: Float32Array, topology: Topology, noiseMm: number): A
     min[0] = dot(frame[0], cylinder.origin);
     min[1] = dot(frame[1], cylinder.origin);
   }
-  return { rotate: euler(frame), translate: scale(min, -1), rms: null, ambiguous: [] };
+  return { rotate: euler(frame), translate: scale(min, -1) };
+}
+
+export function datum(pos: Float32Array, topology: Topology, noiseMm: number): AlignResult {
+  const source = locate(pos, topology);
+  const { features } = extractFeatures(pos, topology, noiseMm);
+  const planes = features.filter((f) => f.kind === "plane").sort((a, b) => b.areaMm2 - a.areaMm2);
+  const cylinder = features.find((f) => f.kind === "cylinder");
+  const [base, ...others] = planes;
+  const rivals = base ? others.filter((p) => p.areaMm2 >= base.areaMm2 * RIVAL_BASE) : [];
+  return { ...datumPose(pos, source, base, cylinder), rms: null, ambiguous: rivals.map((p) => ({ ...datumPose(pos, source, p, cylinder), rms: null })) };
 }

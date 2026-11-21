@@ -352,7 +352,7 @@ const pose = { rotate: vec3, translate: vec3 };
 export const alignSchema = z.object({
   ...pose,
   rms: z.number().nullable(),
-  ambiguous: z.array(z.object({ ...pose, rms: z.number() })),
+  ambiguous: z.array(z.object({ ...pose, rms: z.number().nullable() })),
 }) satisfies z.ZodType<AlignResult>;
 
 export const featureSchema = z.object({

@@ -573,9 +573,11 @@ export interface AlignBody extends FeaturesBody {
   to?: CompareSide;
 }
 
+/** `rms` is null for a datum frame, which fits nothing; set for a registration against `to`. */
 export interface AlignResult extends Pose {
   rms: number | null;
-  ambiguous: (Pose & { rms: number })[];
+  /** Other poses that score about as well: other base planes for a datum, symmetric fits for a registration. */
+  ambiguous: (Pose & { rms: number | null })[];
 }
 
 export interface FeaturesBody { revision?: string }

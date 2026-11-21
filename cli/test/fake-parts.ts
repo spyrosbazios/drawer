@@ -81,7 +81,7 @@ const DEFAULT_SPEC: Omit<PartSpec, "title"> = {
   waivers: [],
   prints: [],
 };
-const SPEC_FIELDS = new Set(["title", "class", "description", "source", "material", "strictness", "dimensions"]);
+const SPEC_FIELDS = new Set(["title", "class", "description", "source", "material", "strictness", "dimensions", "scan"]);
 
 export function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -164,10 +164,14 @@ export class FakeModeling {
   private report(project: string, id: string, params?: ParamValues): PartReport | null {
     const spec = this.spec(project, id);
     if (!spec) return null;
-    const model = this.text(project, `parts/${id}.scad`);
-    const modelRev = this.store.files.get(project)?.get(`parts/${id}.scad`)?.rev ?? "empty";
+    const modelPath = spec.scan?.file ?? `parts/${id}.scad`;
+    const model = this.text(project, modelPath);
+    const modelRev = this.store.files.get(project)?.get(modelPath)?.rev ?? "empty";
     const gates: GateResult[] = [];
-    if (model !== null && model.includes("SYNTAX_ERROR")) {
+    if (spec.scan) {
+      gates.push(gate("parses", "Builds", model === null ? "fail" : "pass"));
+      for (const d of spec.dimensions) gates.push(gate(`dim:${d.id}`, d.label, model === null ? "skipped" : "pass"));
+    } else if (model !== null && model.includes("SYNTAX_ERROR")) {
       gates.push(gate("parses", "Builds a solid", "fail", { detail: "OpenSCAD reported an error", hint: "fix the syntax error reported by the check, then write again" }));
       gates.push(gate("solid", "One watertight body", "skipped", { detail: "no mesh: parses failed" }));
     } else if (model !== null) {
@@ -192,7 +196,7 @@ export class FakeModeling {
       }
     }
     const parsesFailed = gates.some((g) => g.id === "parses" && g.status === "fail");
-    const status: ReportStatus = model === null ? "empty" : parsesFailed ? "failed" : gates.some((g) => g.status === "fail") ? "draft" : "passed";
+    const status: ReportStatus = parsesFailed ? "failed" : model === null ? "empty" : gates.some((g) => g.status === "fail") ? "draft" : "passed";
     const counted = gates.filter((g) => g.status !== "skipped");
     const passed = counted.filter((g) => g.status !== "fail").length;
     const next = gates.filter((g) => g.status === "fail" && g.hint).map((g) => `${g.label}: ${g.hint}`);
@@ -210,7 +214,7 @@ export class FakeModeling {
       analysis: model === null || status === "failed" ? null : ANALYSIS,
       render: model === null || status === "failed" ? null : refFor(`${modelRev}${params ? "wi" : ""}`.padEnd(24, "0")),
       params: [{ name: "wall", type: "number", value: typeof params?.wall === "number" ? params.wall : 1.6, group: "", description: "", min: null, max: null, step: null, options: null, line: 3 }],
-      massG: model === null || status === "failed" ? null : 10.3,
+      massG: model === null || status === "failed" || spec.scan ? null : 10.3,
       next,
       whatIf: params !== undefined,
       seconds: 0.4,
@@ -315,6 +319,7 @@ export class FakeModeling {
       case "sessions":
         return method === "POST" ? this.createSession(slug, bodyText) : null;
       case "measure":
+      case "align":
       case "features":
       case "fit":
       case "slice":
@@ -359,7 +364,7 @@ export class FakeModeling {
         return json(this.summary(slug, id));
       }
       case "attempts":
-        return json({ attempts: this.attempts.get(`${slug}/${id}`) ?? [] });
+        return json({ attempts: spec.scan ? [] : this.attempts.get(`${slug}/${id}`) ?? [] });
       case "restore": {
         const body = parse(bodyText) as { revisionId: string };
         if (!(this.attempts.get(`${slug}/${id}`) ?? []).some((a) => a.revisionId === body.revisionId)) return apiError(404, "not_found", `no attempt ${body.revisionId}`);
@@ -392,6 +397,7 @@ export class FakeModeling {
     const file = this.store.files.get(slug)?.get(path);
     if (!file) return apiError(404, "not_found", `no file ${path}`);
     const body = parse(bodyText);
+    if (kind === "align") return json({ rotate: [0, 0, 0], translate: [0, 0, 0], rms: body.to ? 0 : null, ambiguous: [] });
     if (kind === "features" || kind === "fit") {
       const feature: Feature = { kind: "plane", origin: [0, 0, 0], direction: [0, 0, 1], diameter: null, length: null, side: null, areaMm2: 1200, rms: 0, maxError: 0, coverage: 1 };
       const ref = refFor(file.rev);

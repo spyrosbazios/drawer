@@ -33,7 +33,8 @@ import { Index, type FileRow, type UpsertSpec } from "./index/indexer.ts";
 import { MAX_IMPORT_IMAGES, imageExtension, safeFileName, sourceMarkdown, uniqueName } from "./importing.ts";
 import { assertNewSlug, extOf, isHiddenName, kindFromExtension, normalizePath, slugify } from "./store/paths.ts";
 import { PartsService } from "./parts/service.ts";
-import { partOfPath } from "./parts/validate.ts";
+import { placement } from "./parts/assembly-gates.ts";
+import { parseJsonFile, partOfPath, validatePartSpec } from "./parts/validate.ts";
 import { assertLibraryKeeps, assertLibraryPath } from "./library-layout.ts";
 import { Thumbnails } from "./thumbnails.ts";
 import { libraryProfileFiles, libraryStarter, projectStarter } from "./store/starter.ts";
@@ -99,8 +100,8 @@ export class Service {
       workspace: {
         writeFile: (slug, path, bytes, opts) => this.writeFile(slug, path, bytes, opts),
         writeMany: (slug, writes, removes, author, message) => this.writeMany(slug, writes, removes, author, message),
-        render: (slug, path, body) => this.render(slug, path, body),
-        mesh: (slug, path, at, params) => this.mesh(slug, path, at, params),
+        render: (slug, path, body, matrix) => this.render(slug, path, body, matrix),
+        mesh: (slug, path, at, matrix) => this.mesh(slug, path, at, matrix),
       },
     });
     this.thumbnails = new Thumbnails({
@@ -472,15 +473,15 @@ export class Service {
   async moveFile(slug: string, from: string, to: string, message: string | undefined, author: string): Promise<{ revisionId: string }> {
     return this.lock.run(async () => {
       await this.store.requireProject(slug);
-      if (slug === LIBRARY_SLUG) {
-        assertLibraryKeeps(from);
-        const st = await this.store.stat(slug, from);
-        const moved = st?.type === "dir" ? (await this.store.walk(slug, from)).filter((e) => e.type === "file").map((e) => `${to}${e.path.slice(from.length)}`) : [to];
-        for (const path of moved) assertLibraryPath(path);
-      }
-      if ((await this.store.stat(slug, from))?.type === "file") {
-        const validate = this.parts.validatorFor(slug, to, author);
-        if (validate) await validate(await this.store.readBytes(slug, from));
+      const st = await this.store.stat(slug, from);
+      if (slug === LIBRARY_SLUG) assertLibraryKeeps(from);
+      const files = st?.type === "dir" ? (await this.store.walk(slug, from)).filter((e) => e.type === "file").map((e) => e.path) : st?.type === "file" ? [from] : [];
+      const destinations = new Set(files.map((file) => `${to}${file.slice(from.length)}`));
+      for (const file of files) {
+        const dest = `${to}${file.slice(from.length)}`;
+        this.checkPlace(slug, dest);
+        const validate = this.parts.validatorFor(slug, dest, author, destinations);
+        if (validate) await validate(await this.store.readBytes(slug, file));
       }
       const change = await this.store.move(slug, from, to, { author, message });
       await this.indexChange(slug, change, author);
@@ -581,10 +582,11 @@ export class Service {
 
   // ---- rendering ----------------------------------------------------------------------------
 
-  private async withRenderFile<T>(slug: string, path: string, at: string | undefined, params: RenderBody["params"], work: (req: MeshRequest) => Promise<T>): Promise<T> {
+  private async withRenderFile<T>(slug: string, path: string, at: string | undefined, params: RenderBody["params"], matrix: number[] | undefined, work: (req: MeshRequest) => Promise<T>): Promise<T> {
     await this.store.requireProject(slug);
     const kind = kindFromExtension(path);
-    if (kind !== "scad" && kind !== "mesh") throw invalid(`${path} is not a .scad or mesh file`);
+    const part = partOfPath(path);
+    if (kind !== "scad" && kind !== "mesh" && part?.file !== "spec") throw invalid(`${path} is not a .scad or mesh file`);
 
     const libraryDir = this.store.projectDir(LIBRARY_SLUG);
     let root = this.store.projectDir(slug);
@@ -597,7 +599,16 @@ export class Service {
     try {
       const st = at === undefined ? await this.store.stat(slug, path) : await lstatOrNull(join(root, path));
       if (st?.type !== "file") throw notFound(`no such file${at ? ` at revision ${at}` : ""}: ${path}`);
-      return await work({ file: join(root, path), searchPaths: root === libraryDir ? [root] : [root, libraryDir], ...(params ? { params } : {}) });
+      let input = path;
+      let frame = matrix;
+      if (part?.file === "spec") {
+        const bytes = await Bun.file(join(root, path)).bytes();
+        const { scan } = validatePartSpec(parseJsonFile(bytes, path), []);
+        if (!scan) throw invalid(`${path} does not describe a scanned part`);
+        input = scan.file;
+        frame = placement(scan.rotate, scan.translate);
+      }
+      return await work({ file: join(root, input), searchPaths: root === libraryDir ? [root] : [root, libraryDir], ...(params ? { params } : {}), ...(frame ? { matrix: frame } : {}) });
     } catch (err) {
       if (err instanceof RenderError) throw new ApiException("render_failed", err.message.replaceAll(`${root}/`, "").replaceAll(`${libraryDir}/`, `${LIBRARY_SLUG}/`));
       throw err;
@@ -606,16 +617,16 @@ export class Service {
     }
   }
 
-  async mesh(slug: string, path: string, at?: string, params?: RenderBody["params"]): Promise<MeshOutput> {
-    return this.withRenderFile(slug, path, at, params, (req) => this.renderer.mesh(req));
+  async mesh(slug: string, path: string, at?: string, matrix?: number[]): Promise<MeshOutput> {
+    return this.withRenderFile(slug, path, at, undefined, matrix, (req) => this.renderer.mesh(req));
   }
 
-  async render(slug: string, path: string, body: RenderBody): Promise<RenderResult> {
+  async render(slug: string, path: string, body: RenderBody, matrix?: number[]): Promise<RenderResult> {
     const views = body.views && body.views.length > 0 ? [...new Set(body.views)] : ALL_VIEWS;
     const size = body.size ?? DEFAULT_RENDER_SIZE;
     const at = body.at ?? null;
     let total = views.length + 3;
-    return this.withRenderFile(slug, path, body.at, body.params, async (req) => {
+    return this.withRenderFile(slug, path, body.at, body.params, matrix, async (req) => {
       try {
         const out = await this.renderer.render({
           ...req,

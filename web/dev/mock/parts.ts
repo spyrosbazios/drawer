@@ -214,6 +214,7 @@ export function specOf(p: StoredProject, id: string, at?: string): PartSpec {
     class: s.class ?? "",
     description: s.description ?? "",
     source: s.source ?? "printed",
+    ...(s.scan ? { scan: s.scan } : {}),
     material: s.material ?? p.meta.defaults.material,
     strictness: s.strictness ?? p.meta.defaults.strictness,
     dimensions: s.dimensions ?? [],
@@ -370,6 +371,8 @@ function statusOf(gates: readonly GateResult[]): ReportStatus {
 
 export function boxesOfPart(slug: string, id: string, at?: string, overrides: ParamValues = {}): Box[] | null {
   const p = getProject(slug);
+  const scan = head(p, specPath(id)) ? specOf(p, id, at).scan : undefined;
+  if (scan) return head(p, scan.file) ? moveBoxes(boxesOfFile(slug, scan.file, at), scan.translate) : null;
   const text = textOf(p, modelPath(id), at);
   if (text === null || text.includes("FAIL")) return null;
   return shapeOf(id)(valuesOf(paramsOf(text), overrides));
@@ -380,7 +383,7 @@ export function computeReport(slug: string, id: string, opts: { at?: string; par
   const started = performance.now();
   const p = getProject(slug);
   const spec = specOf(p, id, opts.at);
-  const text = textOf(p, modelPath(id), opts.at);
+  const text = spec.scan ? (head(p, spec.scan.file) ? "" : "FAIL") : textOf(p, modelPath(id), opts.at);
   const revisionId = opts.at ?? p.revisions[0]?.id ?? "r0";
   const material = MATERIALS.find((m) => m.name === spec.material);
   const whatIf = opts.params !== undefined && Object.keys(opts.params).length > 0;
@@ -390,8 +393,8 @@ export function computeReport(slug: string, id: string, opts: { at?: string; par
   }
   const params = paramsOf(text);
   const values = valuesOf(params, opts.params);
-  const boxes = text.includes("FAIL") ? null : shapeOf(id)(values);
-  const gates = gatesOf(spec, text, boxes, values);
+  const boxes = spec.scan ? boxesOfPart(slug, id, opts.at) : text.includes("FAIL") ? null : shapeOf(id)(values);
+  const gates = gatesOf(spec, text, boxes, values).filter((gate) => !spec.scan || gate.id === "parses" || gate.id.startsWith("dim:"));
   const counted = gates.filter((x) => x.status !== "skipped");
   const passed = counted.filter((x) => x.status !== "fail").length;
   return {
@@ -421,7 +424,8 @@ export function summaryOf(slug: string, id: string): PartSummary {
   const spec = specOf(p, id);
   const s = stateOf(slug, id);
   const r = s.evaluating && !s.report ? null : currentReport(slug, id);
-  const model = head(p, modelPath(id)) ? modelPath(id) : null;
+  const modelFile = spec.scan?.file ?? modelPath(id);
+  const model = head(p, modelFile) ? modelFile : null;
   const f = p.files.get(model ?? specPath(id));
   return {
     project: slug,
@@ -596,6 +600,7 @@ export function recordPrint(slug: string, id: string, body: { outcome?: "ok" | "
 
 export function attemptsOf(slug: string, id: string): Attempt[] {
   specOf(getProject(slug), id);
+  if (specOf(getProject(slug), id).scan) return [];
   return stateOf(slug, id).attempts.map((a) => ({ ...a }));
 }
 
@@ -663,7 +668,7 @@ export function compare(slug: string, a: CompareSide, b: CompareSide): CompareRe
 /** Any .scad or mesh file: a part's model uses its shape, anything else a cube sized from the file. */
 export function boxesOfFile(slug: string, path: string, revision?: string): Box[] {
   const p = getProject(slug);
-  const id = /^parts\/([a-z0-9][a-z0-9-]*)\.scad$/.exec(path)?.[1];
+  const id = /^parts\/([a-z0-9][a-z0-9-]*)\.(?:scad|part\.json)$/.exec(path)?.[1];
   if (id) {
     const b = boxesOfPart(slug, id, revision);
     if (!b) throw new HttpError("render_failed", `ERROR: Parser error in file "${path}"`);
@@ -795,7 +800,7 @@ export function computeAssembly(slug: string): AssemblyReport {
     ),
   );
   const press = (a: string, b: string) => spec.mates.some((m) => m.fit === "press" && ((m.a === a && m.b === b) || (m.a === b && m.b === a)));
-  const clashes = pairs.filter((x) => x.overlapCm3 > 0.0005 && !press(x.a, x.b));
+  const clashes = pairs.filter((x) => (x.overlapCm3 ?? 0) > 0.0005 && !press(x.a, x.b));
   const first = clashes[0];
   const firstBoxes = first ? placed.find((x) => x.inst.id === first.a)?.boxes : undefined;
   gates.push(
@@ -803,7 +808,7 @@ export function computeAssembly(slug: string): AssemblyReport {
       "clash",
       "No parts overlap",
       clashes.length ? "fail" : "pass",
-      clashes.length ? clashes.map((c) => `${c.a} × ${c.b}: ${round(c.overlapCm3 * 1000, 1)} mm³`).join("; ") : "no overlap",
+      clashes.length ? clashes.map((c) => `${c.a} × ${c.b}: ${round((c.overlapCm3 ?? 0) * 1000, 1)} mm³`).join("; ") : "no overlap",
       "≤ 0.5 mm³",
       first ? `Move ${first.b} away from ${first.a}, or mate them as a press fit.` : null,
       firstBoxes ? bboxOf(firstBoxes).max : null,

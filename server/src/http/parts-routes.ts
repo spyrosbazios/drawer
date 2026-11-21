@@ -77,6 +77,15 @@ export function registerPartRoutes(r: Router, service: Service, deps: { json: Js
     onlyFields(body, ["revision", "params"]);
     return json(await parts.measureFile(slug(ctx), path(ctx), optString(body, "revision"), optParams(body, "params")));
   });
+  r.add("POST", "/projects/:slug/align/*", async (ctx) => {
+    const body = await readJsonBody(ctx.req, { optional: true });
+    onlyFields(body, ["to", "revision"]);
+    const revision = optString(body, "revision");
+    return json(await parts.align(slug(ctx), path(ctx), {
+      ...(body.to === undefined ? {} : { to: side(body.to, "to") }),
+      ...(revision === undefined ? {} : { revision }),
+    }));
+  });
   r.add("POST", "/projects/:slug/features/*", async (ctx) => {
     const body = await readJsonBody(ctx.req, { optional: true });
     onlyFields(body, ["revision"]);

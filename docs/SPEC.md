@@ -191,6 +191,25 @@ the original upload. On an open component it keeps the side supported by most of
 when making the winding consistent. The noise estimate is the median distance of a vertex to the
 least-squares plane of its neighbours.
 
+## Scanned parts and alignment
+
+Set a part's `source` to `"scanned"` and give it `scan: { file, rotate, translate }`. The file is a
+project mesh, typically `refs/<name>/scan.stl`. Rotations are in degrees about x, y and z in that
+order, then translation in millimetres. This part has no OpenSCAD file, parameters or attempts.
+The server evaluates only `parses` and its dimension gates, using the placed mesh. A measurement
+can address `parts/<id>.part.json` to use that frame. Assemblies place scanned parts the same way
+as other parts. The library continues to hold bought parts.
+
+The index records a `scans` dependency from the spec to its mesh. A mesh write, deletion or
+reappearance queues the part. Evaluation and report keys include the referenced file revision.
+Historical evaluation uses the spec and mesh from the requested revision.
+
+`POST .../align/<path>` proposes a pose without making a revision. With no target it uses the
+largest fitted plane as the datum, the longest remaining direction for x, and the box corner or
+main revolution axis as the origin. With `to`, the renderer tries the 24 proper principal-axis
+orientations and refines them with point-to-plane ICP. The result includes the RMS distance and
+other poses with similar scores when alignment is ambiguous.
+
 ## Parts and gates
 
 A part id is `[a-z0-9][a-z0-9-]*`. `PUT /projects/:slug/parts/:id` creates the part or replaces what a
@@ -215,7 +234,7 @@ expected, and a hint.
 | Gate | Passes when | Applies |
 |---|---|---|
 | `parses` | OpenSCAD evaluates the model without errors and builds a non-empty solid | always |
-| `solid` | one connected, watertight body | always |
+| `solid` | one connected, watertight body | printed or bought |
 | `fits_bed` | the bounding box fits the printer's bed (x and y may swap) | printed |
 | `dim:<id>` | the measured value is within the dimension's range | always, one per spec dimension |
 | `lint` | first line is a `//` description; at least one Customizer parameter; no top-level `$fn` above 128. More than 6 unexplained numeric literals inside modules is a `warn` | printed, `standard` and up |
@@ -297,13 +316,15 @@ translation) and says how they must meet (`mates`). A part of the library is `_l
 /projects/:slug/assembly` validates and writes it and returns the report; `GET` returns the current
 report (`404` without an assembly); a write to any part it uses re-evaluates it.
 
-For every pair that is mated or whose bounding boxes come within 1 mm, the server measures the gap
-(smallest distance between the two surfaces) and the shared volume.
+For every pair that is mated or whose bounding boxes come within 1 mm, the server measures the gap between the surfaces. For two closed meshes it also measures shared
+volume. For an open surface, `overlapCm3` is null and `penetration` reports depth behind the
+surface and its limit. The open-scan clash limit is the larger of the printer's sliding clearance
+and twice the scan's measured noise. This threshold is a decision for review.
 
 | Gate | Passes when |
 |---|---|
 | `parts` | every instance's part exists, has a model and is not `failed`; `warn` while any is `draft` |
-| `clash` | no pair shares more than 0.5 mm³, except pairs mated as `press` |
+| `clash` | no closed pair shares more than 0.5 mm³ and no open pair exceeds its depth limit, except pairs mated as `press` |
 | `mate:<id>` | `clearance`: no overlap and the gap is within `min`..`max`. `contact`: no overlap and gap ≤ 0.05 mm. `press`: the two overlap or touch |
 | `floating` | every instance is within 0.5 mm of another (skipped with a single instance) |
 | `bom` | every bought part is a library part |
@@ -472,6 +493,7 @@ must come with `content-type: application/json`. No GET changes anything. The se
 | GET | `/projects/:slug/parts/:id/attempts` | → `AttemptsResponse` |
 | POST | `/projects/:slug/parts/:id/restore` | `RestoreBody` → `WriteResult` |
 | POST | `/projects/:slug/measure/<path>` | `MeasureBody` → `MeasureResult` |
+| POST | `/projects/:slug/align/<path>` | `AlignBody` → `AlignResult` |
 | POST | `/projects/:slug/features/<path>` | `FeaturesBody` → `FeaturesResult` |
 | POST | `/projects/:slug/fit/<path>` | `FitBody` → `Feature` |
 | POST | `/projects/:slug/slice/<path>` | `SliceBody` → `SliceResult` |
@@ -533,11 +555,12 @@ drawer reindex
 drawer guide                                 the modelling guide the server gives every agent
 drawer overview <project>                    brief, memory, parts with status, printer and materials
 drawer parts <project>                       parts with status
-drawer part <project>/<id> [--title t] [--class c] [--material m] [--strictness s] [--source printed|bought]
+drawer part <project>/<id> [--title t] [--class c] [--material m] [--strictness s] [--source printed|bought|scanned]
             [--description d] [--spec file.json]     create the part or replace its spec (--spec: a PartSpecBody; flags win)
 drawer report <project>/<id> [--param name=value]... [--at <rev-id>]   the server's verdict; --param is a what-if
 drawer set <project>/<id> name=value...      write parameter values into the model
 drawer measure <file>                        mesh info and analysis of any model
+drawer align <file> [--to part-or-path]      propose a frame or align to another model
 drawer features <file> [--at <rev-id>]       planes, cylinders and spheres
 drawer fit <file> --at x,y,z [--kind plane|cylinder|sphere]
 drawer slice <file> --axis z (--at 5 | --shadow)

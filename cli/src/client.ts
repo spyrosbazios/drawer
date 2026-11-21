@@ -1,5 +1,7 @@
 /** Typed fetch wrapper over every route in shared/src/api.ts. Only types are imported from @drawer/shared. */
 import type {
+  AlignBody,
+  AlignResult,
   AnswerBody,
   ApiError,
   AssemblyReport,
@@ -378,6 +380,10 @@ export class Client {
 
   slice(slug: string, path: string, body: SliceBody): Promise<SliceResult> {
     return this.sendJson("POST", this.filePath(slug, "slice", path), body);
+  }
+
+  align(slug: string, path: string, body: AlignBody = {}): Promise<AlignResult> {
+    return this.sendJson("POST", this.filePath(slug, "align", path), body);
   }
 
   features(slug: string, path: string, body: FeaturesBody = {}): Promise<FeaturesResult> {

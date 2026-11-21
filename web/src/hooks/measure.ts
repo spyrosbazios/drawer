@@ -1,6 +1,6 @@
-import type { FitBody, MeasureBody, ProbeBody, SectionBody, SliceBody } from "@drawer/shared/api";
+import type { AlignBody, FitBody, MeasureBody, ProbeBody, SectionBody, SliceBody } from "@drawer/shared/api";
 import { queryOptions, useMutation, useQuery } from "@tanstack/react-query";
-import { featuresOfFile, fetchField, fitFeature, measureFile, probeFile, sectionFile, sliceFile } from "@/services/measure";
+import { alignFile, featuresOfFile, fetchField, fitFeature, measureFile, probeFile, sectionFile, sliceFile } from "@/services/measure";
 import { paramsKey } from "./parts";
 
 /**
@@ -65,3 +65,7 @@ export const useFitFeature = (slug: string, path: string, revision?: string) =>
   useMutation({
     mutationFn: (at: FitBody["at"]) => fitFeature(slug, path, { at, ...(revision ? { revision } : {}) }),
   });
+
+
+export const useAlign = (slug: string, path: string) =>
+  useMutation({ mutationFn: (body: AlignBody) => alignFile(slug, path, body) });

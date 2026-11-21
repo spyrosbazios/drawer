@@ -575,7 +575,7 @@ export function bounds(pos: Float32Array): { min: Vec3; max: Vec3 } {
  * crossing the other's surface, or a vertex of one inside the other, is contact. Otherwise the
  * smallest vertex-to-surface distance either way (edge-to-edge closest pairs are not searched).
  */
-export function gap(a: Bvh, b: Bvh): number {
+export function gap(a: Bvh, b: Bvh, aClosed = true, bClosed = true): number {
   for (const [p, q] of [[a, b], [b, a]] as const) {
     const pos = p.pos;
     for (let i = 0; i < pos.length; i += 9) {
@@ -588,10 +588,10 @@ export function gap(a: Bvh, b: Bvh): number {
     }
   }
   let best = Infinity;
-  for (const [p, q] of [[a, b], [b, a]] as const) {
+  for (const [p, q, closed] of [[a, b, bClosed], [b, a, aClosed]] as const) {
     const pos = p.pos;
     // A solid entirely inside the other: one vertex decides it.
-    if (pos.length >= 3 && isInside(q, pos[0]!, pos[1]!, pos[2]!)) return 0;
+    if (closed && pos.length >= 3 && isInside(q, pos[0]!, pos[1]!, pos[2]!)) return 0;
     for (let i = 0; i < pos.length; i += 3) {
       const d2 = nearestDist2(q, pos[i]!, pos[i + 1]!, pos[i + 2]!, best * best);
       if (d2 < best * best) best = Math.sqrt(d2);

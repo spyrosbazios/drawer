@@ -438,13 +438,27 @@ export interface PrintResult {
 }
 
 /** parts/<id>.part.json. Written through PUT .../parts/<id>; the server validates it. */
+export const PART_SOURCES = ["printed", "bought", "scanned"] as const;
+export type PartSource = (typeof PART_SOURCES)[number];
+
+export interface Pose {
+  /** Euler rotations about x, then y, then z, in degrees. */
+  rotate: Vec3;
+  translate: Vec3;
+}
+
+export interface ScanPlacement extends Pose {
+  file: string;
+}
+
 export interface PartSpec {
   title: string;
   /** What kind of part it is, in a few words ("snap-fit clip", "enclosure lid"). Guides the modeller; no gate reads it. */
   class: string;
   description: string;
   /** `bought`: hardware that is not printed; only its model and size matter (no printability gates). */
-  source: "printed" | "bought";
+  source: PartSource;
+  scan?: ScanPlacement;
   material: string;
   strictness: Strictness;
   dimensions: Dimension[];
@@ -544,6 +558,15 @@ export interface Feature {
   coverage: number;
 }
 
+export interface AlignBody extends FeaturesBody {
+  to?: CompareSide;
+}
+
+export interface AlignResult extends Pose {
+  rms: number | null;
+  ambiguous: (Pose & { rms: number })[];
+}
+
 export interface FeaturesBody { revision?: string }
 
 export interface FeaturesResult {
@@ -605,7 +628,7 @@ export interface PartSummary {
   id: string;
   title: string;
   class: string;
-  source: "printed" | "bought";
+  source: PartSource;
   material: string;
   strictness: Strictness;
   /** Project-relative paths. `model` is null until the part has one. */
@@ -856,9 +879,14 @@ export interface BomLine {
   part: string;
   title: string;
   count: number;
-  source: "printed" | "bought";
+  source: PartSource;
   material: string | null;
   massG: number | null; // per piece
+}
+
+export interface OpenClash {
+  depthMm: number;
+  limitMm: number;
 }
 
 export interface AssemblyReport {
@@ -872,7 +900,7 @@ export interface AssemblyReport {
   /** Each instance with the mesh to draw and its 4×4 placement, row-major. */
   instances: { id: string; part: string; partStatus: ReportStatus; mesh: string | null; matrix: number[] }[];
   /** Every pair that is mated or whose bounding boxes come within 1 mm. */
-  pairs: { a: string; b: string; gapMm: number; overlapCm3: number }[];
+  pairs: { a: string; b: string; gapMm: number; overlapCm3: number | null; penetration?: OpenClash }[];
   bom: BomLine[];
   totalPrintedMassG: number | null;
   render: Omit<RenderRef, "mesh"> | null;

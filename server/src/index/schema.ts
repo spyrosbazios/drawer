@@ -1,5 +1,5 @@
 /** Bump when tables or their stored data change: an index with another version is dropped and rebuilt from the files. */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export const SCHEMA = `
 CREATE TABLE files (
@@ -28,6 +28,7 @@ CREATE TABLE links (
 );
 CREATE INDEX links_from ON links (project, from_path);
 CREATE INDEX links_to ON links (to_project, to_path);
+CREATE INDEX links_spec_target ON links (project, target) WHERE relation IN ('scans', 'matches');
 CREATE TABLE facts (
   project TEXT NOT NULL,
   path TEXT NOT NULL,

@@ -40,10 +40,18 @@ closed and the noise estimate in millimetres. The geometry of the scan is in `sc
 Use the noise estimate when choosing tolerances. An open scan has no enclosed volume, measurable
 wall thickness or inside for a probe.
 
+Run `align` and save its proposed rotation and translation in a `source: "scanned"` part spec.
+Look at the placed part's views. If `ambiguous` has alternatives, ask the person which way is up
+before fixing the frame. Address `parts/<id>.part.json` to measure the scan in that frame.
+
 Read `features` before slicing. Take a diameter from a fitted cylinder, and check the fit's RMS
 and coverage. Under a third of a cylinder, say the diameter is uncertain. Use `fit` to check a
 specific spot. Use `slice` for a cross-section and `shadow` for a projected outline when planning a
 pocket. A remaining open outline describes only the part of the surface that the scan captured.
+
+Record measurements that the design uses as dimensions of the scanned part. Choose a tolerance
+of at least twice the scan noise. Plan a fit in an assembly that includes the scanned part.
+Use a mate for each intended interface and the printer's clearance.
 
 ## The spec
 

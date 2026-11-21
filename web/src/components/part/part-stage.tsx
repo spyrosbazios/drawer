@@ -90,7 +90,7 @@ export function PartStage({ slug, part, report, mode, evaluating, progress, show
         <RenderViews render={render} note="This browser cannot start WebGL: the rendered views instead." />
       ) : (
         <Suspense fallback={<CanvasFallback />}>
-          <PartCanvas url={render.mesh} field={field} section={section} markers={markers} onPick={onPick} onScene={onMeshScene} onFieldMismatch={onFieldMismatch} />
+          <PartCanvas url={field ? render.mesh : render.proxy ?? render.mesh} field={field} section={section} markers={markers} onPick={onPick} onScene={onMeshScene} onFieldMismatch={onFieldMismatch} />
         </Suspense>
       )}
       {mode === "thickness" && <ThicknessNote report={report} pending={thickness.isPending && !!report.analysis?.thickness} error={thickness.isError ? thickness.error.message : mismatch === fieldUrl && fieldUrl ? "The thickness field does not match this mesh." : null} />}

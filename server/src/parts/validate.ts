@@ -12,6 +12,8 @@ import type {
   Material,
   MaterialsFile,
   PartSpec,
+  PartSource,
+  ScanPlacement,
   PartSpecBody,
   PrinterProfile,
   PrintResult,
@@ -20,7 +22,8 @@ import type {
   Vec3,
   Waiver,
 } from "@drawer/shared/api";
-import { ASSEMBLY_FILE, DIMENSION_KINDS, LIBRARY_SLUG, MATERIALS_FILE, PART_DIR, PART_SPEC_SUFFIX, PRINTER_FILE, UNWAIVABLE_GATES } from "@drawer/shared/api";
+import { ASSEMBLY_FILE, DIMENSION_KINDS, LIBRARY_SLUG, MATERIALS_FILE, PART_DIR, PART_SPEC_SUFFIX, PART_SOURCES, PRINTER_FILE, UNWAIVABLE_GATES } from "@drawer/shared/api";
+import { kindFromExtension, normalizePath } from "../store/paths.ts";
 import { invalid } from "../errors.ts";
 
 type Obj = Record<string, unknown>;
@@ -205,16 +208,30 @@ function printResult(value: unknown, field: string): PrintResult {
   return { revisionId: str(o, "revisionId", f), at: str(o, "at", f), outcome: oneOf(o, "outcome", f, ["ok", "issue"] as const), note: str(o, "note", f, "") };
 }
 
+function scanPlacement(o: Obj, source: PartSource): ScanPlacement | undefined {
+  if (source !== "scanned") {
+    if (o.scan !== undefined) throw invalid("scan belongs only on a scanned part");
+    return undefined;
+  }
+  const scan = obj(o.scan, "scan");
+  onlyKeys(scan, ["file", "rotate", "translate"], "scan.");
+  const file = normalizePath(str(scan, "file", "scan."));
+  if (file.startsWith(`${LIBRARY_SLUG}/`) || kindFromExtension(file) !== "mesh") throw invalid("scan.file must name a mesh in this project");
+  return { file, rotate: vec3(scan.rotate, "scan.rotate"), translate: vec3(scan.translate, "scan.translate") };
+}
+
 /** A whole `parts/<id>.part.json`. */
 export function validatePartSpec(value: unknown, materials: readonly string[]): PartSpec {
   const o = obj(value, "spec");
-  onlyKeys(o, ["title", "class", "description", "source", "material", "strictness", "dimensions", "waivers", "prints"], "");
-  const source = oneOf(o, "source", "", ["printed", "bought"] as const, "printed");
+  onlyKeys(o, ["title", "class", "description", "source", "material", "strictness", "dimensions", "waivers", "prints", "scan"], "");
+  const source = oneOf(o, "source", "", PART_SOURCES, "printed");
+  const scan = scanPlacement(o, source);
   return {
     title: str(o, "title", ""),
     class: str(o, "class", "", ""),
     description: str(o, "description", "", ""),
     source,
+    ...(scan ? { scan } : {}),
     material: material(o, "", materials, "", source === "printed"),
     strictness: oneOf(o, "strictness", "", STRICTNESS),
     dimensions: dimensions(o, ""),
@@ -226,15 +243,17 @@ export function validatePartSpec(value: unknown, materials: readonly string[]): 
 /** The body of PUT .../parts/<id>: what a client may set; missing fields take the defaults. */
 export function validatePartSpecBody(value: unknown, defaults: ProjectDefaults, materials: readonly string[]): Omit<PartSpec, "waivers" | "prints"> {
   const o = obj(value, "body");
-  onlyKeys(o, ["title", "class", "description", "source", "material", "strictness", "dimensions"], "");
+  onlyKeys(o, ["title", "class", "description", "source", "material", "strictness", "dimensions", "scan"], "");
   const body: PartSpecBody = { title: str(o, "title", "") };
   if (body.title.trim() === "") throw invalid("title must not be empty");
-  const source = oneOf(o, "source", "", ["printed", "bought"] as const, "printed");
+  const source = oneOf(o, "source", "", PART_SOURCES, "printed");
+  const scan = scanPlacement(o, source);
   return {
     title: body.title.trim(),
     class: str(o, "class", "", ""),
     description: str(o, "description", "", ""),
     source,
+    ...(scan ? { scan } : {}),
     material: material(o, "", materials, defaults.material, source === "printed"),
     strictness: oneOf(o, "strictness", "", STRICTNESS, defaults.strictness),
     dimensions: dimensions(o, ""),

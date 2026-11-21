@@ -76,7 +76,7 @@ export function Outline({ slug, entries, loading, selection, dirty, selectedFold
     return out;
   }, [entries]);
 
-  const printed = (parts.data ?? []).filter((p) => p.source === "printed");
+  const printed = (parts.data ?? []).filter((p) => p.source !== "bought");
   const ownBought = (parts.data ?? []).filter((p) => p.source === "bought");
   const listed = isLibrary ? [...printed, ...ownBought] : printed;
   const assemblyReport = assembly.status === "ready" ? assembly.data : null;

@@ -228,6 +228,7 @@ export function minWallRequired(printer: PrinterProfile, material: Material | nu
 export function partGates(input: PartGateInput): GateResult[] {
   const { spec, printer, mesh, analysis } = input;
   const printed = spec.source === "printed";
+  const scanned = spec.source === "scanned";
   const standard = RANK[spec.strictness] >= RANK.standard;
   const built = input.build.ok && mesh !== null;
   const out: GateResult[] = [];
@@ -237,12 +238,12 @@ export function partGates(input: PartGateInput): GateResult[] {
       ? mesh && mesh.triangles > 0
         ? gate("parses", "Builds", "pass", { measured: `${mesh.triangles} triangles` })
         : gate("parses", "Builds", "fail", { measured: "empty", expected: "a non-empty solid", detail: "the model evaluates but builds no geometry", hint: "The top level draws nothing: call the part's module, and check that no difference() removes everything." })
-      : gate("parses", "Builds", "fail", { expected: "no errors", detail: input.build.error, hint: `Fix the OpenSCAD error first, nothing else can be measured until it builds: ${input.build.error}` }),
+      : gate("parses", "Builds", "fail", { expected: "no errors", detail: input.build.error, hint: scanned ? "Check that scan.file points to an uploaded mesh with faces." : `Fix the OpenSCAD error first, nothing else can be measured until it builds: ${input.build.error}` }),
   );
   const solid = built && (mesh?.triangles ?? 0) > 0;
 
-  if (!solid || !analysis) out.push(skipped("solid", "One closed body", "no mesh to analyse"));
-  else {
+  if (!scanned && (!solid || !analysis)) out.push(skipped("solid", "One closed body", "no mesh to analyse"));
+  else if (!scanned && analysis) {
     const ok = analysis.shells === 1 && analysis.watertight;
     const problems = [analysis.shells !== 1 ? `${analysis.shells} separate bodies` : null, analysis.watertight ? null : "not watertight"].filter((p): p is string => p !== null);
     out.push(

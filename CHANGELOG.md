@@ -9,6 +9,8 @@ version is one semver number for the whole repository, set by the git tag (see [
 
 ### Added
 
+- Place scans as parts and propose their frames with `align`. Assemblies can measure open scans.
+
 - Measure planes, cylinders and spheres on a scan or model. Slice returns open outlines and can project the full silhouette.
 
 - Drop a scan onto a project or run `drawer scan add` to store a cleaned mesh in millimetres and a source note.

@@ -1,8 +1,8 @@
-import { CrosshairIcon, DownloadIcon, PlayIcon } from "lucide-react";
+import { CrosshairIcon, DownloadIcon, Move3DIcon, PlayIcon } from "lucide-react";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useFeatures, useField, useFitFeature } from "@/hooks/measure";
+import { useAlign, useFeatures, useField, useFitFeature } from "@/hooks/measure";
 import { useRender } from "@/hooks/render";
 import { formatOf } from "@/lib/mesh-scene";
 import type { MeshScene } from "@/lib/mesh-scene";
@@ -29,6 +29,9 @@ export function MeshFileViewer({ slug, path, rev, at }: Props) {
   const [showFeatures, setShowFeatures] = useState(false);
   const [picking, setPicking] = useState(false);
   const [fitOpen, setFitOpen] = useState(false);
+  const [alignOpen, setAlignOpen] = useState(false);
+  const alignment = useAlign(slug, path);
+  const align = alignment.mutate;
   const features = useFeatures(slug, path, rev ?? "", at, showFeatures);
   const field = useField(showFeatures ? features.data?.field : undefined);
   const fit = useFitFeature(slug, path, at);
@@ -73,7 +76,10 @@ export function MeshFileViewer({ slug, path, rev, at }: Props) {
       {
         id: "point",
         label: "Measure",
-        entries: [{ kind: "item", label: picking ? "Stop picking a point" : "Fit at a point", icon: CrosshairIcon, onSelect: () => setPicking(!picking), disabled: !scene || view !== "model" }],
+        entries: [
+          { kind: "item", label: picking ? "Stop picking a point" : "Fit at a point", icon: CrosshairIcon, onSelect: () => setPicking(!picking), disabled: !scene || view !== "model" },
+          { kind: "item", label: "Propose scan frame", icon: Move3DIcon, onSelect: () => { setAlignOpen(true); align(at ? { revision: at } : {}); } },
+        ],
       },
       {
         id: "file",
@@ -93,7 +99,7 @@ export function MeshFileViewer({ slug, path, rev, at }: Props) {
         ],
       },
     ],
-    [view, wireframe, grid, shading, scene, at, render, download, showFeatures, picking],
+    [view, wireframe, grid, shading, scene, at, render, download, showFeatures, picking, align],
   );
 
   if (!format) {
@@ -127,6 +133,22 @@ export function MeshFileViewer({ slug, path, rev, at }: Props) {
           </p>
         )}
       </div>
+      <Dialog open={alignOpen} onOpenChange={setAlignOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Proposed scan frame</DialogTitle>
+            <DialogDescription>Rotation in degrees and translation in millimetres.</DialogDescription>
+          </DialogHeader>
+          {alignment.isPending && <p className="text-sm text-dim">Finding a frame…</p>}
+          {alignment.error && <p role="alert" className="text-sm text-destructive">{alignment.error.message}</p>}
+          {alignment.data && (
+            <dl className="grid grid-cols-2 gap-2 text-sm">
+              <dt>Rotate</dt><dd>{alignment.data.rotate.map((n) => n.toFixed(2)).join(", ")}</dd>
+              <dt>Translate</dt><dd>{alignment.data.translate.map((n) => n.toFixed(2)).join(", ")}</dd>
+            </dl>
+          )}
+        </DialogContent>
+      </Dialog>
       <Dialog open={fitOpen} onOpenChange={setFitOpen}>
         <DialogContent>
           <DialogHeader>

@@ -1,3 +1,4 @@
+import { PART_SOURCES } from "@drawer/shared/api";
 import type { Attempt, LibraryProfile, PartSpecBody, ProjectOverview, Strictness } from "@drawer/shared/api";
 import { UsageError } from "../args.ts";
 import { ApiFailure } from "../client.ts";
@@ -115,7 +116,7 @@ export const part: Command = {
   name: "part",
   usage: [
     "drawer part <project>/<id> [--title t] [--class c] [--material m] [--strictness s]",
-    "            [--source printed|bought] [--description d] [--spec file.json]",
+    "            [--source printed|bought|scanned] [--description d] [--spec file.json]",
   ],
   summary: "create a part or change its spec",
   details:
@@ -129,8 +130,9 @@ export const part: Command = {
     if (args.positionals.length > 1) throw new UsageError("part takes one <project>/<id> argument");
     const strictness = args.str("strictness");
     if (strictness !== undefined && !STRICTNESS.includes(strictness as Strictness)) throw new UsageError(`--strictness must be one of ${STRICTNESS.join(", ")}`);
-    const source = args.str("source");
-    if (source !== undefined && source !== "printed" && source !== "bought") throw new UsageError("--source must be printed or bought");
+    const requested = args.str("source");
+    const source = PART_SOURCES.find((value) => value === requested);
+    if (requested !== undefined && source === undefined) throw new UsageError("--source must be printed, bought or scanned");
     const flags: Partial<PartSpecBody> = {};
     const title = args.str("title");
     if (title !== undefined) flags.title = title;
@@ -158,6 +160,7 @@ export const part: Command = {
       }
     }
     const body = { ...base, ...flags };
+    if (source && source !== "scanned") delete body.scan;
     if (typeof body.title !== "string" || body.title === "") throw new UsageError("--title is needed to create a part (or a \"title\" in --spec)");
     const summary = await client.putPart(project, id, { ...body, title: body.title });
     emit(ctx.mode, summary, () => `${project}/${partLine(summary)}`);

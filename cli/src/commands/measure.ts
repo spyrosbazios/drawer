@@ -207,6 +207,28 @@ function compareText(r: LocalCompare): string {
   return lines.join("\n");
 }
 
+export const align: Command = {
+  name: "align",
+  usage: ["drawer align <project>/<path> [--to <part-or-path>[@revision]] [--at <revision>]"],
+  summary: "propose a datum frame or align a mesh onto another model",
+  flags: { string: ["to", "at"] },
+  async run(ctx, args) {
+    const file = parseFileArg(args.positionals[0]);
+    if (args.positionals.length > 1) throw new UsageError("align takes one file argument");
+    const raw = args.str("to");
+    const to = raw ? parseSide(raw, "to") : undefined;
+    const revision = args.str("at");
+    const client = await ctx.client();
+    const result = await client.align(file.project, file.path, { ...(to ? { to } : {}), ...(revision ? { revision } : {}) });
+    emit(ctx.mode, result, () => [
+      `rotate ${result.rotate.map(num).join(", ")}°`,
+      `translate ${result.translate.map(num).join(", ")} mm`,
+      ...(result.rms === null ? [] : [`RMS ${num(result.rms)} mm`]),
+      ...result.ambiguous.map((p) => `alternative: rotate ${p.rotate.map(num).join(", ")}°, translate ${p.translate.map(num).join(", ")} mm, RMS ${num(p.rms)} mm`),
+    ].join("\n"));
+  },
+};
+
 export const compare: Command = {
   name: "compare",
   usage: ["drawer compare <project> <a> <b>"],

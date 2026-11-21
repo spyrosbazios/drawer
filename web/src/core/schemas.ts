@@ -3,6 +3,7 @@
  * `shared/src/api.ts` with `satisfies`, so a change there is a compile error here.
  */
 import type {
+  AlignResult,
   AssemblyReport,
   AttemptsResponse,
   CompareResult,
@@ -38,7 +39,7 @@ import type {
   WriteResult,
   Settings,
 } from "@drawer/shared/api";
-import { DIMENSION_KINDS, FEATURE_KINDS, MESH_FORMATS, PROVIDER_KINDS } from "@drawer/shared/api";
+import { DIMENSION_KINDS, FEATURE_KINDS, MESH_FORMATS, PART_SOURCES, PROVIDER_KINDS } from "@drawer/shared/api";
 import { z } from "zod";
 
 const kind = z.enum(["markdown", "scad", "mesh", "image", "pdf", "text", "binary"]);
@@ -49,7 +50,7 @@ const importSite = z.enum(["printables", "thingiverse", "makerworld", "cults3d",
 const reportStatus = z.enum(["passed", "draft", "failed", "empty", "pending"]);
 const strictness = z.enum(["quick", "standard", "functional"]);
 const axis = z.enum(["x", "y", "z"]);
-const partSource = z.enum(["printed", "bought"]);
+const partSource = z.enum(PART_SOURCES);
 
 const importSource = z.object({
   site: importSite,
@@ -219,6 +220,7 @@ const partSpec = z.object({
   class: z.string(),
   description: z.string(),
   source: partSource,
+  scan: z.object({ file: z.string(), rotate: vec3, translate: vec3 }).optional(),
   material: z.string(),
   strictness,
   dimensions: z.array(dimension),
@@ -341,6 +343,13 @@ export const measureSchema = z.object({
   render: renderRef,
 }) satisfies z.ZodType<MeasureResult>;
 
+const pose = { rotate: vec3, translate: vec3 };
+export const alignSchema = z.object({
+  ...pose,
+  rms: z.number().nullable(),
+  ambiguous: z.array(z.object({ ...pose, rms: z.number() })),
+}) satisfies z.ZodType<AlignResult>;
+
 export const featureSchema = z.object({
   kind: z.enum(FEATURE_KINDS),
   origin: vec3,
@@ -441,7 +450,7 @@ export const assemblyReportSchema = z.object({
     ),
   }),
   instances: z.array(z.object({ id: z.string(), part: z.string(), partStatus: reportStatus, mesh: z.string().nullable(), matrix: z.array(z.number()) })),
-  pairs: z.array(z.object({ a: z.string(), b: z.string(), gapMm: z.number(), overlapCm3: z.number() })),
+  pairs: z.array(z.object({ a: z.string(), b: z.string(), gapMm: z.number(), overlapCm3: z.number().nullable(), penetration: z.object({ depthMm: z.number(), limitMm: z.number() }).optional() })),
   bom: z.array(
     z.object({
       part: z.string(),

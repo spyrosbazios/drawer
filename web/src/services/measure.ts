@@ -1,6 +1,6 @@
-import type { CompareBody, CompareResult, Feature, FeaturesBody, FeaturesResult, FitBody, MeasureBody, MeasureResult, ProbeBody, ProbeResult, SectionBody, SectionResult, SliceBody, SliceResult } from "@drawer/shared/api";
+import type { AlignBody, AlignResult, CompareBody, CompareResult, Feature, FeaturesBody, FeaturesResult, FitBody, MeasureBody, MeasureResult, ProbeBody, ProbeResult, SectionBody, SectionResult, SliceBody, SliceResult } from "@drawer/shared/api";
 import { encodePath } from "@/core/paths";
-import { compareSchema, featureSchema, featuresSchema, measureSchema, probeSchema, sectionSchema, sliceSchema } from "@/core/schemas";
+import { alignSchema, compareSchema, featureSchema, featuresSchema, measureSchema, probeSchema, sectionSchema, sliceSchema } from "@/core/schemas";
 import { api, read } from "./api";
 
 const at = (slug: string, route: string, path: string) => `/projects/${encodeURIComponent(slug)}/${route}/${encodePath(path)}`;
@@ -11,6 +11,11 @@ const SLOW = { timeout: 180_000 };
 export async function measureFile(slug: string, path: string, body: MeasureBody = {}): Promise<MeasureResult> {
   const { data } = await api.post<unknown>(at(slug, "measure", path), body, SLOW);
   return read(measureSchema, data);
+}
+
+export async function alignFile(slug: string, path: string, body: AlignBody): Promise<AlignResult> {
+  const { data } = await api.post<unknown>(at(slug, "align", path), body, SLOW);
+  return read(alignSchema, data);
 }
 
 export async function featuresOfFile(slug: string, path: string, body: FeaturesBody): Promise<FeaturesResult> {

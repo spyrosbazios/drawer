@@ -103,6 +103,7 @@ export function createRenderer(opts: RendererOptions): Renderer {
     const isScad = ext === ".scad";
     const meshFormat = meshFormatOf(file);
     if (!isScad && !meshFormat) throw new RenderError(`cannot render ${ext || "a file without extension"}: only .scad and these mesh formats: ${MESH_FORMATS.map((format) => `.${format}`).join(", ")}`);
+    if (req.matrix && (isScad || req.matrix.length !== 16 || !req.matrix.every(Number.isFinite))) throw new RenderError("a mesh placement must be 16 finite numbers, row-major");
     const source = await readFile(file).catch((e: unknown) => {
       throw new RenderError(`cannot read ${file}: ${e instanceof Error ? e.message : String(e)}`);
     });
@@ -129,7 +130,7 @@ export function createRenderer(opts: RendererOptions): Renderer {
         deps = [...new Set(listed)].filter((d) => d !== file).sort();
       }
       const depBytes = await Promise.all(deps.map((d) => readFile(d).then((b) => new Uint8Array(b), () => new TextEncoder().encode(`missing:${d}`))));
-      const key = meshKey({ file: source, format: ext, deps: depBytes, openscadVersion: openscad ?? "", defines });
+      const key = meshKey({ file: source, format: ext, deps: depBytes, openscadVersion: openscad ?? "", defines, ...(req.matrix ? { matrix: req.matrix } : {}) });
       const dir = join(meshCache, key);
       const hit = await readMeshMeta(dir);
       if (hit) return { key, dir, cached: true, seconds: elapsed(started), ...hit };
@@ -146,7 +147,7 @@ export function createRenderer(opts: RendererOptions): Renderer {
         info = (await measure.ask({ op: "info", file: meshPath })).info;
       } else {
         if (!meshFormat) throw new RenderError(`not a mesh file: ${file}`);
-        info = (await measure.ask({ op: "convert", format: meshFormat, source, dest: meshPath })).info;
+        info = (await measure.ask({ op: "convert", format: meshFormat, source, dest: meshPath, ...(req.matrix ? { matrix: req.matrix } : {}) })).info;
       }
       if (info.triangles === 0) throw new RenderError("the model is empty (no triangles)");
       await rm(join(tmp, "deps.echo"), { force: true });
@@ -371,6 +372,14 @@ export function createRenderer(opts: RendererOptions): Renderer {
       return feature;
     });
 
+  const align: Renderer["align"] = ({ key, to }) =>
+    ask(async () => {
+      const dir = await keyDir(key);
+      const target = to ? join(await keyDir(to), "mesh.stl") : undefined;
+      const { result } = await measure.ask({ op: "align", mesh: join(dir, "mesh.stl"), ...(target ? { to: target } : {}) });
+      return result;
+    });
+
   const probe = (req: { key: string; from: Vec3; axis: Axis }): Promise<ProbeResult> =>
     ask(async () => {
       checkAxis(req.axis);
@@ -404,18 +413,19 @@ export function createRenderer(opts: RendererOptions): Renderer {
     return r;
   };
 
-  const interference = (req: { a: PlacedMesh; b: PlacedMesh }): Promise<{ gapMm: number; overlapCm3: number }> =>
+  const interference: Renderer["interference"] = (req) =>
     ask(async () => {
       const dirA = await keyDir(req.a.key);
       const dirB = await keyDir(req.b.key);
       for (const m of [req.a.matrix, req.b.matrix]) {
         if (m.length !== 16 || !m.every(Number.isFinite)) throw new RenderError("a placement matrix is 16 finite numbers, row-major");
       }
-      const id = hashParts([PIPELINE_VERSION, req.a.matrix.join(","), req.b.key, req.b.matrix.join(",")]).slice(0, 32);
-      return cachedJson(dirA, `interference-${id}.json`, async () => {
+      const id = hashParts([PIPELINE_VERSION, req.a.matrix.join(","), req.b.key, req.b.matrix.join(","), String(req.clearanceMm ?? 0)]).slice(0, 32);
+      return cachedJson<Awaited<ReturnType<Renderer["interference"]>>>(dirA, `interference-${id}.json`, async () => {
         const meshA = join(dirA, "mesh.stl");
         const meshB = join(dirB, "mesh.stl");
-        const g = await measure.ask({ op: "gap", a: { mesh: meshA, matrix: req.a.matrix }, b: { mesh: meshB, matrix: req.b.matrix } });
+        const g = await measure.ask({ op: "gap", a: { mesh: meshA, matrix: req.a.matrix }, b: { mesh: meshB, matrix: req.b.matrix }, clearanceMm: req.clearanceMm ?? 0 });
+        if (g.penetration) return { gapMm: g.gapMm, overlapCm3: null, penetration: g.penetration };
         if (g.disjoint || g.gapMm > CLEAR_GAP_MM) return { gapMm: g.gapMm, overlapCm3: 0 };
         const overlapCm3 = await queue.run(async () => {
           await mkdir(cacheDir, { recursive: true });
@@ -501,7 +511,7 @@ export function createRenderer(opts: RendererOptions): Renderer {
       const meshes: string[] = [];
       for (const inst of req.instances) {
         if (inst.matrix.length !== 16 || !inst.matrix.every(Number.isFinite)) throw new RenderError(`instance ${inst.id}: a placement matrix is 16 finite numbers, row-major`);
-        meshes.push(join(await keyDir(inst.key), "mesh.stl"));
+        meshes.push(await keyDir(inst.key));
       }
       const highlight = new Set(req.highlight);
       const key = hashParts([
@@ -519,10 +529,16 @@ export function createRenderer(opts: RendererOptions): Renderer {
         const tmp = await mkdtemp(join(renderCache, ".tmp-"));
         try {
           const wrapper = join(tmp, "assembly.scad");
+          const paths: string[] = [];
+          for (const dir of meshes) {
+            const full = join(dir, "mesh.stl");
+            const info = (await readMeshMeta(dir))?.info ?? (await measure.ask({ op: "info", file: full })).info;
+            paths.push(await drawMeshPath(dir, info));
+          }
           const body = req.instances
             .map((inst, i) => {
               const colour = highlight.has(inst.id) ? HIGHLIGHT_COLOUR : PALETTE[i % PALETTE.length]!;
-              return `// ${inst.id.replace(/[\r\n]/g, " ")}\ncolor(${JSON.stringify(colour)}) multmatrix(${matrixScad(inst.matrix)}) import(${JSON.stringify(meshes[i])}, convexity = 10);`;
+              return `// ${inst.id.replace(/[\r\n]/g, " ")}\ncolor(${JSON.stringify(colour)}) multmatrix(${matrixScad(inst.matrix)}) import(${JSON.stringify(paths[i])}, convexity = 10);`;
             })
             .join("\n");
           await writeFile(wrapper, `${body}\n`);
@@ -568,6 +584,7 @@ export function createRenderer(opts: RendererOptions): Renderer {
     slice,
     features,
     fit,
+    align,
     probe,
     section,
     thumbnail,

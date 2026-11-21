@@ -40,6 +40,7 @@ always; `context` prints text and takes `--json`. Errors: one line on stderr. Ex
 
 ```
 drawer scan add <project> <file> --name <name> [--units mm|cm|m|in]
+drawer align <file> [--to part-or-path] [--at <revision>]
 drawer features <file> [--at <revision>]
 drawer fit <file> --at x,y,z [--kind plane|cylinder|sphere]
 drawer slice <file> --axis z --shadow

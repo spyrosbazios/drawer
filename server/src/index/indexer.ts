@@ -1,10 +1,11 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { stat } from "node:fs/promises";
-import type { Fact, FileKind, Link, MeshInfo, ReportStatus, SearchHit } from "@drawer/shared/api";
+import type { Fact, FileKind, Link, MeshInfo, PartSpec, ReportStatus, SearchHit } from "@drawer/shared/api";
 import type { Renderer } from "@drawer/shared/contracts";
 import { errorMessage, isNodeError, revOfFile } from "../util.ts";
-import { TEXT_SNIFF_LIMIT, kindFromExtension, looksLikeText } from "../store/paths.ts";
+import { PART_SPEC_SUFFIX } from "@drawer/shared/api";
+import { TEXT_SNIFF_LIMIT, kindFromExtension, looksLikeText, normalizePath } from "../store/paths.ts";
 import { parseMarkdown } from "./markdown.ts";
 import { parseScad } from "./scad.ts";
 import { buildContext, resolveLink, type ResolveContext } from "./resolve.ts";
@@ -12,6 +13,17 @@ import { SCHEMA, SCHEMA_VERSION } from "./schema.ts";
 
 /** Largest markdown/scad/text file whose content is parsed and full-text indexed. */
 const MAX_INDEXED_TEXT = 2 * 1024 * 1024;
+
+function specLinks(text: string): { relation: string; target: string }[] {
+  try {
+    const spec = JSON.parse(text) as Partial<PartSpec>;
+    if (spec.source !== "scanned" || typeof spec.scan?.file !== "string") return [];
+    const target = normalizePath(spec.scan.file);
+    return kindFromExtension(target) === "mesh" ? [{ relation: "scans", target }] : [];
+  } catch {
+    return [];
+  }
+}
 
 export interface FileRow {
   id: number;
@@ -229,6 +241,7 @@ export class Index {
         out.links = scad.links;
       } else {
         out.body = text;
+        if (spec.path.endsWith(PART_SPEC_SUFFIX)) out.links = specLinks(text);
       }
     } else if (kind === "mesh") {
       try {
@@ -396,6 +409,13 @@ export class Index {
 
   incoming(project: string, path: string): Link[] {
     return this.db.query<LinkRow, [string, string]>("SELECT * FROM links WHERE to_project = ? AND to_path = ? ORDER BY project, from_path, id").all(project, path).map((r) => this.toLink(r));
+  }
+
+  /** Spec links name exact project paths. Keep the dependency when the target is temporarily absent. */
+  specDependents(project: string, path: string): Link[] {
+    return this.db.query<LinkRow, [string, string]>(
+      "SELECT * FROM links WHERE project = ? AND target = ? AND relation IN ('scans', 'matches') ORDER BY from_path, id",
+    ).all(project, path).map((row) => this.toLink(row));
   }
 
   facts(project: string, path: string): Fact[] {

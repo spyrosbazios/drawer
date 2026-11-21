@@ -4,7 +4,7 @@ import type { Command, Ctx } from "./command.ts";
 import { CliError, EXIT_CONFLICT, EXIT_ERROR, EXIT_NOT_FOUND } from "./command.ts";
 import { assembly } from "./commands/assembly.ts";
 import { cat, edit, get, history, info, ls, mv, rm, write } from "./commands/files.ts";
-import { compare, features, fit, measure, probe, section, slice } from "./commands/measure.ts";
+import { align, compare, features, fit, measure, probe, section, slice } from "./commands/measure.ts";
 import { note } from "./commands/note.ts";
 import { attempts, guide, overview, part, parts, printed, report, restore, set } from "./commands/parts.ts";
 import { importCmd, newProject, preview, projects, reindex } from "./commands/projects.ts";
@@ -46,6 +46,7 @@ export const COMMANDS: readonly Command[] = [
   report,
   set,
   measure,
+  align,
   features,
   fit,
   slice,

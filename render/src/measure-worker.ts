@@ -4,6 +4,9 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { type Bvh, buildBvh } from "./bvh";
+import { datum, register, surfaceSamples } from "./align";
+import { surfaceDistance } from "./pseudonormal";
+import { readVec } from "./vectors";
 import { extractFeatures, fitAt } from "./features";
 import { analyse, deviation, gap, probe, shadow, slice, transform, volume } from "./measure";
 import { computeMeshInfo, isBinaryStl, meshFormatOf, parseMesh, parseStl, toBinaryStl } from "./mesh";
@@ -67,8 +70,9 @@ function handle(req: WorkerRequest): { reply: WorkerReply; transfer: ArrayBuffer
     }
     case "convert": {
       const mesh = parseMesh(req.format, req.source);
+      if (req.matrix) mesh.positions = transform(mesh.positions, req.matrix);
       const info = computeMeshInfo(mesh);
-      if (info.triangles > 0) writeFileSync(req.dest, req.format === "stl" && isBinaryStl(req.source) ? req.source : toBinaryStl(mesh.positions));
+      if (info.triangles > 0) writeFileSync(req.dest, !req.matrix && req.format === "stl" && isBinaryStl(req.source) ? req.source : toBinaryStl(mesh.positions));
       return { reply: { id: req.id, ok: true, op: "convert", info }, transfer: [] };
     }
     case "volume":
@@ -84,6 +88,14 @@ function handle(req: WorkerRequest): { reply: WorkerReply; transfer: ArrayBuffer
       const surface = topologyOf(mesh);
       const section = req.at === null ? { contours: shadow(mesh.pos, req.axis), open: [] } : slice(mesh.pos, req.axis, req.at, surface, surface.closed ? 0 : weldTolerance(mesh.pos));
       return { reply: { id: req.id, ok: true, op: "slice", result: { ...section, axis: req.axis, at: req.at } }, transfer: [] };
+    }
+    case "align": {
+      const source = load(req.mesh);
+      const topology = topologyOf(source);
+      const result = req.to
+        ? register(source.pos, topology, bvhOf(req.to), topologyOf(load(req.to)))
+        : datum(source.pos, topology, source.noiseMm ??= scanNoise(source.pos, topology));
+      return { reply: { id: req.id, ok: true, op: "align", result }, transfer: [] };
     }
     case "features":
     case "fit": {
@@ -107,11 +119,37 @@ function handle(req: WorkerRequest): { reply: WorkerReply; transfer: ArrayBuffer
       return { reply: { id: req.id, ok: true, op: "deviation", result: r }, transfer: [r.field.buffer as ArrayBuffer] };
     }
     case "gap": {
-      const a = buildBvh(transform(load(req.a.mesh).pos, req.a.matrix));
-      const b = buildBvh(transform(load(req.b.mesh).pos, req.b.matrix));
+      const meshA = load(req.a.mesh), meshB = load(req.b.mesh);
+      const topA = topologyOf(meshA), topB = topologyOf(meshB);
+      const a = buildBvh(transform(meshA.pos, req.a.matrix));
+      const b = buildBvh(transform(meshB.pos, req.b.matrix));
       const ab = a.bounds, bb = b.bounds;
       const disjoint = ab[0]! > bb[3]! || bb[0]! > ab[3]! || ab[1]! > bb[4]! || bb[1]! > ab[4]! || ab[2]! > bb[5]! || bb[2]! > ab[5]!;
-      return { reply: { id: req.id, ok: true, op: "gap", gapMm: gap(a, b), disjoint }, transfer: [] };
+      const gapMm = gap(a, b, topA.closed, topB.closed);
+      const open = !topA.closed || !topB.closed;
+      let penetration;
+      if (open) {
+        let depthMm = 0, limitMm = req.clearanceMm, excess = -Infinity;
+        for (const [reference, referenceMesh, topology, other, otherTopology] of [[a, meshA, topA, b, topB], [b, meshB, topB, a, topA]] as const) {
+          if (topology.closed) continue;
+          const noise = (referenceMesh.noiseMm ??= scanNoise(referenceMesh.pos, topology));
+          const limit = Math.max(req.clearanceMm, 2 * noise);
+          const distance = surfaceDistance(reference, buildTopology(reference.pos));
+          const consider = (p: Parameters<typeof distance>[0]) => {
+            const hit = distance(p);
+            if (hit.tangent2 <= limit ** 2 && Math.max(0, -hit.depth) - limit > excess) {
+              depthMm = Math.max(0, -hit.depth);
+              limitMm = limit;
+              excess = depthMm - limitMm;
+            }
+          };
+          for (let i = 0; i < other.pos.length; i += 3) consider(readVec(other.pos, i));
+          for (const { p } of surfaceSamples(other.pos, otherTopology, 1024)) consider(p);
+          if (excess === -Infinity) limitMm = limit;
+        }
+        penetration = { depthMm: Math.max(0, depthMm), limitMm };
+      }
+      return { reply: { id: req.id, ok: true, op: "gap", gapMm, disjoint, ...(penetration ? { penetration } : {}) }, transfer: [] };
     }
   }
 }

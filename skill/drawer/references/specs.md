@@ -1,5 +1,7 @@
 # Spec and assembly files
 
+<!-- reviewed: 2026-11-21 -->
+
 The JSON you feed to `drawer part --spec` and `drawer assembly --set`. Shapes: `shared/src/api.ts` (`PartSpecBody`,
 `Dimension`, `AssemblySpec`); behaviour: `docs/SPEC.md`. The server validates both and answers `invalid` with the
 reason; nothing is written then. Lengths are millimetres in the model's own coordinates (the print orientation).
@@ -66,3 +68,10 @@ Check a `hole`, `boss`, `gap` or `wall` point with `drawer slice` / `drawer prob
 - `fit`: `clearance` (no overlap, gap within `min`..`max`), `contact` (no overlap, gap at most 0.05 mm), `press`
   (may overlap; exempt from the clash gate).
 - `--set` replaces the whole file; fetch the current one with `drawer cat <project>/assembly.json` to change it.
+
+
+## Scanned parts
+
+Use `source: "scanned"` with `scan: { "file": "refs/object/scan.stl", "rotate": [0, 0, 0], "translate": [0, 0, 0] }`.
+Save the frame proposed by `drawer align` after checking the views. The placed mesh is measured
+through `parts/<id>.part.json`. Record dimensions on this part and use it in assemblies.

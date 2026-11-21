@@ -9,6 +9,8 @@
 import { HEADER_AUTHOR, HEADER_MESSAGE, HEADER_REV, LIBRARY_SLUG, MATERIALS_FILE, PRINTER_FILE, SCAN_UNITS } from "../../shared/src/api";
 import type {
   PatchSettingsBody,
+  AlignBody,
+  AlignResult,
   AnswerBody,
   AssemblySpec,
   CompareBody,
@@ -90,7 +92,7 @@ function libraryKeeps(path: string): void {
 
 function renderOf(slug: string, path: string, at: string | undefined): RenderResult {
   const kind = kindOf(path);
-  if (kind !== "scad" && kind !== "mesh") throw new HttpError("invalid", "Only .scad and mesh files render");
+  if (kind !== "scad" && kind !== "mesh" && !path.endsWith(".part.json")) throw new HttpError("invalid", "Only .scad and mesh files render");
   const p = getProject(slug);
   const v = at ? p.files.get(path)?.versions.find((x) => x.revisionId === at) : head(p, path);
   if (!v) throw new HttpError("not_found", `No such file or revision: ${path}`);
@@ -367,7 +369,7 @@ async function handle(req: Request): Promise<Response> {
   }
 
   // ---- measuring ----
-  m = /^\/projects\/([^/]+)\/(measure|features|fit|slice|probe|section)\/(.+)$/.exec(route);
+  m = /^\/projects\/([^/]+)\/(measure|align|features|fit|slice|probe|section)\/(.+)$/.exec(route);
   if (m?.[1] && m[2] && m[3] && method === "POST") {
     const [, slug, op, file] = m;
     await Bun.sleep(150);
@@ -375,6 +377,12 @@ async function handle(req: Request): Promise<Response> {
       case "measure": {
         const b = await body<MeasureBody>(req);
         return json(parts.measure(slug, validPath(file), b.revision));
+      }
+      case "align": {
+        const b = await body<AlignBody>(req);
+        const shape = parts.boxesOfFile(slug, validPath(file), b.revision);
+        const { min } = meshInfoOfBoxes(shape).bbox;
+        return json({ rotate: [0, 0, 0], translate: [-min[0], -min[1], -min[2]], rms: b.to ? 0 : null, ambiguous: [] } satisfies AlignResult);
       }
       case "features": {
         const b = await body<FeaturesBody>(req);

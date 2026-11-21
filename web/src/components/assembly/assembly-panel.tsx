@@ -107,7 +107,7 @@ function PanelBody({ slug, report }: { slug: string; report: AssemblyReport }) {
                     </button>
                     <span className="text-xs text-dim tabular-nums">×{count}</span>
                     <span className="hidden text-xs text-dim sm:inline">
-                      {(line?.source ?? s?.source) === "bought" ? "bought" : `printed${line?.material ? ` · ${line.material}` : ""}${line?.massG != null ? ` · ${formatMass(line.massG)}` : ""}`}
+                      {(line?.source ?? s?.source) !== "printed" ? (line?.source ?? s?.source) : `printed${line?.material ? ` · ${line.material}` : ""}${line?.massG != null ? ` · ${formatMass(line.massG)}` : ""}`}
                     </span>
                     <button type="button" onClick={() => openPart(part)} aria-label={`Open ${part}`}>
                       <StatusChip kind="report" status={s?.status ?? inst[0]?.partStatus ?? "pending"} />
@@ -142,7 +142,7 @@ function PanelBody({ slug, report }: { slug: string; report: AssemblyReport }) {
                           {isPressFit(report.spec.mates, p) && <span className="ml-1 text-xs text-faint">press fit</span>}
                         </span>
                         <span className="text-xs text-dim tabular-nums">gap {formatLength(p.gapMm)}</span>
-                        <span className={cn("text-xs tabular-nums", clash ? "text-down" : "text-dim")}>{formatOverlap(p.overlapCm3)}</span>
+                        <span className={cn("text-xs tabular-nums", clash ? "text-down" : "text-dim")}>{formatOverlap(p.overlapCm3, p.penetration)}</span>
                         {clash && <StatusChip kind="gate" status="fail" label="clash" />}
                       </button>
                     </li>

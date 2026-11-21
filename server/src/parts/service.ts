@@ -6,6 +6,8 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type {
+  AlignBody,
+  AlignResult,
   AssemblyReport,
   AssemblySpec,
   Attempt,
@@ -48,8 +50,8 @@ import type { EventBus } from "../events.ts";
 import type { Index } from "../index/indexer.ts";
 import { defaultMaterials, defaultPrinter } from "../store/starter.ts";
 import type { ProjectMeta, Store } from "../store/store.ts";
-import { errorMessage, isNodeError, isoSeconds, revOfBytes } from "../util.ts";
-import { assemblyGates, assemblyNext, assemblyStatus, bom, candidatePairs, placement, transformBox, type Box, type InstancePart, type PairMeasure } from "./assembly-gates.ts";
+import { errorMessage, isNodeError, isoSeconds, revOfBytes, revOfFile } from "../util.ts";
+import { assemblyGates, assemblyNext, assemblyStatus, bom, candidatePairs, isClash, placement, transformBox, type Box, type InstancePart, type PairMeasure } from "./assembly-gates.ts";
 import { deriveAttempts, type ModelRevision } from "./attempts.ts";
 import { countGates, lintSource, nextSteps, partGates, partStatus, worst, type DimMeasurement } from "./gates.ts";
 import { measureDimension } from "./measure.ts";
@@ -74,15 +76,15 @@ import {
 
 const ALL_VIEWS = ["iso", "front", "top", "side"] as const;
 const REPORT_SIZE = 800;
-const REPORT_VERSION = "drawer-report-4";
+const REPORT_VERSION = "drawer-report-5";
 const SCAD_RELATIONS = new Set(["uses", "includes", "imports"]);
 
 /** What the parts module needs from the service: writes go through it so they are validated, committed, indexed and announced. */
 export interface Workspace {
   writeFile(slug: string, path: string, bytes: Uint8Array, opts: { rev: string | undefined; author: string; message: string | undefined }): Promise<WriteResult>;
   writeMany(slug: string, writes: { path: string; bytes: Uint8Array }[], removes: string[], author: string, message: string): Promise<{ revisionId: string }>;
-  render(slug: string, path: string, body: RenderBody): Promise<RenderResult>;
-  mesh(slug: string, path: string, at?: string, params?: ParamValues): Promise<MeshOutput>;
+  render(slug: string, path: string, body: RenderBody, matrix?: number[]): Promise<RenderResult>;
+  mesh(slug: string, path: string, at?: string, matrix?: number[]): Promise<MeshOutput>;
 }
 
 export interface PartsDeps {
@@ -222,15 +224,23 @@ export class PartsService {
   // ---- structured-file validation and write hooks -------------------------------------------
 
   /** The validator for a write to `path`, or undefined when the file is not structured. Throws for a malformed spec path. */
-  validatorFor(slug: string, path: string, author: string): ((bytes: Uint8Array) => Promise<void>) | undefined {
+  validatorFor(slug: string, path: string, author: string, plannedFiles?: ReadonlySet<string>): ((bytes: Uint8Array) => Promise<void>) | undefined {
     const kind = structuredKind(slug, path);
-    if (!kind) return undefined;
+    if (!kind) {
+      const part = partOfPath(path);
+      if (part?.file !== "model") return undefined;
+      return async () => {
+        const spec = await this.readSpec(slug, part.id).catch(() => null);
+        if (spec?.scan) throw invalid("a scanned part uses scan.file as its model");
+      };
+    }
     return async (bytes) => {
       const value = parseJsonFile(bytes, path);
       switch (kind.kind) {
         case "part-spec": {
           const spec = validatePartSpec(value, await this.materialNames());
           if (slug === LIBRARY_SLUG && spec.source !== "bought") throw invalid(`a library part is bought hardware: give ${path} source "bought"; a printed part belongs in its project`);
+          if (spec.scan && (plannedFiles?.has(modelPath(kind.id)) || await this.store.stat(slug, modelPath(kind.id)))) throw invalid("remove the OpenSCAD model before changing the source to scanned");
           if (author === "agent") {
             const stored = await this.readSpec(slug, kind.id).catch(() => null);
             if (canonical(stored?.waivers ?? []) !== canonical(spec.waivers)) throw forbidden("waivers are a person's decision: they change only through POST .../parts/<id>/waive, never by an agent");
@@ -273,7 +283,7 @@ export class PartsService {
     for (const path of [...upserts, ...removes]) {
       const part = partOfPath(path);
       if (part) add({ slug, id: part.id });
-      if (path.endsWith(".scad")) for (const ref of this.dependents(slug, path)) add(ref);
+      for (const ref of this.dependents(slug, path)) add(ref);
       if (slug === LIBRARY_SLUG && (path === PRINTER_FILE || path === MATERIALS_FILE)) everything = true;
       if (path === ASSEMBLY_FILE) assembly = true;
     }
@@ -314,13 +324,13 @@ export class PartsService {
     const queue: { project: string; path: string }[] = [{ project: slug, path }];
     while (queue.length > 0) {
       const item = queue.shift() as { project: string; path: string };
-      for (const link of this.index.incoming(item.project, item.path)) {
-        if (!SCAD_RELATIONS.has(link.relation)) continue;
+      const links = [...this.index.incoming(item.project, item.path).filter((link) => SCAD_RELATIONS.has(link.relation)), ...this.index.specDependents(item.project, item.path)];
+      for (const link of links) {
         const key = `${link.fromProject}/${link.from}`;
         if (seen.has(key)) continue;
         seen.add(key);
         const part = partOfPath(link.from);
-        if (part?.file === "model") out.push({ slug: link.fromProject, id: part.id });
+        if (part) out.push({ slug: link.fromProject, id: part.id });
         queue.push({ project: link.fromProject, path: link.from });
       }
     }
@@ -341,7 +351,8 @@ export class PartsService {
   stateKey(slug: string, id: string): string {
     const rev = (project: string, path: string): string => this.index.fileRow(project, path)?.rev ?? "-";
     const revs = [REPORT_VERSION, this.rendererVersion, rev(slug, specPath(id)), rev(slug, modelPath(id)), rev(LIBRARY_SLUG, PRINTER_FILE), rev(LIBRARY_SLUG, MATERIALS_FILE)];
-    return sha(...revs, ...this.usedRevs(slug, modelPath(id)));
+    const scans = this.index.outgoing(slug, specPath(id)).filter((link) => link.relation === "scans").map((link) => `${link.target}=${rev(slug, link.target)}`).sort();
+    return sha(...revs, ...this.usedRevs(slug, modelPath(id)), ...scans);
   }
 
   /** What a render of `path` is made of, as far as the index knows: its rev, the revs of the files it uses, and the renderer's version. */
@@ -392,7 +403,8 @@ export class PartsService {
   }
 
   private summaryStatus(slug: string, id: string): { status: ReportStatus; passed: number; total: number; failing: string[] } {
-    if (!this.index.fileRow(slug, modelPath(id))) return { status: "empty", passed: 0, total: 0, failing: [] };
+    const scanned = this.index.outgoing(slug, specPath(id)).some((link) => link.relation === "scans");
+    if (!scanned && !this.index.fileRow(slug, modelPath(id))) return { status: "empty", passed: 0, total: 0, failing: [] };
     const row = this.index.partStatus(slug, id);
     if (row && row.state === this.stateKey(slug, id)) return { status: row.status, passed: row.passed, total: row.total, failing: row.failing };
     return { status: "pending", passed: row?.passed ?? 0, total: row?.total ?? 0, failing: [] };
@@ -410,7 +422,8 @@ export class PartsService {
       if (!(err instanceof ApiException) || err.code === "not_found") throw err;
     }
     const specRow = this.index.fileRow(slug, specPath(id));
-    const modelRow = this.index.fileRow(slug, modelPath(id));
+    const path = spec?.scan?.file ?? modelPath(id);
+    const modelRow = this.index.fileRow(slug, path);
     const newest = [specRow, modelRow].filter((r) => r !== null).sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0];
     const s = this.summaryStatus(slug, id);
     return {
@@ -422,7 +435,7 @@ export class PartsService {
       material: spec?.material ?? "",
       strictness: spec?.strictness ?? "standard",
       spec: specPath(id),
-      model: modelRow ? modelPath(id) : null,
+      model: modelRow ? path : null,
       status: spec === null ? "failed" : s.status,
       passed: s.passed,
       total: s.total,
@@ -476,7 +489,7 @@ export class PartsService {
   }
 
   async setParams(slug: string, id: string, body: SetParamsBody, author: string): Promise<WriteResult> {
-    await this.requirePart(slug, id);
+    if ((await this.requirePart(slug, id)).scan) throw invalid("a scanned part has no OpenSCAD parameters");
     const path = modelPath(id);
     const current = await this.store.currentRev(slug, path);
     if (current === null) throw notFound(`part ${id} has no model yet`);
@@ -613,6 +626,44 @@ export class PartsService {
     const base = { project: slug, part: id, revisionId, spec, whatIf };
     const finish = (r: Omit<PartReport, "seconds" | "evaluatedAt" | keyof typeof base>): PartReport => ({ ...base, ...r, seconds: Math.round((performance.now() - started) / 10) / 100, evaluatedAt: isoSeconds() });
 
+    if (spec.scan) {
+      if (whatIf) throw invalid("a scanned part has no OpenSCAD parameters");
+      const path = spec.scan.file;
+      const file = join(root, path);
+      const searchPaths = this.searchPaths(root);
+      const request = { file, searchPaths, matrix: placement(spec.scan.rotate, spec.scan.translate) };
+      let mesh: MeshOutput | null = null;
+      let error = "";
+      try {
+        mesh = await this.renderer.mesh(request);
+      } catch (err) {
+        if (!(err instanceof RenderError)) throw err;
+        error = this.relativise(err.message, root);
+      }
+      const sourceRev = await revOfFile(file).catch(() => "-");
+      const key = sha(REPORT_VERSION, "scan", sourceRev, mesh?.key ?? `failed:${error}`, ...context);
+      const cached = await this.readCached<PartReport>(key);
+      if (cached) return { report: { ...cached, revisionId, spec }, key, modelRev: null, context: evalContext };
+      const analysis = mesh ? await this.renderer.analyse({ key: mesh.key, overhangDeg: profile.printer.maxOverhangDeg }) : null;
+      const dimensions: Record<string, DimMeasurement> = {};
+      for (const d of spec.dimensions) if (mesh) dimensions[d.id] = await measureDimension(this.renderer, mesh.key, mesh.info, analysis, d);
+      const gates = partGates({ spec, printer: profile.printer, material: null, build: mesh ? { ok: true } : { ok: false, error }, mesh: mesh?.info ?? null, analysis, dimensions, lint: lintSource("", []) });
+      const status = partStatus(gates, true);
+      const counts = countGates(gates);
+      let render: RenderRef | null = null;
+      if (mesh) {
+        try {
+          const out = await this.renderer.render({ ...request, views: [...ALL_VIEWS], size: REPORT_SIZE });
+          if (out.meshKey === mesh.key) render = { ...renderRef(out.key, out.views), mesh: meshUrl(mesh.key), ...(out.proxy ? { proxy: `/api/renders/${mesh.key}/proxy.stl` } : {}) };
+        } catch (err) {
+          if (!(err instanceof RenderError)) throw err;
+        }
+      }
+      const report = finish({ status, passed: counts.passed, total: counts.total, gates, mesh: mesh?.info ?? null, analysis: mesh && analysis ? analysisView(mesh.key, analysis) : null, render, params: [], massG: null, next: nextSteps(gates, status, path) });
+      await this.writeCached(key, report);
+      return { report, key, modelRev: null, context: evalContext };
+    }
+
     const file = join(root, modelPath(id));
     let source: string;
     try {
@@ -697,6 +748,7 @@ export class PartsService {
   /** Each attempt's status is from an evaluation of its model against the current spec, profile and renderer, or null. */
   async attempts(slug: string, id: string): Promise<Attempt[]> {
     const spec = await this.requirePart(slug, id);
+    if (spec.scan) return [];
     const context = this.evalContext(spec, await this.profile());
     const dir = this.store.projectDir(slug);
     const path = modelPath(id);
@@ -711,7 +763,7 @@ export class PartsService {
   }
 
   async restore(slug: string, id: string, revisionId: string, author: string): Promise<WriteResult> {
-    await this.requirePart(slug, id);
+    if ((await this.requirePart(slug, id)).scan) throw invalid("a scanned part has no attempts");
     const bytes = await this.store.readAt(slug, modelPath(id), revisionId);
     return this.ws.writeFile(slug, modelPath(id), bytes, { rev: "*", author, message: `restore ${revisionId}` });
   }
@@ -782,19 +834,41 @@ export class PartsService {
     }
   }
 
-  private sidePath(side: CompareSide, name: string): string {
-    if (side.part !== undefined) {
-      if (!PART_ID_RE.test(side.part)) throw invalid(`${name}.part must be a part id`);
-      return modelPath(side.part);
+  private async sideModel(slug: string, side: CompareSide): Promise<{ path: string; matrix?: number[] }> {
+    if (side.path !== undefined) return { path: side.path };
+    if (side.part === undefined || !PART_ID_RE.test(side.part)) throw invalid("part must be a part id");
+    let bytes: Uint8Array;
+    try {
+      bytes = side.at ? await this.store.readAt(slug, specPath(side.part), side.at) : await this.store.readBytes(slug, specPath(side.part));
+    } catch (err) {
+      if (err instanceof ApiException && err.code === "not_found") return { path: modelPath(side.part) };
+      throw err;
     }
-    if (side.path !== undefined) return side.path;
-    throw invalid(`${name} needs part or path`);
+    const { scan } = validatePartSpec(parseJsonFile(bytes, specPath(side.part)), []);
+    return scan ? { path: scan.file, matrix: placement(scan.rotate, scan.translate) } : { path: modelPath(side.part) };
+  }
+
+  async align(slug: string, path: string, body: AlignBody): Promise<AlignResult> {
+    const source = await this.ws.mesh(slug, path, body.revision);
+    let to: string | undefined;
+    if (body.to) {
+      const target = await this.sideModel(slug, body.to);
+      to = (await this.ws.mesh(slug, target.path, body.to.at, target.matrix)).key;
+    }
+    try {
+      return await this.renderer.align({ key: source.key, ...(to ? { to } : {}) });
+    } catch (err) {
+      if (err instanceof RenderError) throw new ApiException("render_failed", err.message);
+      throw err;
+    }
   }
 
   async compare(slug: string, a: CompareSide, b: CompareSide): Promise<CompareResult> {
     await this.store.requireProject(slug);
-    const ra = await this.rendered(slug, this.sidePath(a, "a"), a.at);
-    const rb = await this.rendered(slug, this.sidePath(b, "b"), b.at);
+    const targetA = await this.sideModel(slug, a);
+    const targetB = await this.sideModel(slug, b);
+    const ra = await this.ws.render(slug, targetA.path, a.at ? { at: a.at } : {}, targetA.matrix);
+    const rb = await this.ws.render(slug, targetB.path, b.at ? { at: b.at } : {}, targetB.matrix);
     if (!ra.info.closed || !rb.info.closed) throw new ApiException("render_failed", "signed deviation requires closed meshes");
     const dev = await this.renderer.deviation({ a: meshKeyOf(ra), b: meshKeyOf(rb) });
     const va = ra.info.volumeCm3;
@@ -918,15 +992,22 @@ export class PartsService {
       const report = keyed?.report ?? null;
       reportKeys.push(`${inst.id}=${keyed?.key ?? "-"}`);
       const matrix = placement(inst.rotate, inst.translate);
-      const usable = report?.render && report.mesh && report.status !== "failed";
+      let meshPath = report?.render?.mesh ?? null;
+      let drawablePath = report?.render?.proxy ?? meshPath;
+      if (report?.spec.scan && report.mesh && !meshPath) {
+        const { scan } = report.spec;
+        const out = await this.ws.mesh(ref.slug, scan.file, undefined, placement(scan.rotate, scan.translate));
+        drawablePath = meshPath = meshUrl(out.key);
+      }
+      const usable = meshPath !== null && report?.mesh && report.status !== "failed";
       parts.push({ instance: inst, status: report?.status ?? null, title: report?.spec.title ?? inst.part, source: report?.spec.source ?? "printed", material: report?.spec.material ?? null, massG: report?.massG ?? null, meshed: Boolean(usable) });
       placed.push({
         id: inst.id,
         part: inst.part,
         partStatus: report?.status ?? "empty",
-        mesh: usable ? (report.render?.mesh ?? null) : null,
+        mesh: usable ? drawablePath : null,
         matrix,
-        key: usable && report.render ? meshKeyOf(report.render) : null,
+        key: usable && meshPath ? basename(dirname(meshPath)) : null,
         box: usable && report.mesh ? transformBox({ min: report.mesh.bbox.min, max: report.mesh.bbox.max }, matrix) : null,
       });
     }
@@ -941,12 +1022,13 @@ export class PartsService {
     const boxes = new Map(placed.filter((p) => p.box !== null).map((p) => [p.id, p.box as Box]));
     const byId = new Map(placed.map((p) => [p.id, p]));
     const pairs: PairMeasure[] = [];
+    const clearanceMm = (await this.profile()).printer.clearance.sliding;
     for (const [a, b] of candidatePairs(spec, boxes)) {
       const pa = byId.get(a);
       const pb = byId.get(b);
       if (!pa?.key || !pb?.key) continue;
-      const m = await this.renderer.interference({ a: { key: pa.key, matrix: pa.matrix }, b: { key: pb.key, matrix: pb.matrix } });
-      pairs.push({ a, b, gapMm: m.gapMm, overlapCm3: m.overlapCm3 });
+      const m = await this.renderer.interference({ a: { key: pa.key, matrix: pa.matrix }, b: { key: pb.key, matrix: pb.matrix }, clearanceMm });
+      pairs.push({ a, b, ...m });
     }
     const gates = assemblyGates({ spec, parts, pairs });
     const status = assemblyStatus(gates);
@@ -955,7 +1037,7 @@ export class PartsService {
 
     const highlight = new Set<string>();
     for (const gate of gates.filter((x) => x.status === "fail")) {
-      if (gate.id === "clash") for (const p of pairs.filter((p) => p.overlapCm3 * 1000 > 0.5)) highlight.add(p.a).add(p.b);
+      if (gate.id === "clash") for (const p of pairs.filter(isClash)) highlight.add(p.a).add(p.b);
       if (gate.id.startsWith("mate:")) {
         const mate = spec.mates.find((m) => `mate:${m.id}` === gate.id);
         if (mate) highlight.add(mate.a).add(mate.b);
@@ -981,7 +1063,7 @@ export class PartsService {
       gates,
       spec,
       instances: placed.map((p) => ({ id: p.id, part: p.part, partStatus: p.partStatus, mesh: p.mesh, matrix: p.matrix })),
-      pairs: pairs.map((p) => ({ a: p.a, b: p.b, gapMm: p.gapMm, overlapCm3: p.overlapCm3 })),
+      pairs,
       bom: billed.lines,
       totalPrintedMassG: billed.totalPrintedMassG,
       render,

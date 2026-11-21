@@ -30,70 +30,6 @@ any way for a person to edit a mesh. The agent writing OpenSCAD is drawer's scan
 | 4. Write the spec from measured values, then the model | agent | parts, as today |
 | 5. Check the model against the scan | server | `match` gate (copy), `mate`/`clash` against the scan (fit) |
 
-## Groundwork (no new behaviour)
-
-The remaining groundwork ships with scanned parts.
-
-### G3. A spec can depend on something besides its own model
-
-The index, `stateKey` and the report key follow SCAD links only. A part whose gate reads another part,
-or whose model is a mesh file, would keep a stale report.
-
-- A spec's references become index links (`scans` to a file, `matches` to a part), so `dependents()`
-  finds them and a write to either re-queues the part.
-- `stateKey` and the report key take the referenced file's rev or the referenced part's state key, the
-  way an assembly already takes its parts'.
-
-## S2. A scan as a part
-
-A scanned object is a part: `source: "scanned"`, beside `printed` and `bought`.
-
-```ts
-interface PartSpec {
-  source: "printed" | "bought" | "scanned";
-  /** source "scanned" only: the mesh that is this part's model, and where it sits. No .scad. */
-  scan?: { file: string; rotate: Vec3; translate: Vec3 };
-  ...
-}
-```
-
-- Its model is the scan, placed by the transform. It has no `.scad` and no attempts.
-- Gates: `parses` (the mesh reads and is not empty) and its `dim:` gates. No `solid`, no printability gates.
-- Its dimensions are the **measurement record**: the agent writes "bore, 22.1 ± 0.15" as a `hole`
-  dimension on the scanned part, and the server confirms it on the scan. A measurement that the server
-  cannot reproduce shows as a failing gate, not as a wrong number in a note.
-- Because it is a part, an assembly can place it, and `mate` and `clash` run against the real object
-  with no new instance type. On an open scan the shared volume cannot be measured; `clash` then tests
-  how deep the other part's surface goes behind the scan's (see Open questions).
-
-This is why G3 exists, and why the frame (S3) has a home in a file.
-
-## S3. Frame: `align`
-
-`POST /projects/:slug/align/<path>` with `{ to?: CompareSide }` → `AlignResult`. A POST that writes
-nothing: it proposes, the agent decides and writes the transform into the scanned part's spec.
-
-```ts
-interface AlignResult {
-  rotate: Vec3; translate: Vec3;
-  /** RMS distance after alignment, mm; null without `to`. */
-  rms: number | null;
-  /** Another pose fits nearly as well (a symmetric object): the alternatives, best first. */
-  ambiguous: { rotate: Vec3; translate: Vec3; rms: number }[];
-}
-```
-
-- **Without `to`** (a datum frame for the scan alone): the largest plane goes down onto z = 0, the
-  longest remaining direction along x, the bounding box's corner or the main axis of revolution at the
-  origin. Built from measured features.
-- **With `to`** (onto a part or another mesh): starts from the principal axes in all 24 orientations,
-  refines each briefly with point-to-plane ICP, then the best fully. Pairs further than three times the
-  median distance, or with opposed normals, are left out; poses are scored on all samples so a pose
-  cannot win by dropping the hard ones.
-
-Alignment is never part of a gate. A gate reads the transform from the spec, so the same files always
-give the same status.
-
 ## S5. Checking the model: the `match` gate
 
 For a copy. On a printed part's spec:
@@ -147,7 +83,6 @@ skill. Its rules:
 
 | Stage | Holds | Behaviour changes |
 |---|---|---|
-| 4 | G3, S2 scanned parts, S3 `align` | a scan is a part with a frame; `mate` and `clash` reach it |
 | 5 | S5 `match`, both-way deviation | a copy can be checked |
 | 6 | S6 guide chapter, complete | written alongside each stage, finished here |
 
@@ -156,8 +91,6 @@ mock server together, as the invariant requires.
 
 ## Open questions
 
-- **`clash` against an open scan.** Depth behind the surface is the proposal; the threshold (the
-  printer's clearance, or the scan's noise) is not decided.
 - **A scan in the library.** Bought parts live in `_library`; a scanned bought part would need
   `_library/refs/**` to take a `scan.stl`, which the layout already allows, and `source: "scanned"`
   where the layout demands `bought`. Decide when a real case comes up.

@@ -56,3 +56,38 @@ test("features and fit build only a mesh and serve the indexed feature field", a
   expect((await h.post(`${prefix}/slice/refs/part.stl`, { axis: "z", shadow: true, at: 1 })).status).toBe(400);
   expect(h.renderer.calls.render).toBe(count);
 });
+
+test("a scanned part measures its placed file, follows changes and has no OpenSCAD model", async () => {
+  const file = "refs/measurement.stl";
+  await h.write("scans", file, "// @size=10,20,30 @leaky");
+  const spec = {
+    title: "Recorded object",
+    source: "scanned",
+    scan: { file, rotate: [0, 0, 90], translate: [2, 5, 8] },
+    dimensions: [{ id: "width", label: "Width", kind: "size", axis: "x", nominal: 20, tol: 0.01 }],
+  };
+  const path = "/api/projects/scans/parts/recorded";
+  expect((await h.call("PUT", path, { body: spec })).status).toBe(200);
+  const report = async () => (await h.get<import("@drawer/shared/api").PartReport>(`${path}/report`)).json;
+  const first = await report();
+  expect(first.status).toBe("passed");
+  expect(first.gates.map((gate) => gate.id)).toEqual(["parses", "dim:width"]);
+  expect(first.mesh?.bbox.min).toEqual([-18, 5, 8]);
+  const content = await h.get<import("@drawer/shared/api").FileInfo>("/api/projects/scans/info/parts/recorded.part.json");
+  expect(content.json.outgoing).toMatchObject([{ relation: "scans", to: file }]);
+  const aligned = await h.post<import("@drawer/shared/api").AlignResult>("/api/projects/scans/align/refs/measurement.stl", { to: { part: "recorded" } });
+  expect(aligned.json.translate).toEqual([-18, 5, 8]);
+  expect((await h.get(`${path}/attempts`)).json).toEqual({ attempts: [] });
+  expect((await h.put("/api/projects/scans/files/parts/recorded.scad", "cube(10);")).status).toBe(400);
+  expect((await h.call("PUT", "/api/projects/_library/parts/recorded", { body: spec })).status).toBe(400);
+  await h.write("scans", file, "// @size=10,25,30 @leaky", { "x-drawer-rev": "*" });
+  await h.drained();
+  expect((await report()).status).toBe("draft");
+  const raw = await h.get(`/api/projects/scans/files/${file}`);
+  expect((await h.del(`/api/projects/scans/files/${file}`, { "x-drawer-rev": raw.headers.get("x-drawer-rev")! })).status).toBe(200);
+  await h.drained();
+  expect((await report()).status).toBe("failed");
+  await h.write("scans", file, "// @size=10,20,30 @leaky");
+  await h.drained();
+  expect((await report()).status).toBe("passed");
+});

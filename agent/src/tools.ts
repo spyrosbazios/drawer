@@ -11,6 +11,8 @@ import {
   LIBRARY_SLUG,
   MATERIALS_FILE,
   PART_DIR,
+  PART_SOURCES,
+  PART_SPEC_SUFFIX,
   PRINTER_FILE,
   type NewSessionItem,
   type PartReport,
@@ -49,6 +51,7 @@ export type ToolClient = Pick<
   | "setParams"
   | "render"
   | "measure"
+  | "align"
   | "features"
   | "fit"
   | "slice"
@@ -533,14 +536,16 @@ const setPartSpec = defineTool({
     title: z.string().min(1),
     class: z.string().optional().describe('What kind of part, e.g. "snap-fit clip"'),
     description: z.string().optional(),
-    source: z.enum(["printed", "bought"]).optional(),
+    source: z.enum(PART_SOURCES).optional(),
+    scan: z.object({ file: filePath.refine((p) => pathProblem(p) === null && !p.startsWith(`${LIBRARY_SLUG}/`), "must be a mesh path within the project"), rotate: vec3, translate: vec3 }).optional(),
     material: z.string().optional(),
     strictness: z.enum(["quick", "standard", "functional"]).optional(),
     dimensions: z.array(dimension).optional(),
   },
-  async run(ctx, { part, dimensions, ...rest }) {
+  async run(ctx, { part, dimensions, scan, ...rest }) {
     const spec = {
       ...rest,
+      ...(scan ? { scan: { file: scan.file, rotate: toVec3(scan.rotate), translate: toVec3(scan.translate) } } : {}),
       ...(dimensions === undefined
         ? {}
         : {
@@ -554,6 +559,7 @@ const setPartSpec = defineTool({
     };
     const summary = await ctx.client.putPart(ctx.project, part, spec);
     const lead = `Spec of ${part} saved (${spec.dimensions?.length ?? 0} dimension(s)).`;
+    if (!summary.model && summary.source === "scanned") return output(`${lead} The scan file is missing.`, `spec ${part}`);
     if (!summary.model) return output(`${lead} No model yet: write parts/${part}.scad with write_model.`, `spec ${part}`);
     return afterModelWrite(ctx, part, [lead]);
   },
@@ -653,7 +659,15 @@ const viewPart = defineTool({
     views: views.optional().describe("Default: iso"),
   },
   async run(ctx, { part, path, views: chosen }) {
-    const target = path ?? (part ? modelPath(part) : null);
+    let target = path ?? (part ? modelPath(part) : null);
+    if (path === undefined && part) {
+      const specPath = `${PART_DIR}/${part}${PART_SPEC_SUFFIX}`;
+      const file = await ctx.client.readFile(ctx.project, specPath).catch((err: unknown) => {
+        if (err instanceof ApiFailure && err.code === "not_found") return null;
+        throw err;
+      });
+      if (file && (JSON.parse(new TextDecoder().decode(file.bytes)) as { source?: string }).source === "scanned") target = specPath;
+    }
     if (!target) return { ...output("Give part or path.", "view: nothing to view"), ok: false };
     const where = locate(ctx, target);
     const wanted: RenderView[] = chosen && chosen.length > 0 ? chosen : ["iso"];
@@ -682,6 +696,18 @@ const measureFile = defineTool({
     const iso = res.render.views.iso;
     const pictures = await fetchImages(ctx, iso ? [iso] : []);
     return output(lines.join("\n"), `measured ${path}: ${vec(b.size)} mm`, { images: pictures.images, imageUrls: pictures.imageUrls });
+  },
+});
+
+const align = defineTool({
+  name: "align",
+  description: "Propose a frame for a scan, or align it onto a part or mesh. Review alternatives before saving the transform in a scanned part spec.",
+  input: { path: filePath, to: compareSide.optional() },
+  async run(ctx, { path, to }) {
+    const where = locate(ctx, path);
+    if (to?.path?.startsWith(`${LIBRARY_SLUG}/`) || to?.part?.startsWith(`${LIBRARY_SLUG}/`)) return { ...output("Alignment target must be in this project.", "alignment target outside project"), ok: false };
+    const result = await ctx.client.align(where.slug, where.path, to ? { to } : {});
+    return output(JSON.stringify(result), `aligned ${path}`);
   },
 });
 
@@ -990,6 +1016,7 @@ export const drawerTools: readonly DrawerTool[] = [
   setParams,
   viewPart,
   measureFile,
+  align,
   features,
   fit,
   slice,

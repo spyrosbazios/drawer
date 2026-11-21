@@ -2,7 +2,7 @@
  * Contracts between the server and its two helper packages. The server depends on these
  * interfaces only; @drawer/render and @drawer/importers implement them.
  */
-import type { Axis, Diagnostic, Feature, FeatureKind, ImportFile, ImportPreview, ImportSite, MeshAnalysis, MeshInfo, ParamValues, ProbeResult, RenderStage, RenderView, ScadParam, SliceResult, Vec3, ScanUnit, MeshFormat } from "./api";
+import type { AlignResult, OpenClash, Axis, Diagnostic, Feature, FeatureKind, ImportFile, ImportPreview, ImportSite, MeshAnalysis, MeshInfo, ParamValues, ProbeResult, RenderStage, RenderView, ScadParam, SliceResult, Vec3, ScanUnit, MeshFormat } from "./api";
 
 // ---- @drawer/render ---------------------------------------------------------------------
 
@@ -22,6 +22,8 @@ export interface MeshRequest {
   searchPaths: string[];
   /** SCAD only: top-level overrides passed as `-D name=value`. Part of the cache key. */
   params?: ParamValues;
+  /** Mesh sources only. Row-major rigid placement applied before measuring or drawing. */
+  matrix?: number[];
 }
 
 export interface RenderRequest extends MeshRequest {
@@ -134,6 +136,7 @@ export interface Renderer {
   slice(req: { key: MeshKey; axis: Axis; at: number | null }): Promise<SliceResult>;
   features(req: { key: MeshKey }): Promise<{ features: Feature[]; fieldFile: string; meshFile: string }>;
   fit(req: { key: MeshKey; at: Vec3; kind?: FeatureKind }): Promise<Feature | null>;
+  align(req: { key: MeshKey; to?: MeshKey }): Promise<AlignResult>;
   /** The run of material or air through a point along an axis. */
   probe(req: { key: MeshKey; from: Vec3; axis: Axis }): Promise<ProbeResult>;
   /** PNG of the solid cut at `axis` = `at` (the lower side kept), looking at the cut. Returns the file name inside the cache directory. Throws RenderError. */
@@ -143,7 +146,7 @@ export interface Renderer {
   /** Signed distance from B's surface to A's. */
   deviation(req: { a: MeshKey; b: MeshKey }): Promise<DeviationOutput>;
   /** Smallest distance between two placed solids (0 when they touch or overlap) and the volume they share. */
-  interference(req: { a: PlacedMesh; b: PlacedMesh }): Promise<{ gapMm: number; overlapCm3: number }>;
+  interference(req: { a: PlacedMesh; b: PlacedMesh; clearanceMm?: number }): Promise<{ gapMm: number; overlapCm3: number | null; penetration?: OpenClash }>;
   /** Views and a contact sheet of several placed solids together, each in its own colour; `highlight` pairs are drawn in the warning colour. Cached under its own key. Throws RenderError. */
   renderAssembly(req: { instances: (PlacedMesh & { id: string })[]; highlight: string[]; views: RenderView[]; size: number }): Promise<AssemblyRenderOutput>;
 }

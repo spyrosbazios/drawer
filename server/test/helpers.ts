@@ -177,11 +177,15 @@ export function fakeRenderer(cacheDir: string): FakeRenderer {
     },
     async mesh(req) {
       count("mesh");
-      const text = await Bun.file(req.file).text();
+      const text = await Bun.file(req.file).text().catch((err: Error) => { throw new RenderError(err.message); });
       seen.push({ file: req.file, text, searchPaths: req.searchPaths });
       if (text.includes("FAIL")) throw new RenderError("ERROR: Parser error in line 1: syntax error");
-      const key = sha(text, JSON.stringify(req.params ?? {}));
+      const key = sha(text, JSON.stringify(req.params ?? {}), req.matrix?.join(",") ?? "");
       const s = fakeSolid(text, req.params);
+      if (req.matrix) {
+        const { min, max } = placedBox(s.info, req.matrix);
+        s.info.bbox = { min: min as MeshInfo["bbox"]["min"], max: max as MeshInfo["bbox"]["max"], size: max.map((n, i) => n - min[i]!) as MeshInfo["bbox"]["size"] };
+      }
       solids.set(key, s);
       const dir = join(meshCache, key);
       const path = join(dir, "mesh.stl");
@@ -264,6 +268,11 @@ export function fakeRenderer(cacheDir: string): FakeRenderer {
       const fieldFile = "features.f32";
       await writeFile(join(meshCache, req.key, fieldFile), new Uint8Array(s.info.triangles * 4));
       return { features: [{ kind: "plane", origin: [0, 0, 0], direction: [0, 0, 1], diameter: null, length: null, side: null, areaMm2: 100, rms: 0, maxError: 0, coverage: 1 }], fieldFile, meshFile: "mesh.stl" };
+    },
+    async align(req) {
+      const { info } = solid(req.key);
+      const target = req.to ? solid(req.to).info.bbox.min : [0, 0, 0];
+      return { rotate: [0, 0, 0], translate: info.bbox.min.map((x, i) => target[i]! - x) as MeshInfo["bbox"]["min"], rms: req.to ? 0 : null, ambiguous: [] };
     },
     async fit(req) {
       const { features } = await fake.features(req);

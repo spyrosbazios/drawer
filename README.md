@@ -82,6 +82,8 @@ Screens use sample data from the web app's mock server. The same app installs on
 > delete its projects. Keep its port on loopback or a private address, and never expose it to the public internet.
 > Read the [security model](SECURITY.md) before deploying.
 
+Or hand [INSTALL.md](INSTALL.md) to a coding agent and let it do the install.
+
 You need Docker with Compose. `docker compose up -d` pulls the published image for amd64 or arm64: the server, the
 web app, and OpenSCAD with BOSL2 and MCAD inside.
 
@@ -113,6 +115,7 @@ are derived and can be left out. drawer makes no backups of its own.
 
 | Start here | What it covers |
 |---|---|
+| [Install with an agent](INSTALL.md) | Steps a coding agent follows to install drawer hands-off |
 | [Spec](docs/SPEC.md) | The model (parts, specs, gates, assemblies, sessions), every route, the CLI |
 | [Security](SECURITY.md) | The no-sign-in model, what the server refuses, what a model can read, vulnerability reports |
 | [Modelling guide](server/src/guide.md) | The method every agent follows |

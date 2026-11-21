@@ -403,7 +403,8 @@ describe("render", () => {
     expect(result.sheet).toBe(join(sb.cache, "drawer", "renders", result.key, "sheet.png"));
     expect(readFileSync(result.sheet).subarray(0, 4)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     expect(result.info.triangles).toBe(1234);
-    expect(result.mesh).toBe(`/api/renders/${result.key}/mesh.stl`);
+    expect(result.mesh).toMatch(/^\/api\/renders\/[a-f0-9]{24}\/mesh\.stl$/);
+    expect(result.mesh).not.toContain(result.key);
     expect(fake.downloads).toHaveLength(5);
 
     fake.downloads.length = 0;

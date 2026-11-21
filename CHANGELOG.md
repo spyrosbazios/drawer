@@ -1,9 +1,15 @@
 # Changelog
 
+<!-- reviewed: 2026-11-21 -->
+
 All notable changes to drawer. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 version is one semver number for the whole repository, set by the git tag (see [CONTRIBUTING.md](CONTRIBUTING.md#versioning)).
 
 ## Unreleased
+
+### Changed
+
+- Mesh exports and measurements are cached independently of preview views and sizes.
 
 ## 0.2.0 - 2026-11-21
 

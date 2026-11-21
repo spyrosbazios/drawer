@@ -8,7 +8,7 @@ const config = loadConfig();
 
 const app = createApp({
   dataDir: config.dataDir,
-  renderer: createRenderer({ cacheDir: `${config.dataDir}/cache/renders`, openscadCmd: config.openscadCmd }),
+  renderer: createRenderer({ cacheDir: `${config.dataDir}/cache`, openscadCmd: config.openscadCmd }),
   importers: createImporters(config.credentials),
   webDist: config.webDist,
   allowedHosts: config.allowedHosts,

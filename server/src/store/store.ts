@@ -53,6 +53,7 @@ export class Store {
   readonly trashDir: string;
   readonly tmpDir: string;
   readonly renderCacheDir: string;
+  readonly meshCacheDir: string;
   readonly reportCacheDir: string;
   readonly thumbnailDir: string;
   readonly git: Git;
@@ -62,13 +63,14 @@ export class Store {
     this.trashDir = join(dataDir, "trash");
     this.tmpDir = join(dataDir, "tmp");
     this.renderCacheDir = join(dataDir, "cache", "renders");
+    this.meshCacheDir = join(dataDir, "cache", "meshes");
     this.reportCacheDir = join(dataDir, "cache", "reports");
     this.thumbnailDir = join(dataDir, "cache", "thumbnails");
     this.git = new Git(this.projectsDir);
   }
 
   async init(): Promise<void> {
-    await Promise.all([this.projectsDir, this.trashDir, this.renderCacheDir, this.reportCacheDir, this.thumbnailDir].map((dir) => mkdir(dir, { recursive: true })));
+    await Promise.all([this.projectsDir, this.trashDir, this.renderCacheDir, this.meshCacheDir, this.reportCacheDir, this.thumbnailDir].map((dir) => mkdir(dir, { recursive: true })));
     // Leftovers of an interrupted write, import or render are garbage by definition.
     await rm(this.tmpDir, { recursive: true, force: true });
     await mkdir(this.tmpDir, { recursive: true });

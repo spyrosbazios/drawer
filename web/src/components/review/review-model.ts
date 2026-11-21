@@ -1,3 +1,4 @@
+import { UNWAIVABLE_GATES } from "@drawer/shared/api";
 import type { Dimension, GateResult, ParamValue, ParamValues, PartReport, ScadParam } from "@drawer/shared/api";
 import { formatNumber } from "@/core/format";
 
@@ -25,8 +26,7 @@ export function dimensionRows(report: Pick<PartReport, "spec" | "gates">): { dim
 // ---- gates ---------------------------------------------------------------------------------
 
 /** Gates a person may waive: the failing and warning ones, except `parses` and `solid`. */
-export const UNWAIVABLE: readonly string[] = ["parses", "solid"];
-export const isWaivable = (g: GateResult): boolean => (g.status === "fail" || g.status === "warn") && !UNWAIVABLE.includes(g.id);
+export const isWaivable = (g: GateResult): boolean => (g.status === "fail" || g.status === "warn") && !UNWAIVABLE_GATES.includes(g.id);
 
 export const isFailing = (g: GateResult): boolean => g.status === "fail" || g.status === "warn";
 

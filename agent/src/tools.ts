@@ -6,6 +6,7 @@
 import { ApiFailure, type Client } from "@drawer/cli/client";
 import {
   ASSEMBLY_FILE,
+  DIMENSION_KINDS,
   LIBRARY_SLUG,
   MATERIALS_FILE,
   PART_DIR,
@@ -303,7 +304,7 @@ const notePath = z
 const dimension = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/),
   label: z.string(),
-  kind: z.enum(["size", "envelope", "hole", "boss", "gap", "wall", "min_wall", "volume"]),
+  kind: z.enum(DIMENSION_KINDS),
   axis: axis.optional().describe("size, hole, gap, wall"),
   at: z.number().optional().describe("hole, boss: cutting plane position along axis"),
   near: vec2.optional().describe("hole, boss: the other two coordinates (x-y-z order without axis) the centre is nearest to"),

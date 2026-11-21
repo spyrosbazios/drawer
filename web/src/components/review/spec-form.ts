@@ -1,3 +1,4 @@
+import { DIMENSION_KINDS } from "@drawer/shared/api";
 import type { Axis, Dimension, DimensionKind, PartSpec, PartSpecBody, Strictness } from "@drawer/shared/api";
 import { z } from "zod";
 
@@ -5,7 +6,6 @@ import { z } from "zod";
  * The edit-spec form keeps every number as the text the person typed, so a half-typed value is never
  * rewritten under them; `specFormSchema` validates it and `formToBody` turns it into the request body.
  */
-export const DIMENSION_KINDS = ["size", "envelope", "hole", "boss", "gap", "wall", "min_wall", "volume"] as const satisfies readonly DimensionKind[];
 export const AXES = ["x", "y", "z"] as const satisfies readonly Axis[];
 export const STRICTNESS = ["quick", "standard", "functional"] as const satisfies readonly Strictness[];
 

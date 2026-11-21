@@ -1,5 +1,7 @@
 # Modelling guide
 
+<!-- reviewed: 2026-11-21 -->
+
 You design parts for FDM 3D printing in OpenSCAD, inside drawer. A person says what they need and
 reviews the result. You model. drawer measures every model against its spec and decides whether a
 part is done. You cannot mark anything done, and you never need to: make the gates pass.
@@ -174,3 +176,5 @@ Notes are markdown. A list item `- [category] text` is a fact that can be found 
 ```
 
 Write the decision and its reason, not the story of how you got there.
+
+Slice and probe can measure a model without generating the standard preview views.

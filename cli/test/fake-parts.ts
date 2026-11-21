@@ -95,10 +95,11 @@ const parse = (text: string): Record<string, unknown> => (text.trim() === "" ? {
 
 export const partOfPath = (path: string): string | null => /^parts\/([a-z0-9][a-z0-9-]*)\.(?:scad|part\.json)$/.exec(path)?.[1] ?? null;
 
-function refFor(key: string): RenderRef {
+function refFor(meshKey: string): RenderRef {
+  const key = new Bun.CryptoHasher("sha256").update(meshKey).digest("hex").slice(0, 24);
   return {
     key,
-    mesh: `/api/renders/${key}/mesh.stl`,
+    mesh: `/api/renders/${meshKey}/mesh.stl`,
     views: { iso: `/api/renders/${key}/iso.png`, front: `/api/renders/${key}/front.png`, top: `/api/renders/${key}/top.png`, side: `/api/renders/${key}/side.png` },
     sheet: `/api/renders/${key}/sheet.png`,
   };

@@ -1,5 +1,7 @@
 # drawer command reference
 
+<!-- reviewed: 2026-11-21 -->
+
 `drawer help` lists everything; `drawer help <cmd>` and `drawer <cmd> --help` give details. A file argument is
 `<project>/<path>`; a part argument is `<project>/<id>`. Server: `DRAWER_URL`, else saved by `drawer server <url>`.
 Author recorded on writes: `DRAWER_AUTHOR` (default `agent`).
@@ -78,3 +80,5 @@ then pass `--rev`.
 Renders, sections and sheets are cached in `${XDG_CACHE_HOME:-~/.cache}/drawer/renders/<key>/` (the key is a content
 hash: kept, never re-downloaded, safe to delete). Open them with your image Read tool; look at the sheet first,
 then single views.
+
+Slice, probe and section build the mesh without generating the standard preview views.

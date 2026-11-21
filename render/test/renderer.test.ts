@@ -54,7 +54,7 @@ describe("renderer without real OpenSCAD", () => {
     for (let i = 0; i < 50 && (await alive(sleepPid)); i++) await Bun.sleep(20);
     expect(await alive(sleepPid)).toBe(false);
     // The temp dir is cleaned up and nothing was published.
-    expect(await readdir(cacheDir)).toEqual([]);
+    expect(await readdir(join(cacheDir, "meshes"))).toEqual([]);
   });
 
   test("a failing OpenSCAD run surfaces its messages", async () => {

@@ -6,11 +6,10 @@ import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { VIEW_DIRECTIONS } from "./camera-rig";
 import type { ViewControl } from "./camera-rig";
 import { Viewport, token, tokenHex } from "./viewport";
-import type { Vec3 } from "@drawer/shared/api";
+import { isMeshFormat, type MeshFormat, type Vec3 } from "@drawer/shared/api";
 import { colorAt, fieldToVertexColors, hexToRgb } from "./field-colors";
 import type { FieldScale } from "./field-colors";
 
-export type MeshFormat = "stl" | "3mf" | "obj";
 export type Axis3 = "x" | "y" | "z";
 export type Point3 = [number, number, number];
 
@@ -74,7 +73,7 @@ export function webglAvailable(): boolean {
 
 export function formatOf(path: string): MeshFormat | null {
   const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
-  return ext === "stl" || ext === "3mf" || ext === "obj" ? ext : null;
+  return ext && isMeshFormat(ext) ? ext : null;
 }
 
 /**

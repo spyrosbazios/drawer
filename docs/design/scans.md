@@ -2,7 +2,7 @@
 
 <!-- reviewed: 2026-11-21 -->
 
-**Nothing here is built.** This is the plan for letting a person drop a 3D scan into a project and have
+This is the remaining plan for letting a person drop a 3D scan into a project and have
 the agent model from it. Each stage moves into [`SPEC.md`](../SPEC.md) in the commit that builds it, and
 its section here is deleted in the same commit. When the last stage ships, this file goes.
 
@@ -32,35 +32,7 @@ any way for a person to edit a mesh. The agent writing OpenSCAD is drawer's scan
 
 ## Groundwork (no new behaviour)
 
-Four changes the features need. They ship first, as refactors that change no route.
-
-### G1. Split the mesh from its views in the render cache
-
-Today every measuring route renders first: mesh, four OpenSCAD preview views and a sheet, under one key
-and one 120 s limit. A scan of a million triangles would time out in the preview before anything is
-measured, and each `(views, size)` pair stores its own copy of `mesh.stl`.
-
-- `cache/meshes/<mesh key>/`: `mesh.stl` and everything measured on it. Key = file bytes, dependency
-  bytes, `-D` values, OpenSCAD version.
-- `cache/renders/<render key>/`: the PNGs and the sheet. Key = mesh key, views, size.
-- `Renderer.mesh(req)` produces the first without the second; `Renderer.render` builds on it. The
-  measuring routes (`measure`, `slice`, `probe`, `compare`, and the new ones) ask for the mesh only.
-- Mesh files are parsed in the measuring worker, not on the server's main thread (today `render()` and
-  the indexer's `meshInfo` parse synchronously).
-
-### G2. A mesh topology module in `render/`
-
-`render/src/topology.ts`, built once per mesh in the worker and kept with it:
-
-- welding with a tolerance (today's is bit-exact, so a scan's seams look open),
-- triangle neighbours across shared edges,
-- per-triangle unit normals, areas and centroids (today private to `measure.ts`, rebuilt per call).
-
-`render/src/bvh.ts` gains the two queries everything below needs: the closest point on the surface
-**with its triangle**, and all triangles within a radius. `nearestDist2` is rewritten on top of the first.
-
-`render/src/linalg.ts`: a 3×3 symmetric eigen solver and a Cholesky solve for systems up to 7×7, in
-Float64. That is all the fitting needs; a matrix library is not worth a dependency for it.
+The remaining groundwork ships with scanned parts.
 
 ### G3. A spec can depend on something besides its own model
 
@@ -72,14 +44,10 @@ or whose model is a mesh file, would keep a stale report.
 - `stateKey` and the report key take the referenced file's rev or the referenced part's state key, the
   way an assembly already takes its parts'.
 
-### G4. One source for the lists that are copied
-
-`DIMENSION_KINDS`, `MESH_FORMATS` and `UNWAIVABLE_GATES` are exported once from `shared/src/api.ts` as
-`const` arrays, with the types derived from them. The server validator, the agent's tool schemas, the
-web's schemas and forms, and the mock server read those instead of keeping their own copy (five copies
-of the kinds and eight of the formats today).
-
 ## S1. Scan intake
+
+`measure` and `compare` return preview URLs used by the CLI and web viewer, so they retain preview
+generation. The separate mesh cache serves the measurements. Scan previews use the light copy below.
 
 `POST /projects/:slug/scans?name=<name>&units=mm|cm|m|in` with the file as the body (STL, OBJ, 3MF, PLY).
 `drawer scan add <project> <file> --name --units`. In the web app: dropping a mesh on a project asks
@@ -265,7 +233,6 @@ skill. Its rules:
 
 | Stage | Holds | Behaviour changes |
 |---|---|---|
-| 1 | G1, G2, G4 | none |
 | 2 | S1 intake, `closed`, the light copy | a scan can be dropped, viewed and measured |
 | 3 | S4 `features`, `fit`, sections on open meshes | the agent can read a scan |
 | 4 | G3, S2 scanned parts, S3 `align` | a scan is a part with a frame; `mate` and `clash` reach it |

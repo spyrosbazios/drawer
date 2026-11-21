@@ -24,7 +24,7 @@ import type {
   WriteResult,
 } from "@drawer/shared/api";
 import { LIBRARY_SLUG } from "@drawer/shared/api";
-import { ImportError, RenderError, type Importers, type Renderer } from "@drawer/shared/contracts";
+import { ImportError, RenderError, type Importers, type MeshOutput, type MeshRequest, type Renderer } from "@drawer/shared/contracts";
 import { ApiException, exists, invalid, notFound } from "./errors.ts";
 import type { EventBus } from "./events.ts";
 import { Index, type FileRow, type UpsertSpec } from "./index/indexer.ts";
@@ -98,6 +98,7 @@ export class Service {
         writeFile: (slug, path, bytes, opts) => this.writeFile(slug, path, bytes, opts),
         writeMany: (slug, writes, removes, author, message) => this.writeMany(slug, writes, removes, author, message),
         render: (slug, path, body) => this.render(slug, path, body),
+        mesh: (slug, path, at, params) => this.mesh(slug, path, at, params),
       },
     });
     this.thumbnails = new Thumbnails({
@@ -578,62 +579,73 @@ export class Service {
 
   // ---- rendering ----------------------------------------------------------------------------
 
-  async render(slug: string, path: string, body: RenderBody): Promise<RenderResult> {
+  private async withRenderFile<T>(slug: string, path: string, at: string | undefined, params: RenderBody["params"], work: (req: MeshRequest) => Promise<T>): Promise<T> {
     await this.store.requireProject(slug);
-    const views = body.views && body.views.length > 0 ? [...new Set(body.views)] : ALL_VIEWS;
-    const size = body.size ?? DEFAULT_RENDER_SIZE;
     const kind = kindFromExtension(path);
     if (kind !== "scad" && kind !== "mesh") throw invalid(`${path} is not a .scad or mesh file`);
 
     const libraryDir = this.store.projectDir(LIBRARY_SLUG);
     let root = this.store.projectDir(slug);
     let cleanup: (() => Promise<void>) | null = null;
-    const at = body.at ?? null;
-    let total = views.length + 3;
-    if (body.at !== undefined) {
-      const tree = await this.store.materialise(slug, body.at);
+    if (at !== undefined) {
+      const tree = await this.store.materialise(slug, at);
       root = tree.root;
       cleanup = tree.cleanup;
     }
     try {
-      const st = body.at === undefined ? await this.store.stat(slug, path) : await lstatOrNull(join(root, path));
-      if (st?.type !== "file") throw notFound(`no such file${body.at ? ` at revision ${body.at}` : ""}: ${path}`);
-      const out = await this.renderer.render({
-        file: join(root, path),
-        searchPaths: root === libraryDir ? [root] : [root, libraryDir],
-        views,
-        size,
-        ...(body.params ? { params: body.params } : {}),
-        onProgress: (p) => {
-          total = p.total;
-          this.bus.emit({ type: "render_progress", project: slug, path, at, ...p });
-        },
-      });
-      const base = `/api/renders/${out.key}`;
-      const result: RenderResult = {
-        project: slug,
-        path,
-        key: out.key,
-        cached: out.cached,
-        seconds: out.seconds,
-        mesh: `${base}/mesh.stl`,
-        views: Object.fromEntries(out.views.map((v) => [v, `${base}/${v}.png`])),
-        sheet: `${base}/sheet.png`,
-        info: out.info,
-        log: out.log,
-        warnings: out.warnings,
-      };
-      this.bus.emit({ type: "render_progress", project: slug, path, at, stage: "done", step: total, total, view: null });
-      this.bus.emit({ type: "render", project: slug, path, key: out.key });
-      return result;
+      const st = at === undefined ? await this.store.stat(slug, path) : await lstatOrNull(join(root, path));
+      if (st?.type !== "file") throw notFound(`no such file${at ? ` at revision ${at}` : ""}: ${path}`);
+      return await work({ file: join(root, path), searchPaths: root === libraryDir ? [root] : [root, libraryDir], ...(params ? { params } : {}) });
     } catch (err) {
-      this.bus.emit({ type: "render_progress", project: slug, path, at, stage: "failed", step: 0, total, view: null });
-      // OpenSCAD reports absolute paths; a client only knows project-relative ones.
       if (err instanceof RenderError) throw new ApiException("render_failed", err.message.replaceAll(`${root}/`, "").replaceAll(`${libraryDir}/`, `${LIBRARY_SLUG}/`));
       throw err;
     } finally {
       await cleanup?.();
     }
+  }
+
+  async mesh(slug: string, path: string, at?: string, params?: RenderBody["params"]): Promise<MeshOutput> {
+    return this.withRenderFile(slug, path, at, params, (req) => this.renderer.mesh(req));
+  }
+
+  async render(slug: string, path: string, body: RenderBody): Promise<RenderResult> {
+    const views = body.views && body.views.length > 0 ? [...new Set(body.views)] : ALL_VIEWS;
+    const size = body.size ?? DEFAULT_RENDER_SIZE;
+    const at = body.at ?? null;
+    let total = views.length + 3;
+    return this.withRenderFile(slug, path, body.at, body.params, async (req) => {
+      try {
+        const out = await this.renderer.render({
+          ...req,
+          views,
+          size,
+          onProgress: (p) => {
+            total = p.total;
+            this.bus.emit({ type: "render_progress", project: slug, path, at, ...p });
+          },
+        });
+        const base = `/api/renders/${out.key}`;
+        const result: RenderResult = {
+          project: slug,
+          path,
+          key: out.key,
+          cached: out.cached,
+          seconds: out.seconds,
+          mesh: `/api/renders/${out.meshKey}/mesh.stl`,
+          views: Object.fromEntries(out.views.map((v) => [v, `${base}/${v}.png`])),
+          sheet: `${base}/sheet.png`,
+          info: out.info,
+          log: out.log,
+          warnings: out.warnings,
+        };
+        this.bus.emit({ type: "render_progress", project: slug, path, at, stage: "done", step: total, total, view: null });
+        this.bus.emit({ type: "render", project: slug, path, key: out.key });
+        return result;
+      } catch (err) {
+        this.bus.emit({ type: "render_progress", project: slug, path, at, stage: "failed", step: 0, total, view: null });
+        throw err;
+      }
+    });
   }
 
   // ---- overview ----------------------------------------------------------------------------

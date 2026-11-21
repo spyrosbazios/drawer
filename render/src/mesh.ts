@@ -2,12 +2,9 @@
  * Pure mesh maths: STL (binary + ASCII), 3MF and OBJ parsers, MeshInfo, binary STL writer.
  * No OpenSCAD involved. Every parser yields a flat triangle soup in millimetres.
  */
-import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import { Unzip, UnzipInflate, strFromU8 } from "fflate";
-import type { MeshInfo } from "@drawer/shared/api";
-
-export type MeshFormat = MeshInfo["format"];
+import { isMeshFormat, type MeshFormat, type MeshInfo } from "@drawer/shared/api";
 
 export interface Mesh {
   format: MeshFormat;
@@ -16,17 +13,8 @@ export interface Mesh {
 }
 
 export function meshFormatOf(file: string): MeshFormat | null {
-  const ext = extname(file).toLowerCase();
-  if (ext === ".stl") return "stl";
-  if (ext === ".3mf") return "3mf";
-  if (ext === ".obj") return "obj";
-  return null;
-}
-
-export async function readMesh(file: string): Promise<Mesh> {
-  const format = meshFormatOf(file);
-  if (!format) throw new Error(`not a mesh file: ${file}`);
-  return parseMesh(format, new Uint8Array(await readFile(file)));
+  const ext = extname(file).slice(1).toLowerCase();
+  return isMeshFormat(ext) ? ext : null;
 }
 
 export function parseMesh(format: MeshFormat, bytes: Uint8Array): Mesh {
@@ -424,10 +412,6 @@ function openEdgeShare(p: Float32Array): number {
   let unmatched = 0;
   for (const c of edges.values()) unmatched += c;
   return tri.length === 0 ? 1 : unmatched / tri.length;
-}
-
-export async function meshInfoOf(file: string): Promise<MeshInfo> {
-  return computeMeshInfo(await readMesh(file));
 }
 
 // ---- helpers ----------------------------------------------------------------------------

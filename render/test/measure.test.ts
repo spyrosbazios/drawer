@@ -242,27 +242,27 @@ describe("renderer measuring methods (worker, cached files)", () => {
     const cacheDir = await mkdtemp(joinPath(tmpdir(), "drawer-measure-"));
     const keyA = "a".repeat(64);
     const keyB = "b".repeat(64);
-    await mkdir(joinPath(cacheDir, keyA));
-    await mkdir(joinPath(cacheDir, keyB));
-    await writeFile(joinPath(cacheDir, keyA, "mesh.stl"), toBinaryStl(hollowBox()));
-    await writeFile(joinPath(cacheDir, keyB, "mesh.stl"), toBinaryStl(transform(hollowBox(), translate(0.5, 0, 0))));
+    await mkdir(joinPath(cacheDir, "meshes", keyA), { recursive: true });
+    await mkdir(joinPath(cacheDir, "meshes", keyB));
+    await writeFile(joinPath(cacheDir, "meshes", keyA, "mesh.stl"), toBinaryStl(hollowBox()));
+    await writeFile(joinPath(cacheDir, "meshes", keyB, "mesh.stl"), toBinaryStl(transform(hollowBox(), translate(0.5, 0, 0))));
     const r = createRenderer({ cacheDir, openscadCmd: "/nonexistent/openscad" });
 
     const a = await r.analyse({ key: keyA, overhangDeg: 45 });
     expect(a.wall?.minMm).toBeCloseTo(2, 4);
     expect(a.thicknessFile).toBe("thickness.f32");
-    const field = new Float32Array((await readFile(joinPath(cacheDir, keyA, "thickness.f32"))).buffer.slice(0));
+    const field = new Float32Array((await readFile(joinPath(cacheDir, "meshes", keyA, "thickness.f32"))).buffer.slice(0));
     expect(field.length).toBe(24);
-    const written = (await stat(joinPath(cacheDir, keyA, "analysis-45.json"))).mtimeMs;
+    const written = (await stat(joinPath(cacheDir, "meshes", keyA, "analysis-45.json"))).mtimeMs;
     expect(await r.analyse({ key: keyA, overhangDeg: 45 })).toEqual(a);
-    expect((await stat(joinPath(cacheDir, keyA, "analysis-45.json"))).mtimeMs).toBe(written);
+    expect((await stat(joinPath(cacheDir, "meshes", keyA, "analysis-45.json"))).mtimeMs).toBe(written);
 
     const s = await r.slice({ key: keyA, axis: "z", at: 10 });
     expect(s.contours.map((c) => c.hole).sort()).toEqual([false, true]);
-    expect(await stat(joinPath(cacheDir, keyA, "slice-z-10.json")).then(() => true)).toBe(true);
+    expect(await stat(joinPath(cacheDir, "meshes", keyA, "slice-z-10.json")).then(() => true)).toBe(true);
 
     expect(await r.probe({ key: keyA, from: [10, 10, -0.5], axis: "z" })).toEqual({ inside: false, onSurface: false, low: null, high: 0, distance: null });
-    expect(await stat(joinPath(cacheDir, keyA, "probe-z-10_10_-0.5.json")).then(() => true)).toBe(true);
+    expect(await stat(joinPath(cacheDir, "meshes", keyA, "probe-z-10_10_-0.5.json")).then(() => true)).toBe(true);
 
     const d = await r.deviation({ a: keyA, b: keyB });
     expect(d.fieldFile).toBe(`deviation-${keyA}.f32`);
@@ -272,7 +272,7 @@ describe("renderer measuring methods (worker, cached files)", () => {
     const i = await r.interference({ a: { key: keyA, matrix: IDENTITY }, b: { key: keyA, matrix: translate(25, 0, 0) } });
     expect(i).toEqual({ gapMm: 5, overlapCm3: 0 });
 
-    await expect(r.analyse({ key: "c".repeat(64), overhangDeg: 45 })).rejects.toThrow("no finished render");
+    await expect(r.analyse({ key: "c".repeat(64), overhangDeg: 45 })).rejects.toThrow("no finished mesh");
     await expect(r.analyse({ key: "../x", overhangDeg: 45 })).rejects.toThrow("not a render key");
   });
 });

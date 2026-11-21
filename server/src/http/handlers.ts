@@ -103,9 +103,10 @@ export interface HandlerDeps {
   sessions: Sessions;
   settings: SettingsStore;
   renderCacheDir: string;
+  meshCacheDir: string;
 }
 
-export function buildRouter({ service, bus, sse, sessions, settings, renderCacheDir }: HandlerDeps): Router {
+export function buildRouter({ service, bus, sse, sessions, settings, renderCacheDir, meshCacheDir }: HandlerDeps): Router {
   const r = new Router();
   registerSessionRoutes(r, sessions);
 
@@ -214,7 +215,8 @@ export function buildRouter({ service, bus, sse, sessions, settings, renderCache
     if (key === undefined || file === undefined || extra.length > 0 || !RENDER_KEY_RE.test(key) || type === undefined) throw notFound("no such render");
     const headers = { "content-type": type, "cache-control": IMMUTABLE, etag: `"${key}/${file}"`, "x-content-type-options": "nosniff" };
     if (req.headers.get("if-none-match") === headers.etag) return new Response(null, { status: 304, headers });
-    const handle = Bun.file(`${renderCacheDir}/${key}/${file}`);
+    const root = ext === "stl" || ext === "f32" || file.startsWith("section-") ? meshCacheDir : renderCacheDir;
+    const handle = Bun.file(`${root}/${key}/${file}`);
     if (!(await handle.exists())) throw notFound("no such render");
     return new Response(handle, { headers });
   });

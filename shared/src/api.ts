@@ -106,8 +106,15 @@ export interface TreeResponse {
   entries: TreeEntry[];
 }
 
+export const MESH_FORMATS = ["stl", "3mf", "obj"] as const;
+export type MeshFormat = (typeof MESH_FORMATS)[number];
+
+export function isMeshFormat(value: string): value is MeshFormat {
+  return MESH_FORMATS.some((format) => format === value);
+}
+
 export interface MeshInfo {
-  format: "stl" | "3mf" | "obj";
+  format: MeshFormat;
   triangles: number;
   /** Millimetres. */
   bbox: { min: [number, number, number]; max: [number, number, number]; size: [number, number, number] };
@@ -369,7 +376,11 @@ export type ReportStatus = "passed" | "draft" | "failed" | "empty" | "pending";
  * - min_wall: the thinnest wall anywhere in the part must be at least `min`.
  * - volume:   solid volume in cm³.
  */
-export type DimensionKind = "size" | "envelope" | "hole" | "boss" | "gap" | "wall" | "min_wall" | "volume";
+export const DIMENSION_KINDS = ["size", "envelope", "hole", "boss", "gap", "wall", "min_wall", "volume"] as const;
+export type DimensionKind = (typeof DIMENSION_KINDS)[number];
+
+/** A model that fails to build or has no single closed body cannot be waived. */
+export const UNWAIVABLE_GATES: readonly string[] = ["parses", "solid"] as const;
 
 export interface Dimension {
   /** Unique in the spec: [a-z0-9][a-z0-9_-]*. */

@@ -12,17 +12,19 @@
  *
  * `check` runs on its own queue so it never waits behind a render. Measuring (analyse, slice,
  * probe, deviation, interference gap) runs in a worker (measure-worker.ts) and caches each result
- * as a file beside the render's mesh.stl; section, interference overlap and assemblies are
+ * as a file beside the cached mesh.stl; section, interference overlap and assemblies are
  * OpenSCAD runs on the render queue.
  */
-import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
-import type { Axis, Diagnostic, MeshInfo, ParamValues, ProbeResult, RenderView, SliceResult, Vec3 } from "@drawer/shared/api";
+import { MESH_FORMATS, type Axis, type Diagnostic, type MeshInfo, type ParamValues, type ProbeResult, type RenderView, type SliceResult, type Vec3 } from "@drawer/shared/api";
 import {
   type AssemblyRenderOutput,
   type CheckOutput,
   type DeviationOutput,
   type MeshAnalysisOutput,
+  type MeshOutput,
+  type MeshRequest,
   type PlacedMesh,
   RenderError,
   type Renderer,
@@ -31,10 +33,9 @@ import {
   type RenderProgress,
   type RenderRequest,
 } from "@drawer/shared/contracts";
-import { cacheKey, hashParts, PIPELINE_VERSION } from "./key";
-import { volume as meshVolume } from "./measure";
+import { meshKey, renderKey, hashParts, PIPELINE_VERSION } from "./key";
 import { MeasureClient } from "./measure-client";
-import { computeMeshInfo, isBinaryStl, type Mesh, meshFormatOf, meshInfoOf, parseMesh, parseStl, toBinaryStl } from "./mesh";
+import { meshFormatOf } from "./mesh";
 import { applyParams, defineArgs, parseParams } from "./params";
 import { parseDepsFile, parseDiagnostics, parseStderr, run, type RunResult } from "./process";
 import { SerialQueue } from "./queue";
@@ -67,25 +68,14 @@ const CHECK_TIMEOUT_MS = 60_000;
 const VERSION_TIMEOUT_MS = 60_000;
 const MAX_SIZE = 4096;
 
-interface Meta {
-  key: string;
-  file: string;
-  views: RenderView[];
-  size: number;
-  params: ParamValues;
-  openscad: string;
-  deps: string[];
-  info: MeshInfo;
-  log: string[];
-  warnings: string[];
-  seconds: number;
-  createdAt: string;
-}
+type MeshMeta = Pick<MeshOutput, "info" | "log" | "warnings">;
 
 export function createRenderer(opts: RendererOptions): Renderer {
   const cmd = (opts.openscadCmd ?? "openscad").split(" ").filter((s) => s.length > 0);
   const timeoutMs = (opts.timeoutSeconds ?? 120) * 1000;
   const cacheDir = resolve(opts.cacheDir);
+  const meshCache = join(cacheDir, "meshes");
+  const renderCache = join(cacheDir, "renders");
   const queue = new SerialQueue();
   // Checks take seconds; they must not wait behind a two-minute render.
   const checkQueue = new SerialQueue();
@@ -103,45 +93,26 @@ export function createRenderer(opts: RendererOptions): Renderer {
   /** PNG export needs GL. EGL builds work without a display; otherwise borrow Xvfb when it exists. */
   const pngPrefix = (): string[] => (!process.env.DISPLAY && Bun.which("xvfb-run") ? ["xvfb-run", "-a"] : []);
 
-  const render = async (req: RenderRequest): Promise<RenderOutput> => {
+  const mesh = async (req: MeshRequest, progress: (stage: "analysing" | "geometry", step: number) => void, deadline: number): Promise<MeshOutput> => {
     const started = performance.now();
-    const deadline = Date.now() + timeoutMs;
-    const views = [...new Set(req.views)];
-    if (views.length === 0) throw new RenderError("no views requested");
-    if (!Number.isInteger(req.size) || req.size < 16 || req.size > MAX_SIZE) throw new RenderError(`size must be an integer from 16 to ${MAX_SIZE}`);
-    const openscad = await version();
-    if (openscad === null) throw new RenderError(`OpenSCAD cannot be run (command: ${cmd.join(" ")})`);
-
+    progress("analysing", 0);
     const file = resolve(req.file);
     const ext = extname(file).toLowerCase();
     const isScad = ext === ".scad";
     const meshFormat = meshFormatOf(file);
-    if (!isScad && !meshFormat) throw new RenderError(`cannot render ${ext || "a file without extension"}: only .scad, .stl, .3mf and .obj`);
+    if (!isScad && !meshFormat) throw new RenderError(`cannot render ${ext || "a file without extension"}: only .scad and these mesh formats: ${MESH_FORMATS.map((format) => `.${format}`).join(", ")}`);
     const source = await readFile(file).catch((e: unknown) => {
       throw new RenderError(`cannot read ${file}: ${e instanceof Error ? e.message : String(e)}`);
     });
     const env = { ...process.env, OPENSCADPATH: req.searchPaths.join(":") };
     // Parameter overrides apply to SCAD only; a mesh has none.
     const defines = isScad ? defineArgs(req.params) : [];
-    // Work units: analyse, geometry, one per view, sheet.
-    const total = views.length + 3;
-    const progress = (stage: RenderProgress["stage"], step: number, view: RenderView | null = null): void => req.onProgress?.({ stage, step, total, view });
-
-    const openscadRun = async (args: string[], cwd: string, png: boolean): Promise<RunResult> => {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new RenderError(`render timed out after ${timeoutMs / 1000} s`);
-      const r = await run([...(png ? pngPrefix() : []), ...cmd, ...args], { cwd, env, timeoutMs: remaining }).catch((e: unknown) => {
-        throw new RenderError(`OpenSCAD cannot be run: ${e instanceof Error ? e.message : String(e)}`);
-      });
-      if (r.timedOut) throw new RenderError(`render timed out after ${timeoutMs / 1000} s\n${r.stderr.trim()}`.trim());
-      return r;
-    };
-
-    await mkdir(cacheDir, { recursive: true });
-    const tmp = await mkdtemp(join(cacheDir, ".tmp-"));
+    const openscad = isScad ? await version() : null;
+    if (isScad && openscad === null) throw new RenderError(`OpenSCAD cannot be run (command: ${cmd.join(" ")})`);
+    const openscadRun = pipelineRun(env, deadline);
+    await mkdir(meshCache, { recursive: true });
+    const tmp = await mkdtemp(join(meshCache, ".tmp-"));
     try {
-      // 1. Dependencies (SCAD only) → cache key.
-      progress("analysing", 0);
       let deps: string[] = [];
       if (isScad) {
         const echo = join(tmp, "deps.echo");
@@ -156,40 +127,73 @@ export function createRenderer(opts: RendererOptions): Renderer {
         deps = [...new Set(listed)].filter((d) => d !== file).sort();
       }
       const depBytes = await Promise.all(deps.map((d) => readFile(d).then((b) => new Uint8Array(b), () => new TextEncoder().encode(`missing:${d}`))));
-      const key = cacheKey({ file: new Uint8Array(source), deps: depBytes, views, size: req.size, openscadVersion: openscad, defines });
-      const dir = join(cacheDir, key);
+      const key = meshKey({ file: source, format: ext, deps: depBytes, openscadVersion: openscad ?? "", defines });
+      const dir = join(meshCache, key);
+      const hit = await readMeshMeta(dir);
+      if (hit) return { key, dir, cached: true, seconds: elapsed(started), ...hit };
 
-      const cached = await readMeta(dir);
-      if (cached) {
-        return { key, cached: true, seconds: elapsed(started), dir, views: cached.views, info: cached.info, log: cached.log, warnings: cached.warnings };
-      }
-
-      // 2. mesh.stl + MeshInfo.
       progress("geometry", 1);
       const meshPath = join(tmp, "mesh.stl");
-      let info: MeshInfo;
       let log: string[] = [];
       let warnings: string[] = [];
+      let info: MeshInfo;
       if (isScad) {
         const r = await openscadRun(["--backend=Manifold", "--export-format", "binstl", "-o", meshPath, ...defines, file], dirname(file), false);
         if (r.code !== 0 || !(await exists(meshPath))) throw new RenderError(r.stderr.trim() || `OpenSCAD exited with code ${r.code}`);
         ({ log, warnings } = parseStderr(r.stderr));
-        info = computeMeshInfo({ format: "stl", positions: parseStl(new Uint8Array(await readFile(meshPath))) });
+        info = (await measure.ask({ op: "info", file: meshPath })).info;
       } else {
-        const format = meshFormat ?? "stl";
-        let mesh: Mesh;
-        try {
-          mesh = parseMesh(format, new Uint8Array(source));
-        } catch (e) {
-          throw new RenderError(`cannot parse ${file}: ${e instanceof Error ? e.message : String(e)}`);
-        }
-        if (format === "stl" && isBinaryStl(source)) await copyFile(file, meshPath);
-        else await writeFile(meshPath, toBinaryStl(mesh.positions));
-        info = computeMeshInfo(mesh);
+        if (!meshFormat) throw new RenderError(`not a mesh file: ${file}`);
+        info = (await measure.ask({ op: "convert", format: meshFormat, source, dest: meshPath })).info;
       }
       if (info.triangles === 0) throw new RenderError("the model is empty (no triangles)");
+      await rm(join(tmp, "deps.echo"), { force: true });
+      await rm(join(tmp, "deps.d"), { force: true });
+      const meta = { info, log, warnings };
+      await writeFile(join(tmp, "meta.json"), `${JSON.stringify(meta)}\n`);
+      await publish(tmp, dir, "meta.json");
+      return { key, dir, cached: false, seconds: elapsed(started), ...meta };
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  };
 
-      // 3. One PNG per view: the SCAD source itself, or a wrapper that imports mesh.stl.
+  const pipelineRun = (env: NodeJS.ProcessEnv, deadline: number) =>
+    async (args: string[], cwd: string, png: boolean): Promise<RunResult> => {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new RenderError(`render timed out after ${timeoutMs / 1000} s`);
+      const r = await run([...(png ? pngPrefix() : []), ...cmd, ...args], { cwd, env, timeoutMs: remaining }).catch((e: unknown) => {
+        throw new RenderError(`OpenSCAD cannot be run: ${e instanceof Error ? e.message : String(e)}`);
+      });
+      if (r.timedOut) throw new RenderError(`render timed out after ${timeoutMs / 1000} s\n${r.stderr.trim()}`.trim());
+      return r;
+    };
+
+  const render = async (req: RenderRequest): Promise<RenderOutput> => {
+    const started = performance.now();
+    const deadline = Date.now() + timeoutMs;
+    const views = [...new Set(req.views)];
+    if (views.length === 0) throw new RenderError("no views requested");
+    if (!Number.isInteger(req.size) || req.size < 16 || req.size > MAX_SIZE) throw new RenderError(`size must be an integer from 16 to ${MAX_SIZE}`);
+    const openscad = await version();
+    if (openscad === null) throw new RenderError(`OpenSCAD cannot be run (command: ${cmd.join(" ")})`);
+    const total = views.length + 3;
+    const progress = (stage: RenderProgress["stage"], step: number, view: RenderView | null = null): void => req.onProgress?.({ stage, step, total, view });
+    const geometry = await mesh(req, progress, deadline);
+    const key = renderKey(geometry.key, views, req.size, openscad);
+    const dir = join(renderCache, key);
+    const { info, log, warnings } = geometry;
+    const result = { key, meshKey: geometry.key, dir, views, info, log, warnings };
+    if (await exists(join(dir, "meta.json"))) return { ...result, cached: true, seconds: elapsed(started) };
+
+    const file = resolve(req.file);
+    const isScad = extname(file).toLowerCase() === ".scad";
+    const defines = isScad ? defineArgs(req.params) : [];
+    const openscadRun = pipelineRun({ ...process.env, OPENSCADPATH: req.searchPaths.join(":") }, deadline);
+    await mkdir(renderCache, { recursive: true });
+    const tmp = await mkdtemp(join(renderCache, ".tmp-"));
+    try {
+      const meshPath = join(geometry.dir, "mesh.stl");
       const wrapper = join(tmp, "view.scad");
       if (!isScad) await writeFile(wrapper, `import(${JSON.stringify(meshPath)}, convexity = 10);\n`);
       const cells: { view: RenderView; png: Uint8Array }[] = [];
@@ -213,7 +217,7 @@ export function createRenderer(opts: RendererOptions): Renderer {
             ...defines,
             isScad ? file : wrapper,
           ],
-          isScad ? dirname(file) : tmp,
+          isScad ? dirname(file) : cacheDir,
           true,
         );
         if (r.code !== 0 || !(await exists(out))) throw new RenderError(`${view} view failed:\n${r.stderr.trim()}`);
@@ -224,18 +228,9 @@ export function createRenderer(opts: RendererOptions): Renderer {
       progress("sheet", 2 + views.length);
       await writeFile(join(tmp, "sheet.png"), composeSheet(cells, req.size));
       await rm(wrapper, { force: true });
-      await rm(join(tmp, "deps.echo"), { force: true });
-      await rm(join(tmp, "deps.d"), { force: true });
-      const seconds = elapsed(started);
-      const meta: Meta = { key, file, views, size: req.size, params: isScad ? (req.params ?? {}) : {}, openscad, deps, info, log, warnings, seconds, createdAt: new Date().toISOString() };
-      await writeFile(join(tmp, "meta.json"), `${JSON.stringify(meta, null, 2)}\n`);
-      try {
-        await rename(tmp, dir);
-      } catch (e) {
-        // Another process published the same key first; its outputs are equivalent.
-        if (!(await readMeta(dir))) throw e;
-      }
-      return { key, cached: false, seconds, dir, views, info, log, warnings };
+      await writeFile(join(tmp, "meta.json"), `${JSON.stringify({ meshKey: geometry.key, views, size: req.size })}\n`);
+      await publish(tmp, dir, "meta.json");
+      return { ...result, cached: false, seconds: elapsed(started) };
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }
@@ -273,8 +268,8 @@ export function createRenderer(opts: RendererOptions): Renderer {
 
   const keyDir = async (key: string): Promise<string> => {
     if (!/^[0-9a-f]{16,128}$/.test(key)) throw new RenderError(`not a render key: ${key}`);
-    const dir = join(cacheDir, key);
-    if (!(await exists(join(dir, "mesh.stl")))) throw new RenderError(`no finished render with key ${key}`);
+    const dir = join(meshCache, key);
+    if (!(await exists(join(dir, "mesh.stl")))) throw new RenderError(`no finished mesh with key ${key}`);
     return dir;
   };
 
@@ -382,8 +377,7 @@ export function createRenderer(opts: RendererOptions): Renderer {
               if (/empty/i.test(r.stderr)) return 0;
               throw new RenderError(r.stderr.trim() || `OpenSCAD exited with code ${r.code}`);
             }
-            const pos = parseStl(new Uint8Array(await readFile(out)));
-            return roundTo(Math.abs(meshVolume(pos)) / 1000, 6);
+            return roundTo(Math.abs((await measure.ask({ op: "volume", mesh: out })).mm3) / 1000, 6);
           } finally {
             await rm(tmp, { recursive: true, force: true });
           }
@@ -400,7 +394,7 @@ export function createRenderer(opts: RendererOptions): Renderer {
       const name = `section-${req.axis}-${numName(req.at)}-${req.size}.png`;
       if (await exists(join(dir, name))) return name;
       const meshPath = join(dir, "mesh.stl");
-      const { min, max } = (await readMeta(dir))?.info.bbox ?? (await meshInfoOf(meshPath)).bbox;
+      const { min, max } = (await readMeshMeta(dir))?.info.bbox ?? (await measure.ask({ op: "info", file: meshPath })).info.bbox;
       const ai = AXIS_INDEX[req.axis];
       if (!(req.at > min[ai]! && req.at <= max[ai]!)) throw new RenderError(`the cut at ${req.axis} = ${req.at} misses the part (${min[ai]} to ${max[ai]})`);
       const margin = 1 + Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
@@ -432,7 +426,8 @@ export function createRenderer(opts: RendererOptions): Renderer {
     ask(async () => {
       if (!ALL_VIEW_NAMES.includes(req.view)) throw new RenderError(`not a view: ${req.view}`);
       if (!Number.isInteger(req.size) || req.size < 16 || req.size > MAX_SIZE) throw new RenderError(`size must be an integer from 16 to ${MAX_SIZE}`);
-      const dir = await keyDir(req.key);
+      if (!/^[0-9a-f]{16,128}$/.test(req.key)) throw new RenderError(`not a render key: ${req.key}`);
+      const dir = join(renderCache, req.key);
       const name = `thumb-${req.view}-${req.size}.png`;
       if (await exists(join(dir, name))) return name;
       const source = await readFile(join(dir, `${req.view}.png`)).catch(() => {
@@ -464,11 +459,11 @@ export function createRenderer(opts: RendererOptions): Renderer {
         String(req.size),
         ...req.instances.map((i) => `${i.key}|${i.matrix.join(",")}|${highlight.has(i.id) ? "1" : "0"}`),
       ]);
-      const dir = join(cacheDir, key);
+      const dir = join(renderCache, key);
       if (await exists(join(dir, ASSEMBLY_MARKER))) return { key, cached: true, dir, views };
       return queue.run(async () => {
-        await mkdir(cacheDir, { recursive: true });
-        const tmp = await mkdtemp(join(cacheDir, ".tmp-"));
+        await mkdir(renderCache, { recursive: true });
+        const tmp = await mkdtemp(join(renderCache, ".tmp-"));
         try {
           const wrapper = join(tmp, "assembly.scad");
           const body = req.instances
@@ -508,9 +503,10 @@ export function createRenderer(opts: RendererOptions): Renderer {
     version,
     render: (req) => {
       req.onProgress?.({ stage: "queued", step: 0, total: new Set(req.views).size + 3, view: null });
-      return queue.run(() => render(req));
+      return ask(() => queue.run(() => render(req)));
     },
-    meshInfo: (file) => meshInfoOf(file),
+    mesh: (req) => ask(() => queue.run(() => mesh(req, () => {}, Date.now() + timeoutMs))),
+    meshInfo: async (file) => (await measure.ask({ op: "info", file })).info,
     check: (req) => checkQueue.run(() => check(req)),
     params: (source) => parseParams(source),
     applyParams: (source, values) => applyParams(source, values),
@@ -554,9 +550,17 @@ async function writeAtomic(path: string, data: string | Uint8Array): Promise<voi
   await rename(tmp, path);
 }
 
-async function readMeta(dir: string): Promise<Meta | null> {
+async function publish(tmp: string, dir: string, marker: string): Promise<void> {
   try {
-    return JSON.parse(await readFile(join(dir, "meta.json"), "utf8")) as Meta;
+    await rename(tmp, dir);
+  } catch (err) {
+    if (!(await exists(join(dir, marker)))) throw err;
+  }
+}
+
+async function readMeshMeta(dir: string): Promise<MeshMeta | null> {
+  try {
+    return JSON.parse(await readFile(join(dir, "meta.json"), "utf8")) as MeshMeta;
   } catch {
     return null;
   }

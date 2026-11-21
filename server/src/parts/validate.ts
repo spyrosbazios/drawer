@@ -8,7 +8,6 @@ import type {
   AssemblySpec,
   Axis,
   Dimension,
-  DimensionKind,
   Mate,
   Material,
   MaterialsFile,
@@ -21,9 +20,8 @@ import type {
   Vec3,
   Waiver,
 } from "@drawer/shared/api";
-import { ASSEMBLY_FILE, LIBRARY_SLUG, MATERIALS_FILE, PART_DIR, PART_SPEC_SUFFIX, PRINTER_FILE } from "@drawer/shared/api";
+import { ASSEMBLY_FILE, DIMENSION_KINDS, LIBRARY_SLUG, MATERIALS_FILE, PART_DIR, PART_SPEC_SUFFIX, PRINTER_FILE, UNWAIVABLE_GATES } from "@drawer/shared/api";
 import { invalid } from "../errors.ts";
-import { UNWAIVABLE } from "./gates.ts";
 
 type Obj = Record<string, unknown>;
 
@@ -31,7 +29,6 @@ export const PART_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const LOCAL_ID_RE = /^[a-z0-9][a-z0-9_-]*$/;
 export const STRICTNESS: Strictness[] = ["quick", "standard", "functional"];
 const AXES: Axis[] = ["x", "y", "z"];
-const DIMENSION_KINDS: DimensionKind[] = ["size", "envelope", "hole", "boss", "gap", "wall", "min_wall", "volume"];
 
 /** What a project-relative path is, when it is a structured file. */
 export type Structured = { kind: "part-spec"; id: string } | { kind: "assembly" } | { kind: "printer" } | { kind: "materials" };
@@ -189,7 +186,7 @@ function material(o: Obj, field: string, materials: readonly string[], fallback:
 /** The gate a waiver names; `parses` and `solid` cannot be waived. */
 export function waivableGate(gate: string, field: string): string {
   if (gate.trim() === "") throw invalid(`${field} must not be empty`);
-  if (UNWAIVABLE.includes(gate)) throw invalid(`${field}: ${gate} cannot be waived: a part that does not build, or is not one closed body, is never acceptable`);
+  if (UNWAIVABLE_GATES.includes(gate)) throw invalid(`${field}: ${gate} cannot be waived: a part that does not build, or is not one closed body, is never acceptable`);
   return gate;
 }
 

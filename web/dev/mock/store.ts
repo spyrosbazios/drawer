@@ -1,5 +1,5 @@
 /** The mock's file store: projects as folders of versioned files, with revisions, links and facts. */
-import { LIBRARY_SLUG } from "../../../shared/src/api";
+import { isMeshFormat, LIBRARY_SLUG } from "../../../shared/src/api";
 import type { Fact, FileInfo, FileKind, ImportPreview, ImportResult, Link, Project, Revision, TreeEntry } from "../../../shared/src/api";
 import { cubeStl, meshInfoOfStl } from "./geometry";
 import { HttpError } from "./http";
@@ -38,7 +38,7 @@ export function kindOf(path: string): FileKind {
   const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
   if (ext === ".md") return "markdown";
   if (ext === ".scad") return "scad";
-  if ([".stl", ".3mf", ".obj"].includes(ext)) return "mesh";
+  if (isMeshFormat(ext.slice(1))) return "mesh";
   if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"].includes(ext)) return "image";
   if (ext === ".pdf") return "pdf";
   if ([".txt", ".json", ".yaml", ".yml", ".toml", ".csv", ".gcode", ".py", ".js", ".ts", ".sh", ".dxf", ".gitkeep", ""].includes(ext)) return "text";

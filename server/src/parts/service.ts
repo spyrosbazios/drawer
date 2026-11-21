@@ -4,7 +4,7 @@
  * time in its own queue and never holds the service lock while OpenSCAD works.
  */
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type {
   AssemblyReport,
   AssemblySpec,
@@ -39,7 +39,7 @@ import type {
   WriteResult,
 } from "@drawer/shared/api";
 import { ASSEMBLY_FILE, BRIEF_FILE, LIBRARY_SLUG, MATERIALS_FILE, PART_DIR, PART_SPEC_SUFFIX, PRINTER_FILE } from "@drawer/shared/api";
-import { RenderError, type MeshAnalysisOutput, type Renderer } from "@drawer/shared/contracts";
+import { RenderError, type MeshAnalysisOutput, type MeshOutput, type Renderer } from "@drawer/shared/contracts";
 import { ApiException, conflict, forbidden, invalid, notFound } from "../errors.ts";
 import type { EventBus } from "../events.ts";
 import type { Index } from "../index/indexer.ts";
@@ -71,7 +71,7 @@ import {
 
 const ALL_VIEWS = ["iso", "front", "top", "side"] as const;
 const REPORT_SIZE = 800;
-const REPORT_VERSION = "drawer-report-1";
+const REPORT_VERSION = "drawer-report-2";
 const SCAD_RELATIONS = new Set(["uses", "includes", "imports"]);
 
 /** What the parts module needs from the service: writes go through it so they are validated, committed, indexed and announced. */
@@ -79,6 +79,7 @@ export interface Workspace {
   writeFile(slug: string, path: string, bytes: Uint8Array, opts: { rev: string | undefined; author: string; message: string | undefined }): Promise<WriteResult>;
   writeMany(slug: string, writes: { path: string; bytes: Uint8Array }[], removes: string[], author: string, message: string): Promise<{ revisionId: string }>;
   render(slug: string, path: string, body: RenderBody): Promise<RenderResult>;
+  mesh(slug: string, path: string, at?: string, params?: ParamValues): Promise<MeshOutput>;
 }
 
 export interface PartsDeps {
@@ -107,9 +108,17 @@ function sha(...parts: string[]): string {
 
 const paramsKey = (params: ParamValues | undefined): string => (params && Object.keys(params).length > 0 ? canonical(params) : "");
 
-function renderRef(key: string, views: readonly string[]): RenderRef {
+function renderRef(key: string, views: readonly string[]): Omit<RenderRef, "mesh"> {
   const base = `/api/renders/${key}`;
-  return { key, mesh: `${base}/mesh.stl`, views: Object.fromEntries(views.map((v) => [v, `${base}/${v}.png`])), sheet: `${base}/sheet.png` };
+  return { key, views: Object.fromEntries(views.map((v) => [v, `${base}/${v}.png`])), sheet: `${base}/sheet.png` };
+}
+
+function meshUrl(key: string): string {
+  return `/api/renders/${key}/mesh.stl`;
+}
+
+function meshKeyOf(r: RenderRef): string {
+  return basename(dirname(r.mesh));
 }
 
 function analysisView(key: string, a: MeshAnalysisOutput): MeshAnalysis {
@@ -328,7 +337,7 @@ export class PartsService {
   /** Revs of everything a part's report depends on, as far as the index knows: spec, model, the files it uses, printer and materials, and the renderer's version. */
   stateKey(slug: string, id: string): string {
     const rev = (project: string, path: string): string => this.index.fileRow(project, path)?.rev ?? "-";
-    const revs = [this.rendererVersion, rev(slug, specPath(id)), rev(slug, modelPath(id)), rev(LIBRARY_SLUG, PRINTER_FILE), rev(LIBRARY_SLUG, MATERIALS_FILE)];
+    const revs = [REPORT_VERSION, this.rendererVersion, rev(slug, specPath(id)), rev(slug, modelPath(id)), rev(LIBRARY_SLUG, PRINTER_FILE), rev(LIBRARY_SLUG, MATERIALS_FILE)];
     return sha(...revs, ...this.usedRevs(slug, modelPath(id)));
   }
 
@@ -636,9 +645,9 @@ export class PartsService {
     if (cached) return { report: { ...cached, revisionId, spec, whatIf, seconds: Math.round((performance.now() - started) / 10) / 100 }, key, modelRev, context: evalContext };
 
     const built = render.info.triangles > 0;
-    const analysis = built ? await this.renderer.analyse({ key: render.key, overhangDeg: profile.printer.maxOverhangDeg }) : null;
+    const analysis = built ? await this.renderer.analyse({ key: render.meshKey, overhangDeg: profile.printer.maxOverhangDeg }) : null;
     const dimensions: Record<string, DimMeasurement> = {};
-    if (built) for (const d of spec.dimensions) dimensions[d.id] = await measureDimension(this.renderer, render.key, render.info, analysis, d);
+    if (built) for (const d of spec.dimensions) dimensions[d.id] = await measureDimension(this.renderer, render.meshKey, render.info, analysis, d);
     const gates = partGates({ spec, printer: profile.printer, material, build: { ok: true }, mesh: render.info, analysis, dimensions, lint: lintSource(source, scadParams) });
     const counts = countGates(gates);
     const status = partStatus(gates, true);
@@ -649,8 +658,8 @@ export class PartsService {
       total: counts.total,
       gates,
       mesh: render.info,
-      analysis: analysis ? analysisView(render.key, analysis) : null,
-      render: renderRef(render.key, render.views),
+      analysis: analysis ? analysisView(render.meshKey, analysis) : null,
+      render: { ...renderRef(render.key, render.views), mesh: meshUrl(render.meshKey) },
       params: scadParams,
       massG,
       next: nextSteps(gates, status, modelPath(id)),
@@ -713,22 +722,23 @@ export class PartsService {
   async measureFile(slug: string, path: string, at: string | undefined, params: ParamValues | undefined): Promise<MeasureResult> {
     const r = await this.rendered(slug, path, at, params);
     const profile = await this.profile();
-    const analysis = await this.renderer.analyse({ key: r.key, overhangDeg: profile.printer.maxOverhangDeg });
-    return { project: slug, path, mesh: r.info, analysis: analysisView(r.key, analysis), render: fromRenderResult(r) };
+    const key = meshKeyOf(r);
+    const analysis = await this.renderer.analyse({ key, overhangDeg: profile.printer.maxOverhangDeg });
+    return { project: slug, path, mesh: r.info, analysis: analysisView(key, analysis), render: fromRenderResult(r) };
   }
 
   async slice(slug: string, path: string, body: { axis: SliceResult["axis"]; at: number; revision?: string }): Promise<SliceResult> {
-    const r = await this.rendered(slug, path, body.revision);
+    const r = await this.ws.mesh(slug, path, body.revision);
     return this.renderer.slice({ key: r.key, axis: body.axis, at: body.at });
   }
 
   async probe(slug: string, path: string, body: { from: Vec3; axis: SliceResult["axis"]; revision?: string }): Promise<ProbeResult> {
-    const r = await this.rendered(slug, path, body.revision);
+    const r = await this.ws.mesh(slug, path, body.revision);
     return this.renderer.probe({ key: r.key, from: body.from, axis: body.axis });
   }
 
   async section(slug: string, path: string, body: { axis: SliceResult["axis"]; at: number; size?: number; revision?: string }): Promise<SectionResult> {
-    const r = await this.rendered(slug, path, body.revision);
+    const r = await this.ws.mesh(slug, path, body.revision);
     try {
       const file = await this.renderer.section({ key: r.key, axis: body.axis, at: body.at, size: body.size ?? REPORT_SIZE });
       return { axis: body.axis, at: body.at, image: `/api/renders/${r.key}/${file}` };
@@ -751,14 +761,14 @@ export class PartsService {
     await this.store.requireProject(slug);
     const ra = await this.rendered(slug, this.sidePath(a, "a"), a.at);
     const rb = await this.rendered(slug, this.sidePath(b, "b"), b.at);
-    const dev = await this.renderer.deviation({ a: ra.key, b: rb.key });
+    const dev = await this.renderer.deviation({ a: meshKeyOf(ra), b: meshKeyOf(rb) });
     const va = ra.info.volumeCm3;
     const vb = rb.info.volumeCm3;
     const round = (n: number): number => Math.round(n * 1e4) / 1e4;
     return {
       a: { render: fromRenderResult(ra), mesh: ra.info },
       b: { render: fromRenderResult(rb), mesh: rb.info },
-      deviation: { min: dev.min, max: dev.max, rms: dev.rms, p95: dev.p95, at: dev.at, field: `/api/renders/${rb.key}/${dev.fieldFile}` },
+      deviation: { min: dev.min, max: dev.max, rms: dev.rms, p95: dev.p95, at: dev.at, field: `/api/renders/${meshKeyOf(rb)}/${dev.fieldFile}` },
       volumeDeltaCm3: va === null || vb === null ? null : round(vb - va),
       sizeDelta: [0, 1, 2].map((i) => round((rb.info.bbox.size[i] ?? 0) - (ra.info.bbox.size[i] ?? 0))) as Vec3,
     };
@@ -786,13 +796,13 @@ export class PartsService {
     try {
       spec = await this.readAssembly(slug);
     } catch {
-      return sha(this.rendererVersion, rev);
+      return sha(REPORT_VERSION, this.rendererVersion, rev);
     }
     const parts = [...new Set(spec.instances.map((i) => i.part))].sort().map((p) => {
       const ref = this.resolvePart(slug, p);
       return `${p}=${this.stateKey(ref.slug, ref.id)}`;
     });
-    return sha(this.rendererVersion, rev, ...parts);
+    return sha(REPORT_VERSION, this.rendererVersion, rev, ...parts);
   }
 
   private queueAssembly(slug: string, high: boolean): void {
@@ -881,7 +891,7 @@ export class PartsService {
         partStatus: report?.status ?? "empty",
         mesh: usable ? (report.render?.mesh ?? null) : null,
         matrix,
-        key: usable ? (report.render?.key ?? null) : null,
+        key: usable && report.render ? meshKeyOf(report.render) : null,
         box: usable && report.mesh ? transformBox({ min: report.mesh.bbox.min, max: report.mesh.bbox.max }, matrix) : null,
       });
     }
@@ -921,7 +931,7 @@ export class PartsService {
     if (drawable.length > 0) {
       try {
         const out = await this.renderer.renderAssembly({ instances: drawable.map((p) => ({ id: p.id, key: p.key as string, matrix: p.matrix })), highlight: [...highlight], views: [...ALL_VIEWS], size: REPORT_SIZE });
-        const { mesh: _mesh, ...ref } = renderRef(out.key, out.views);
+        const ref = renderRef(out.key, out.views);
         render = ref;
       } catch (err) {
         if (!(err instanceof RenderError)) throw err;

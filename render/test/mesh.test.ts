@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MeshInfo } from "@drawer/shared/api";
 import { strToU8, zipSync } from "fflate";
-import { MAX_3MF_ENTRIES, MAX_3MF_ENTRY_BYTES, MAX_3MF_TOTAL_BYTES, computeMeshInfo, isBinaryStl, meshInfoOf, parseMesh, parseStl, toBinaryStl } from "../src/mesh";
+import { MAX_3MF_ENTRIES, MAX_3MF_ENTRY_BYTES, MAX_3MF_TOTAL_BYTES, computeMeshInfo, isBinaryStl, parseMesh, parseStl, toBinaryStl } from "../src/mesh";
+import { createRenderer } from "../src/index";
 import { cube3mf, cubeAsciiStl, cubeBinaryStl, cubeObj } from "./fixtures";
 
 function expectUnitCube(info: MeshInfo, offset: [number, number, number] = [0, 0, 0]): void {
@@ -66,10 +67,11 @@ describe("meshInfo", () => {
     await writeFile(join(dir, "c.obj"), cubeObj());
     await writeFile(join(dir, "c.3mf"), cube3mf());
     await writeFile(join(dir, "junk.stl"), "not a mesh");
-    expectUnitCube(await meshInfoOf(join(dir, "c.obj")));
-    expect((await meshInfoOf(join(dir, "c.3mf"))).format).toBe("3mf");
-    await expect(meshInfoOf(join(dir, "junk.stl"))).rejects.toThrow();
-    await expect(meshInfoOf(join(dir, "missing.stl"))).rejects.toThrow();
+    const renderer = createRenderer({ cacheDir: join(dir, "cache") });
+    expectUnitCube(await renderer.meshInfo(join(dir, "c.obj")));
+    expect((await renderer.meshInfo(join(dir, "c.3mf"))).format).toBe("3mf");
+    await expect(renderer.meshInfo(join(dir, "junk.stl"))).rejects.toThrow();
+    await expect(renderer.meshInfo(join(dir, "missing.stl"))).rejects.toThrow();
   });
 });
 

@@ -198,7 +198,7 @@ async function handle(req: Request): Promise<Response> {
     const p = parts.projectOut(getProject(m[1]));
     if (!p.cover || !p.thumbnail?.endsWith(`/${m[2]}.png`)) return fail("not_found", "This thumbnail is out of date", 404);
     try {
-      const png = parts.renders.get(renderOf(m[1], p.cover, undefined).key)?.png;
+      const png = parts.previews.get(renderOf(m[1], p.cover, undefined).key);
       if (!png) return fail("not_found", "Nothing renders", 404);
       return new Response(png, { headers: { "content-type": "image/png", "cache-control": "public, max-age=31536000, immutable", etag: `"${m[2]}"` } });
     } catch {
@@ -478,17 +478,18 @@ async function handle(req: Request): Promise<Response> {
   // ---- render outputs: meshes, views, fields ----
   m = /^\/renders\/([^/]+)\/(.+)$/.exec(route);
   if (m?.[1] && m[2]) {
-    const r = parts.renders.get(m[1]);
-    if (!r) throw new HttpError("not_found", "No such render");
     const immutable = { "cache-control": "public, max-age=31536000, immutable" };
-    if (m[2] === "mesh.stl") return new Response(r.stl, { headers: { "content-type": "model/stl", ...immutable } });
-    if (m[2].endsWith(".f32")) {
-      const field = r.fields.get(m[2]);
+    const mesh = parts.meshes.get(m[1]);
+    if (mesh && m[2] === "mesh.stl") return new Response(mesh.stl, { headers: { "content-type": "model/stl", ...immutable } });
+    if (mesh && m[2].endsWith(".f32")) {
+      const field = mesh.fields.get(m[2]);
       if (!field) throw new HttpError("not_found", `No field ${m[2]}`);
       return new Response(field, { headers: { "content-type": "application/octet-stream", ...immutable } });
     }
-    if (m[2].startsWith("section-")) return new Response(png(256, 256, 120), { headers: { "content-type": "image/png", ...immutable } });
-    return new Response(r.png, { headers: { "content-type": "image/png", ...immutable } });
+    if (mesh && m[2].startsWith("section-")) return new Response(png(256, 256, 120), { headers: { "content-type": "image/png", ...immutable } });
+    const view = parts.previews.get(m[1]);
+    if (!view) throw new HttpError("not_found", "No such render");
+    return new Response(view, { headers: { "content-type": "image/png", ...immutable } });
   }
 
   m = /^\/projects\/([^/]+)\/search$/.exec(route);

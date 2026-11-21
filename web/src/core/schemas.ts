@@ -35,7 +35,7 @@ import type {
   WriteResult,
   Settings,
 } from "@drawer/shared/api";
-import { PROVIDER_KINDS } from "@drawer/shared/api";
+import { DIMENSION_KINDS, MESH_FORMATS, PROVIDER_KINDS } from "@drawer/shared/api";
 import { z } from "zod";
 
 const kind = z.enum(["markdown", "scad", "mesh", "image", "pdf", "text", "binary"]);
@@ -97,7 +97,7 @@ export const treeSchema = z.object({
 }) satisfies z.ZodType<TreeResponse>;
 
 const meshInfo = z.object({
-  format: z.enum(["stl", "3mf", "obj"]),
+  format: z.enum(MESH_FORMATS),
   triangles: z.number(),
   bbox: z.object({ min: vec3, max: vec3, size: vec3 }),
   volumeCm3: z.number().nullable(),
@@ -188,7 +188,7 @@ export const importResultSchema = z.object({
 const dimension = z.object({
   id: z.string(),
   label: z.string(),
-  kind: z.enum(["size", "envelope", "hole", "boss", "gap", "wall", "min_wall", "volume"]),
+  kind: z.enum(DIMENSION_KINDS),
   axis: axis.optional(),
   at: z.number().optional(),
   near: vec2.optional(),

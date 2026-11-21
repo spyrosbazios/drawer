@@ -114,8 +114,8 @@ describe("parts", () => {
     expect(report.json.massG).toBe(7.62);
     expect(report.json.whatIf).toBe(false);
     expect(report.json.params.map((p) => p.name)).toEqual(["w"]);
-    expect(report.json.render?.mesh).toBe(`/api/renders/${report.json.render?.key}/mesh.stl`);
-    expect(report.json.analysis?.thickness).toBe(`/api/renders/${report.json.render?.key}/thickness.f32`);
+    expect((await h.get(report.json.render?.mesh as string)).status).toBe(200);
+    expect(report.json.analysis?.thickness).toBe(report.json.render?.mesh.replace(/mesh\.stl$/, "thickness.f32"));
     const field = await h.get(report.json.analysis?.thickness as string);
     expect(field.status).toBe(200);
     expect(field.headers.get("content-type")).toBe("application/octet-stream");
@@ -311,6 +311,7 @@ describe("measuring", () => {
     expect(m.json.mesh.bbox.size).toEqual([40, 30, 10]);
     expect(m.json.analysis.footprintMm2).toBe(1200);
     expect(m.json.analysis.overhang.angle).toBe(45);
+    const previewCalls = h.renderer.calls.render;
     const s = await h.post<SliceResult>("/api/projects/m/slice/refs/thing.scad", { axis: "z", at: 5 });
     expect(s.json.contours[0]?.circle.diameter).toBe(5);
     const p = await h.post<ProbeResult>("/api/projects/m/probe/refs/thing.scad", { from: [1, 2, 3], axis: "x" });
@@ -318,6 +319,7 @@ describe("measuring", () => {
     const sec = await h.post<SectionResult>("/api/projects/m/section/refs/thing.scad", { axis: "x", at: 0, size: 300 });
     expect(sec.json.image).toMatch(/^\/api\/renders\/[0-9a-f]+\/section-x-0-300\.png$/);
     expect((await h.get(sec.json.image)).headers.get("content-type")).toBe("image/png");
+    expect(h.renderer.calls.render).toBe(previewCalls);
     expect((await h.post("/api/projects/m/slice/refs/thing.scad", { axis: "w", at: 5 })).status).toBe(400);
     expect((await h.post("/api/projects/m/probe/refs/thing.scad", { from: [1, 2], axis: "x" })).status).toBe(400);
     expect((await h.get("/api/renders/abcdefgh12345678/../x.png")).status).toBe(404);
@@ -329,7 +331,9 @@ describe("measuring", () => {
     expect(res.status).toBe(200);
     expect(res.json.sizeDelta).toEqual([4, 0, 0]);
     expect(res.json.volumeDeltaCm3).toBe(1);
-    expect(res.json.deviation.field).toBe(`/api/renders/${res.json.b.render.key}/deviation-${res.json.a.render.key}.f32`);
+    const aKey = res.json.a.render.mesh.split("/").at(-2);
+    expect(res.json.deviation.field).toBe(res.json.b.render.mesh.replace(/mesh\.stl$/, `deviation-${aKey}.f32`));
+    expect((await h.get(res.json.deviation.field)).status).toBe(200);
     expect((await h.post("/api/projects/m/compare", { a: { path: "refs/thing.scad", part: "x" }, b: { path: "refs/wider.scad" } })).status).toBe(400);
   });
 

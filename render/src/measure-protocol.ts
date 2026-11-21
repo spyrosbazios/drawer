@@ -1,8 +1,11 @@
 /** Messages between the renderer and measure-worker.ts. */
-import type { Axis, ProbeResult, SliceContour, Vec3 } from "@drawer/shared/api";
+import type { Axis, MeshInfo, ProbeResult, SliceContour, Vec3 } from "@drawer/shared/api";
 import type { AnalysisResult, DeviationResult } from "./measure";
 
 type Ask =
+  | { op: "info"; file: string }
+  | { op: "convert"; format: MeshInfo["format"]; source: Uint8Array; dest: string }
+  | { op: "volume"; mesh: string }
   | { op: "analyse"; mesh: string; overhangDeg: number }
   | { op: "slice"; mesh: string; axis: Axis; at: number }
   | { op: "probe"; mesh: string; from: Vec3; axis: Axis }
@@ -12,6 +15,9 @@ type Ask =
 export type WorkerRequest = Ask & { id: number };
 
 export type WorkerAnswer =
+  | { op: "info"; info: MeshInfo }
+  | { op: "convert"; info: MeshInfo }
+  | { op: "volume"; mm3: number }
   | { op: "analyse"; analysis: AnalysisResult; thickness: Float32Array }
   | { op: "slice"; contours: SliceContour[] }
   | { op: "probe"; probe: ProbeResult }

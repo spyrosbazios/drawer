@@ -1,39 +1,45 @@
 import { describe, expect, test } from "bun:test";
-import { cacheKey } from "../src/key";
+import { meshKey, renderKey } from "../src/key";
 import { parseDepsFile, parseStderr } from "../src/process";
 import { SerialQueue } from "../src/queue";
 import { gridFor } from "../src/sheet";
 
-describe("cacheKey", () => {
+describe("mesh and render cache keys", () => {
   const base = {
     file: new TextEncoder().encode("cube(10);"),
     deps: [new TextEncoder().encode("module m() {}")],
-    views: ["iso", "front"] as ("iso" | "front")[],
-    size: 800,
+    format: ".scad",
     openscadVersion: "2026.11.16",
     defines: ["-D", "w=10"],
   };
 
   test("is stable for equal inputs", () => {
-    expect(cacheKey(base)).toBe(cacheKey({ ...base, file: new TextEncoder().encode("cube(10);") }));
-    expect(cacheKey(base)).toMatch(/^[0-9a-f]{64}$/);
+    expect(meshKey(base)).toBe(meshKey({ ...base, file: new TextEncoder().encode("cube(10);") }));
+    expect(meshKey(base)).toMatch(/^[0-9a-f]{64}$/);
   });
 
   test("changes with every input", () => {
-    const k = cacheKey(base);
-    expect(cacheKey({ ...base, file: new TextEncoder().encode("cube(11);") })).not.toBe(k);
-    expect(cacheKey({ ...base, deps: [new TextEncoder().encode("module n() {}")] })).not.toBe(k);
-    expect(cacheKey({ ...base, deps: [] })).not.toBe(k);
-    expect(cacheKey({ ...base, views: ["front", "iso"] })).not.toBe(k);
-    expect(cacheKey({ ...base, size: 400 })).not.toBe(k);
-    expect(cacheKey({ ...base, openscadVersion: "2026.11.17" })).not.toBe(k);
-    expect(cacheKey({ ...base, defines: ["-D", "w=11"] })).not.toBe(k);
-    expect(cacheKey({ ...base, defines: [] })).not.toBe(k);
+    const k = meshKey(base);
+    expect(meshKey({ ...base, file: new TextEncoder().encode("cube(11);") })).not.toBe(k);
+    expect(meshKey({ ...base, deps: [new TextEncoder().encode("module n() {}")] })).not.toBe(k);
+    expect(meshKey({ ...base, deps: [] })).not.toBe(k);
+    expect(meshKey({ ...base, format: ".obj" })).not.toBe(k);
+    expect(meshKey({ ...base, openscadVersion: "2026.11.17" })).not.toBe(k);
+    expect(meshKey({ ...base, defines: ["-D", "w=11"] })).not.toBe(k);
+    expect(meshKey({ ...base, defines: [] })).not.toBe(k);
+  });
+
+  test("preview options key only the views", () => {
+    const mesh = meshKey(base);
+    const version = base.openscadVersion;
+    const key = renderKey(mesh, ["iso", "front"], 800, version);
+    expect(renderKey(mesh, ["front", "iso"], 800, version)).not.toBe(key);
+    expect(renderKey(mesh, ["iso", "front"], 400, version)).not.toBe(key);
   });
 
   test("parts cannot run into each other", () => {
-    const a = cacheKey({ ...base, file: new TextEncoder().encode("ab"), deps: [new TextEncoder().encode("c")] });
-    const b = cacheKey({ ...base, file: new TextEncoder().encode("a"), deps: [new TextEncoder().encode("bc")] });
+    const a = meshKey({ ...base, file: new TextEncoder().encode("ab"), deps: [new TextEncoder().encode("c")] });
+    const b = meshKey({ ...base, file: new TextEncoder().encode("a"), deps: [new TextEncoder().encode("bc")] });
     expect(a).not.toBe(b);
   });
 });

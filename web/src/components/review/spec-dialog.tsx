@@ -1,4 +1,4 @@
-import type { DimensionKind, PartSpec } from "@drawer/shared/api";
+import { DIMENSION_KINDS, type DimensionKind, type PartSpec } from "@drawer/shared/api";
 import { useForm } from "@tanstack/react-form";
 import { PlusIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useLibraryProfile } from "@/hooks/library";
 import { usePutPart } from "@/hooks/parts";
 import { InvalidError } from "@/services/api";
-import { AXES, DIMENSION_KINDS, KIND_HELP, STRICTNESS, dimensionFields, formToBody, newDimension, specFormSchema, specToForm } from "./spec-form";
+import { AXES, KIND_HELP, STRICTNESS, dimensionFields, formToBody, newDimension, specFormSchema, specToForm } from "./spec-form";
 
 interface Props {
   slug: string;

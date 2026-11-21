@@ -163,7 +163,7 @@ describe("report", () => {
     seedPart("lid", `${MODEL}THIN SMALL_BORE\n`);
     const r = await sb.run(["report", "box/lid", "--text"]);
     expect(r.code).toBe(0);
-    const text = r.out.replace(new RegExp(cacheRoot().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), "<cache>").replace(/revision r\d+/, "revision rN").replace(/\/[0-9a-f]{16}0{8}\//g, "/<key>/");
+    const text = r.out.replace(new RegExp(cacheRoot().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), "<cache>").replace(/revision r\d+/, "revision rN").replace(/\/[0-9a-f]{24}\//g, "/<key>/");
     expect(text).toBe(
       [
         "draft 4/6  box/lid  Lid  (printed, PETG, standard)  revision rN",

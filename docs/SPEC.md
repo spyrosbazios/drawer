@@ -59,7 +59,8 @@ projects/_library/        shared by every project, created on first start; nothi
   refs/**                 datasheets, drawings and meshes of bought parts
 sessions/<id>.json        an agent session's state; <id>.jsonl its items, one JSON object per line
 sessions/attachments/     files sent with messages: <id>.json (descriptor, project, session), <id>.bin
-cache/renders/<key>/      mesh.stl, view PNGs, sheet.png, meta.json, and what was measured on that mesh
+cache/meshes/<key>/       mesh.stl, meta.json and derived measurements
+cache/renders/<key>/      view PNGs, sheet.png and render metadata
 cache/reports/<key>.json  part and assembly reports
 cache/thumbnails/         project thumbnails: <key>.png, and <key>.fail for a cover that does not render
 index.db                  SQLite
@@ -147,8 +148,9 @@ Borrowed from Basic Memory so the folders stay openable there and in Obsidian.
   `import()`s it.
 - The command is `DRAWER_OPENSCAD` (default `openscad`). In the container image it is on `PATH`.
   `OPENSCADPATH` is set to `<project>:<projects/_library>` so `use <lib/x.scad>` finds library files.
-- Cache key = SHA-256 of: the file bytes, the bytes of every file OpenSCAD reports as a dependency
-  (`-d`), views, size, OpenSCAD version. Hit → `cached: true`, no work.
+- The mesh key hashes the file format and bytes, dependency bytes reported by OpenSCAD (`-d`),
+  parameter overrides and the OpenSCAD version for SCAD. The preview key hashes the mesh key,
+  views, size and OpenSCAD version. Both include a pipeline version. A preview cache hit sets `cached: true`.
 - Renders run one at a time (a queue); timeout 120 s → `render_failed`.
 - A running render reports each stage change as a `render_progress` event on `/events` (`queued`,
   `analysing`, `geometry`, `views` once per view, `sheet`, then `done` or `failed`), with `step` of
@@ -234,7 +236,8 @@ else `draft`, else `pending`, else `passed`; `empty` without parts.
 ## Measuring
 
 All of it works on any `.scad` or mesh file (a part's model, a reference, a library part), is computed
-on the rendered mesh, and is cached beside the render.
+on the rendered mesh in the measuring worker, and is cached beside the mesh. Slice, probe and
+section skip the standard previews. Measure and compare also return previews.
 
 - `POST /projects/:slug/measure/<path>` → mesh info, analysis and a render.
   - *Shells*: connected components. *Watertight*: every edge has exactly two triangles.

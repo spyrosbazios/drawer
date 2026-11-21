@@ -3,7 +3,7 @@
  * from the model's parameters, so changing a number (a what-if, set params, the fake agent) changes the
  * measurements and the gates the way the real server would.
  */
-import { ASSEMBLY_FILE, LIBRARY_SLUG, PART_DIR, PART_SPEC_SUFFIX } from "../../../shared/src/api";
+import { ASSEMBLY_FILE, LIBRARY_SLUG, PART_DIR, PART_SPEC_SUFFIX, UNWAIVABLE_GATES } from "../../../shared/src/api";
 import type {
   AssemblyReport,
   AssemblySpec,
@@ -33,8 +33,13 @@ import type {
 import { bboxOf, box, boxesStl, gapMm, meshInfoOfBoxes, moveBoxes, overlapCm3, perTriangleField, png, round, thicknessOf, volumeCm3 } from "./geometry";
 import type { Box } from "./geometry";
 import { HttpError, broadcast } from "./http";
-import { decoder, encoder, getProject, head, now, projects, put, sha, textOf } from "./store";
+import { decoder, encoder, getProject, head, kindOf, now, projects, put, sha, textOf } from "./store";
 import type { StoredProject } from "./store";
+
+const isModelPath = (path: string): boolean => {
+  const kind = kindOf(path.toLowerCase());
+  return kind === "scad" || kind === "mesh";
+};
 
 export const PRINTER: PrinterProfile = {
   name: "Prusa MK4 (mock)",
@@ -143,25 +148,24 @@ const shapeOf = (id: string): Shape => SHAPES[id] ?? ((v) => [box([0, 0, 0], [n(
 
 // ---- renders ---------------------------------------------------------------------------------
 
-export interface StoredRender {
-  stl: Uint8Array;
-  png: Uint8Array;
-  fields: Map<string, Uint8Array>;
-}
+export const meshes = new Map<string, { stl: Uint8Array; fields: Map<string, Uint8Array> }>();
+export const previews = new Map<string, Uint8Array>();
 
-export const renders = new Map<string, StoredRender>();
-
-/** Registers the boxes as a render and returns its URLs; the thickness field matches the STL triangle for triangle. */
-export function renderBoxes(boxes: readonly Box[]): { ref: RenderRef; thickness: string } {
-  const key = sha(encoder.encode(JSON.stringify(boxes))).slice(0, 32);
-  if (!renders.has(key)) {
+/** The same geometry serves measurements and every set of preview views. */
+export function renderBoxes(boxes: readonly Box[]): { ref: RenderRef; meshKey: string; thickness: string } {
+  const meshKey = sha(encoder.encode(JSON.stringify(boxes))).slice(0, 32);
+  const key = sha(encoder.encode(`preview:${meshKey}`)).slice(0, 32);
+  if (!meshes.has(meshKey)) {
     const fields = new Map<string, Uint8Array>([["thickness.f32", perTriangleField(boxes.map(thicknessOf))]]);
-    renders.set(key, { stl: boxesStl(boxes), png: png(256, 256, Number.parseInt(key.slice(0, 2), 16)), fields });
+    meshes.set(meshKey, { stl: boxesStl(boxes), fields });
   }
+  if (!previews.has(key)) previews.set(key, png(256, 256, Number.parseInt(key.slice(0, 2), 16)));
   const base = `/api/renders/${key}`;
+  const meshBase = `/api/renders/${meshKey}`;
   return {
-    ref: { key, mesh: `${base}/mesh.stl`, views: { iso: `${base}/iso.png`, front: `${base}/front.png`, top: `${base}/top.png`, side: `${base}/side.png` }, sheet: `${base}/sheet.png` },
-    thickness: `${base}/thickness.f32`,
+    ref: { key, mesh: `${meshBase}/mesh.stl`, views: { iso: `${base}/iso.png`, front: `${base}/front.png`, top: `${base}/top.png`, side: `${base}/side.png` }, sheet: `${base}/sheet.png` },
+    meshKey,
+    thickness: `${meshBase}/thickness.f32`,
   };
 }
 
@@ -358,7 +362,7 @@ function gatesOf(spec: PartSpec, text: string, boxes: readonly Box[] | null, val
 }
 
 function statusOf(gates: readonly GateResult[]): ReportStatus {
-  if (gates.some((x) => (x.id === "parses" || x.id === "solid") && x.status === "fail")) return "failed";
+  if (gates.some((x) => UNWAIVABLE_GATES.includes(x.id) && x.status === "fail")) return "failed";
   return gates.some((x) => x.status === "fail") ? "draft" : "passed";
 }
 
@@ -629,25 +633,25 @@ export function compare(slug: string, a: CompareSide, b: CompareSide): CompareRe
     const ab = A[i];
     return ab ? round(thicknessOf(bb) - thicknessOf(ab), 3) : round(thicknessOf(bb), 3);
   });
-  const ra = renderBoxes(A).ref;
-  const rb = renderBoxes(B).ref;
-  const name = `deviation-${ra.key}.f32`;
-  renders.get(rb.key)?.fields.set(name, perTriangleField(deltas));
+  const ra = renderBoxes(A);
+  const rb = renderBoxes(B);
+  const name = `deviation-${ra.meshKey}.f32`;
+  meshes.get(rb.meshKey)?.fields.set(name, perTriangleField(deltas));
   const abs = deltas.map(Math.abs).sort((x, y) => x - y);
   const worst = deltas.reduce((best, d, i) => (Math.abs(d) > Math.abs(deltas[best] ?? 0) ? i : best), 0);
   const wb = B[worst];
   const ma = meshInfoOfBoxes(A);
   const mb = meshInfoOfBoxes(B);
   return {
-    a: { render: ra, mesh: ma },
-    b: { render: rb, mesh: mb },
+    a: { render: ra.ref, mesh: ma },
+    b: { render: rb.ref, mesh: mb },
     deviation: {
       min: Math.min(...deltas),
       max: Math.max(...deltas),
       rms: round(Math.sqrt(deltas.reduce((s, d) => s + d * d, 0) / Math.max(1, deltas.length)), 3),
       p95: abs[Math.floor(abs.length * 0.95)] ?? 0,
       at: wb && deltas[worst] !== 0 ? centre(wb) : null,
-      field: `/api/renders/${rb.key}/${name}`,
+      field: `/api/renders/${rb.meshKey}/${name}`,
     },
     volumeDeltaCm3: round((mb.volumeCm3 ?? 0) - (ma.volumeCm3 ?? 0), 4),
     sizeDelta: [round(mb.bbox.size[0] - ma.bbox.size[0]), round(mb.bbox.size[1] - ma.bbox.size[1]), round(mb.bbox.size[2] - ma.bbox.size[2])],
@@ -666,7 +670,7 @@ export function boxesOfFile(slug: string, path: string, revision?: string): Box[
   const f = p.files.get(path);
   const v = revision ? f?.versions.find((x) => x.revisionId === revision) : head(p, path);
   if (!v) throw new HttpError("not_found", `No file ${path}`);
-  if (!/\.(scad|stl|3mf|obj)$/i.test(path)) throw new HttpError("invalid", "Only .scad and mesh files can be measured");
+  if (!isModelPath(path)) throw new HttpError("invalid", "Only .scad and mesh files can be measured");
   const size = Number(/cube\(\s*(?:\[\s*)?(\d+(?:\.\d+)?)/.exec(decoder.decode(v.bytes.subarray(0, 4000)))?.[1] ?? 20);
   return [box([0, 0, 0], [size, size, size])];
 }
@@ -709,8 +713,8 @@ export function probe(slug: string, path: string, from: Vec3, axis: "x" | "y" | 
 }
 
 export function section(slug: string, path: string, axis: "x" | "y" | "z", at: number, revision?: string): { axis: "x" | "y" | "z"; at: number; image: string } {
-  const r = renderBoxes(boxesOfFile(slug, path, revision)).ref;
-  return { axis, at, image: `/api/renders/${r.key}/section-${axis}-${at}.png` };
+  const { meshKey } = renderBoxes(boxesOfFile(slug, path, revision));
+  return { axis, at, image: `/api/renders/${meshKey}/section-${axis}-${at}.png` };
 }
 
 // ---- assembly ----------------------------------------------------------------------------------
@@ -911,7 +915,7 @@ export function projectStatus(slug: string): ProjectStatus {
 /** Like the server: `cover` is the effective cover, the chosen file or else a part's model, then any .scad or mesh. */
 export function projectOut(p: StoredProject): Project {
   const live = [...p.files.entries()].filter(([, f]) => !f.deleted).map(([path]) => path).sort();
-  const auto = live.find((f) => f.startsWith(`${PART_DIR}/`) && f.endsWith(".scad")) ?? live.find((f) => /\.(scad|stl|3mf|obj)$/i.test(f)) ?? null;
+  const auto = live.find((f) => f.startsWith(`${PART_DIR}/`) && f.endsWith(".scad")) ?? live.find((f) => isModelPath(f)) ?? null;
   const cover = p.meta.cover ?? auto;
   return { ...p.meta, cover, thumbnail: cover === null ? null : `/api/projects/${p.meta.slug}/thumbnail/${thumbnailKey(p, cover)}.png`, status: projectStatus(p.meta.slug) };
 }

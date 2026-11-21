@@ -2,6 +2,7 @@
  * The part gates (docs/SPEC.md → Parts and gates) as pure functions: measurements in, gate results,
  * status and next steps out. Nothing here touches the disk or the renderer.
  */
+import { UNWAIVABLE_GATES } from "@drawer/shared/api";
 import type { Dimension, GateResult, GateStatus, Material, MeshAnalysis, MeshInfo, PartSpec, PrinterProfile, ReportStatus, ScadParam, Strictness, Vec3 } from "@drawer/shared/api";
 
 /** What was measured for one dimension. `size` for an envelope; `value` otherwise. */
@@ -324,15 +325,12 @@ export function partGates(input: PartGateInput): GateResult[] {
   return applyPolicy(out, spec);
 }
 
-/** Gates no waiver applies to: a model that does not build, or is not one closed body, is never acceptable. */
-export const UNWAIVABLE: readonly string[] = ["parses", "solid"];
-
 /** `functional` turns warnings into failures; waivers turn a failure or warning into `waived`, except on the unwaivable gates. */
 export function applyPolicy(gates: GateResult[], spec: Pick<PartSpec, "strictness" | "waivers">): GateResult[] {
   return gates.map((g) => {
     let status = g.status;
     if (status === "warn" && spec.strictness === "functional") status = "fail";
-    const waiver = UNWAIVABLE.includes(g.id) ? undefined : spec.waivers.find((w) => w.gate === g.id);
+    const waiver = UNWAIVABLE_GATES.includes(g.id) ? undefined : spec.waivers.find((w) => w.gate === g.id);
     if (waiver && (status === "fail" || status === "warn")) return { ...g, status: "waived", detail: waiver.reason, hint: null };
     return status === g.status ? g : { ...g, status };
   });

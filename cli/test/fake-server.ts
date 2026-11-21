@@ -1,3 +1,4 @@
+import { isMeshFormat } from "@drawer/shared/api";
 /**
  * An in-process stand-in for the drawer server: the routes the CLI calls, stateful, following
  * shared/src/api.ts and docs/SPEC.md. Not a faithful server, just faithful where the CLI looks.
@@ -43,7 +44,7 @@ export const revOf = (bytes: Uint8Array): string => new Bun.CryptoHasher("sha256
 const kindOf = (path: string): FileKind => {
   if (path.endsWith(".md")) return "markdown";
   if (path.endsWith(".scad")) return "scad";
-  if (/\.(stl|3mf|obj)$/.test(path)) return "mesh";
+  if (isMeshFormat(path.slice(path.lastIndexOf(".") + 1))) return "mesh";
   if (/\.(png|jpe?g|gif|webp|svg)$/.test(path)) return "image";
   if (path.endsWith(".pdf")) return "pdf";
   if (/\.(txt|json|ya?ml|toml|csv)$/.test(path)) return "text";
@@ -375,7 +376,8 @@ export class FakeDrawer {
     const text = new TextDecoder().decode(file.bytes);
     if (text.includes("SYNTAX_ERROR")) return this.err(422, "render_failed", "ERROR: Parser error in file x.scad, line 1: syntax error");
     const body = JSON.parse(new TextDecoder().decode(bodyBytes) || "{}") as { views?: RenderView[] };
-    const key = `${file.rev}0000`.slice(0, 24);
+    const meshKey = file.rev.padEnd(24, "0");
+    const key = new Bun.CryptoHasher("sha256").update(meshKey).digest("hex").slice(0, 24);
     const views: Partial<Record<RenderView, string>> = {};
     for (const view of body.views ?? VIEWS) views[view] = `/api/renders/${key}/${view}.png`;
     const result: RenderResult = {
@@ -384,7 +386,7 @@ export class FakeDrawer {
       key,
       cached: false,
       seconds: 1.5,
-      mesh: `/api/renders/${key}/mesh.stl`,
+      mesh: `/api/renders/${meshKey}/mesh.stl`,
       views,
       sheet: `/api/renders/${key}/sheet.png`,
       info: MESH,

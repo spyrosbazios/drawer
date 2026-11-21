@@ -5,6 +5,15 @@ version is one semver number for the whole repository, set by the git tag (see [
 
 ## Unreleased
 
+## 0.1.1 - 2026-11-21
+
+### Fixed
+
+- A fresh clone starts. The `data/` folder now comes with the repository; before, Docker created it as root and the
+  server stopped at once because it could not write there.
+- The server can run as your own user when it is not 1000: set `DRAWER_UID` and `DRAWER_GID` in `.env`. OpenSCAD
+  did not start under any other user.
+
 ## 0.1.0 - 2026-11-21
 
 The first public release.

@@ -19,7 +19,6 @@
 # The build context is the repo root, cut down by .dockerignore to what these stages read.
 #
 # Build:  docker compose -f docker-compose.yml -f docker-compose.build.yml build
-#         docker build --build-arg UID=$(id -u) --build-arg GID=$(id -g) -f docker/Dockerfile .
 
 # Dated nightly tag, not :dev, so rebuilds are reproducible. Bump deliberately.
 ARG OPENSCAD_IMAGE=openscad/openscad:dev.2026-11-16
@@ -42,8 +41,6 @@ COPY web/package.json /web/
 COPY site/package.json /site/
 
 FROM ${OPENSCAD_IMAGE} AS render-base
-ARG UID=1000
-ARG GID=1000
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git tini ca-certificates \
  && rm -rf /var/lib/apt/lists/*
@@ -56,11 +53,14 @@ RUN git init -q /usr/local/share/openscad/libraries/BOSL2 \
  && git fetch -q --depth 1 https://github.com/BelfrySCAD/BOSL2.git "${BOSL2_COMMIT}" \
  && git checkout -q FETCH_HEAD \
  && rm -rf .git examples tests tutorials images
-# -o: the host's UID/GID may already exist in the base image under another name.
-RUN groupadd -o -g "${GID}" drawer \
- && useradd -o -u "${UID}" -g "${GID}" -m -d /home/drawer -s /usr/sbin/nologin drawer
-# Mesa keeps its shader cache under $HOME/.cache.
-ENV HOME=/home/drawer
+# The default user. Compose runs the container as the owner of the data folder instead when that is not 1000
+# (DRAWER_UID, DRAWER_GID), so nothing here may depend on who runs it.
+# -o: the id may already exist in the base image under another name.
+RUN groupadd -o -g 1000 drawer \
+ && useradd -o -u 1000 -g 1000 -M -d /tmp -s /usr/sbin/nologin drawer
+# OpenSCAD writes its settings under $HOME/.config and Mesa its shader cache under $HOME/.cache, and OpenSCAD
+# does not start without them: a home any user can write to.
+ENV HOME=/tmp
 WORKDIR /app
 USER drawer
 

@@ -8,6 +8,7 @@ services:
   drawer:
     image: ghcr.io/spyrosbazios/drawer:${DRAWER_VERSION:-latest}   # the server, the web app, OpenSCAD with BOSL2 and MCAD
     ports: ["${DRAWER_BIND:-127.0.0.1}:${DRAWER_PORT:-3050}:3050"]
+    user: "${DRAWER_UID:-1000}:${DRAWER_GID:-1000}"   # the owner of ./data on the host
     environment:
       TZ: ${TZ:-UTC}
       DRAWER_ALLOWED_HOSTS: ${DRAWER_ALLOWED_HOSTS:-}

@@ -11,6 +11,3 @@ services:
       dockerfile: docker/Dockerfile
       args:
         DRAWER_VERSION: ${DRAWER_VERSION:-0.0.0}
-        # The owner of ./data on the host, so the server can write to the bind mount.
-        UID: ${DRAWER_UID:-1000}
-        GID: ${DRAWER_GID:-1000}

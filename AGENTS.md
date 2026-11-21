@@ -58,6 +58,10 @@ agent follows: [`server/src/guide.md`](server/src/guide.md). The CLI for outside
   runner fails a turn that uses one. Every other Codex built-in is removed: [`agent/README.md`](agent/README.md).
 - **Codex runs with its own `CODEX_HOME`** under the runner's state dir and needs its own `codex login`
   there: sharing `~/.codex/auth.json` would race the person's own Codex on token refresh.
+- **Docker creates a missing bind-mount folder as root**, and the server (user 1000, or `DRAWER_UID`) then cannot
+  write to `/data` and stops at start. That is why `data/.gitkeep` is tracked; never ignore the folder itself again.
+  The same day: OpenSCAD does not start when it cannot write `$HOME/.config`, so the image's `HOME` is `/tmp`, which
+  any user id can write (2026-11-21, found by running the published 0.1.0 as a new user would).
 - **A stale `drawer-render-base` image makes dev lie.** `docker/openscad-dev` runs whatever that image
   holds; without BOSL2 in it an agent "learned" that BOSL2 is not installed and wrote that into the
   library notes (2026-11-20). Rebuild it after touching the Dockerfile's render-base stage.

@@ -5,8 +5,10 @@
 *.key
 *.pem
 
-# the live data: every project, session and note
-data/
+# the live data: every project, session and note. The folder itself is tracked (data/.gitkeep), so a clone owns it:
+# Docker would create a missing one as root, and the server could not write to it.
+data/*
+!data/.gitkeep
 
 # a deployment's own additions (docker-compose.override.example.yml)
 docker-compose.override.yml

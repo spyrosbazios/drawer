@@ -92,8 +92,8 @@ cp .env.example .env
 docker compose up -d
 ```
 
-On the server machine, open [localhost:3050](http://localhost:3050). Projects are stored in `./data`, owned by
-user 1000.
+On the server machine, open [localhost:3050](http://localhost:3050). Projects are stored in `./data`. The server runs
+as user 1000; if `id -u` prints something else, set `DRAWER_UID` and `DRAWER_GID` in `.env` before starting it.
 
 - **From other devices**: set `DRAWER_BIND` in `.env` to a private address (a VPN or tailnet address), or put a
   private reverse proxy in front. If you reach it by a name rather than an IP address, list the name in

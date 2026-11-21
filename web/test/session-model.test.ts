@@ -1,7 +1,7 @@
 import type { Session, SessionItem } from "@drawer/shared/api";
 import { describe, expect, test } from "bun:test";
 import type { StepItem } from "@/components/session/model";
-import { firstLine, groupRows, groupStrip, lastLine, liveThought, pendingSeqs, pinnedQuestion, stepsTitle, thoughtLabel, visibleSteps } from "@/components/session/model";
+import { firstLine, groupRows, groupStrip, lastLine, liveRow, pendingSeqs, pinnedQuestion, stepsTitle, thoughtLabel, visibleSteps } from "@/components/session/model";
 
 const at = "2026-11-20T10:00:00Z";
 const tool = (seq: number, summary = "x"): SessionItem => ({ seq, version: seq, at, type: "tool", callId: `c${seq}`, name: "t", summary, status: "ok", result: null, images: [] });
@@ -103,13 +103,26 @@ test("a folded group shows the live thought, and no other", () => {
   expect(visibleSteps(items, null).map((t) => t.seq)).toEqual([]);
 });
 
-describe("the live thought", () => {
-  test("only the newest item, still running, in a working session", () => {
-    expect(liveThought([say(1), think(2, "running")], { status: "working" })).toBe(2);
-    expect(liveThought([think(1, "running"), say(2)], { status: "working" })).toBeNull();
-    expect(liveThought([think(1)], { status: "working" })).toBeNull();
-    expect(liveThought([think(1, "running")], { status: "failed" })).toBeNull();
-    expect(liveThought(undefined, { status: "working" })).toBeNull();
+describe("the live row", () => {
+  const running = (seq: number): SessionItem => ({ ...tool(seq), status: "running" }) as SessionItem;
+
+  test("only the newest item, a thought or a tool call still running, in a working session", () => {
+    expect(liveRow([say(1), think(2, "running")], { status: "working" })).toBe(2);
+    expect(liveRow([say(1), running(2)], { status: "working" })).toBe(2);
+    expect(liveRow([think(1, "running"), say(2)], { status: "working" })).toBeNull();
+    expect(liveRow([running(1), say(2)], { status: "working" })).toBeNull();
+    expect(liveRow([think(1), tool(2)], { status: "working" })).toBeNull();
+    expect(liveRow([running(1), think(2, "running")], { status: "working" })).toBe(2);
+    expect(liveRow([think(1, "running"), running(2)], { status: "working" })).toBe(2);
+    expect(liveRow([think(1, "running")], { status: "failed" })).toBeNull();
+    expect(liveRow([running(1)], { status: "waiting" })).toBeNull();
+    expect(liveRow(undefined, { status: "working" })).toBeNull();
+  });
+
+  test("never two: one seq is live even with several calls running", () => {
+    const items = [running(1), running(2)];
+    const live = liveRow(items, { status: "working" });
+    expect(items.filter((i) => i.seq === live)).toHaveLength(1);
   });
 
   test("label and last line", () => {

@@ -56,12 +56,13 @@ export function groupRows(items: readonly SessionItem[], pinnedSeq?: number): Ro
 }
 
 /**
- * The seq of the thought the agent is thinking right now: the newest item, still running, in a session that
- * is working. It is the thread's one live row, and the generic activity tail gives way to it.
+ * The seq of the row that is live: the newest item when it is a thought or a tool call still running, in a
+ * session that is working. The thread has exactly one live row: that one when there is one, else the tail
+ * (the session's activity), which gives way to it.
  */
-export function liveThought(items: readonly SessionItem[] | undefined, session: Pick<Session, "status">): number | null {
+export function liveRow(items: readonly SessionItem[] | undefined, session: Pick<Session, "status">): number | null {
   const last = items?.at(-1);
-  return session.status === "working" && last?.type === "reasoning" && last.status === "running" ? last.seq : null;
+  return session.status === "working" && (last?.type === "reasoning" || last?.type === "tool") && last.status === "running" ? last.seq : null;
 }
 
 /** "Thinking" while it runs; afterwards "Thought for 7s" (just "Thought" under a second). */

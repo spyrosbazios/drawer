@@ -6,7 +6,7 @@ import type { ReasoningItem } from "./model";
 /**
  * What the model reported thinking (AI Elements' Reasoning pattern, on Trace): a collapsed line, "Thinking"
  * with the line it is on while it runs (the title shimmers: the live row of the thread), "Thought for 7s"
- * after. Opens to the whole text, line breaks kept. `running` is the thread's decision (`liveThought`).
+ * after. Opens to the whole text, line breaks kept. `running` is the thread's decision (`liveRow`).
  */
 export function Thought({ item, running }: { item: ReasoningItem; running: boolean }) {
   const now = running ? lastLine(item.text) : "";

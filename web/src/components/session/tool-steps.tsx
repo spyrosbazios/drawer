@@ -10,17 +10,15 @@ import { Thought } from "./thinking";
 
 type Status = ToolItem["status"];
 
-// A running step is a still icon: the thread's tail is the one animated thing while the agent works.
+// A step is drawn with a still icon; the live row (`liveRow`) is the one that shimmers.
 const ICON: Record<Status, ReactNode> = { running: <CircleDashedIcon />, ok: <CheckIcon />, error: <CircleAlertIcon /> };
 
 /** One tool call: its one-line summary; expandable to the result text and the images it produced. */
-function Step({ item }: { item: ToolItem }) {
+function Step({ item, live }: { item: ToolItem; live: boolean }) {
   const expandable = item.result !== null || item.images.length > 0;
   const line = (
-    <TraceLine status={item.status === "error" ? "error" : undefined} className="text-xs">
-      <TraceIcon>
-        {ICON[item.status]}
-      </TraceIcon>
+    <TraceLine status={item.status === "error" ? "error" : live ? "running" : undefined} className="text-xs">
+      <TraceIcon>{ICON[item.status]}</TraceIcon>
       <TraceTitle>{item.summary}</TraceTitle>
     </TraceLine>
   );
@@ -54,7 +52,7 @@ function Step({ item }: { item: ToolItem }) {
 }
 
 function StepRow({ item, liveSeq }: { item: StepItem; liveSeq: number | null }) {
-  return item.type === "tool" ? <Step item={item} /> : <Thought item={item} running={item.seq === liveSeq} />;
+  return item.type === "tool" ? <Step item={item} live={item.seq === liveSeq} /> : <Thought item={item} running={item.seq === liveSeq} />;
 }
 
 /**
@@ -68,7 +66,7 @@ export function ToolSteps({ items, liveSeq }: { items: readonly StepItem[]; live
   if (items.length === 1 && only?.type === "tool") {
     return (
       <Trace>
-        <Step item={only} />
+        <Step item={only} live={only.seq === liveSeq} />
       </Trace>
     );
   }

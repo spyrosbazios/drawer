@@ -1,5 +1,1 @@
-{
-  "extends": "../tsconfig.base.json",
-  "compilerOptions": { "types": ["bun"], "resolveJsonModule": true },
-  "include": ["src", "test"]
-}
+{"extends":"../tsconfig.base.json","compilerOptions":{"types":["bun"],"resolveJsonModule":true},"include":["src","test","../scripts"]}

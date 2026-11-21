@@ -306,7 +306,7 @@ function MatesTable({ slug, report, selected }: { slug: string; report: Assembly
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Mate</TableHead>
+                <TableHead className="w-full">Mate</TableHead>
                 <TableHead>Between</TableHead>
                 <TableHead>Expected</TableHead>
                 <TableHead className="text-right">Gap</TableHead>
@@ -324,7 +324,7 @@ function MatesTable({ slug, report, selected }: { slug: string; report: Assembly
                     className={cn("cursor-pointer", on && "bg-raised")}
                     onClick={() => assemblySelection.set(slug, on ? [] : [r.mate.a, r.mate.b])}
                   >
-                    <TableCell className="font-medium">{r.mate.label}</TableCell>
+                    <TableCell className="wrap-anywhere whitespace-normal font-medium leading-snug">{r.mate.label}</TableCell>
                     <TableCell className="text-dim">
                       {r.mate.a} × {r.mate.b}
                     </TableCell>

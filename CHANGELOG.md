@@ -5,23 +5,30 @@ version is one semver number for the whole repository, set by the git tag (see [
 
 ## Unreleased
 
+## 0.2.0 - 2026-11-21
+
 ### Added
 
 - The agent can let you pick several answers to a question: its options show as checkboxes, and your own words can go
-  with the picks. From a terminal: `drawer answer <session> <question> --pick <n>...`. An answer is now a list
-  everywhere in the API (`answers`); stored sessions read as before.
+  with the picks. From a terminal: `drawer answer <session> <question> --pick <n>...`.
+- Realistic shading in every 3D viewer (View menu): the model is lit by a room and a sun and drops its shadow on a
+  floor. Thickness and deviation views stay flat, because their colours are measurements.
+- The cube in the corner of a 3D view can be dragged to turn the camera; its faces, edges and corners go to that view.
+- `INSTALL.md`: a guide a coding agent follows to install drawer for you, with a prompt to paste in the README. It
+  covers Linux, macOS (the runner as a launchd agent, Colima where there is no Docker) and Windows through WSL2.
 
 ### Changed
 
+- The API's answer to a question is a list: `answers` on the question item and in `POST /sessions/:id/answer`, and a
+  question carries `multiple`. An older CLI or runner cannot speak it: update the `drawer` CLI and restart the runner
+  from the new code together with the server. Stored sessions read as before.
 - Settings: the agents are a list beside the one you pick. The list shows each agent's status and its on/off switch;
   the rest (what the runners found, the default model, extra models) is in the pane next to it.
 - Workspace: each side panel has its own fold button, and a folded one comes back from that end of the menubar.
   Project settings moved from the header to a Project menu in the menubar, which every view now has; its menus carry
   icons. The header keeps only add and the app menu, whose button is a gear.
 - A new project shows an animation while the agent works on it, in place of the line "The agent is on it."
-- 3D viewers: the cube in the corner can be dragged to turn the camera, and its faces, edges and corners go to that
-  view. Realistic shading (View menu) lights the model with a room and a sun and drops its shadow on a floor. The
-  axis of a section cut is picked beside its slider, in the canvas.
+- The axis of a section cut is picked beside its slider, in the canvas, not in the View menu.
 
 ### Fixed
 

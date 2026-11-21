@@ -6,7 +6,7 @@ import { GateList } from "@/components/status/gate-list";
 import { StatusChip } from "@/components/status/status-chip";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatMass, formatRelative, shortRev } from "@/core/format";
+import { formatMass, formatRelative } from "@/core/format";
 import { usePartReport, usePartSummary } from "@/hooks/parts";
 import { pointing } from "@/lib/pointing";
 import { Fold, Folds, reviewFolds } from "@/components/workspace/folds";
@@ -153,7 +153,7 @@ function Verdict({ report: r }: { report: PartReport }) {
   return (
     <div className="space-y-2 px-3">
       <p className="text-xs text-faint">
-        <span className="font-mono">{shortRev(r.revisionId)}</span> · {formatRelative(r.evaluatedAt)}
+        {formatRelative(r.evaluatedAt)}
         {r.massG !== null && ` · ${formatMass(r.massG)} ${r.spec.material}`}
       </p>
       {r.whatIf && <p className="rounded-md border border-run/40 bg-run/8 px-2 py-1 text-xs text-run">What-if numbers. Nothing is written.</p>}

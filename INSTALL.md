@@ -55,7 +55,7 @@ Find out what you are running on, and follow only that branch. Never assume the 
 ## 1. Check the requirements
 
 Run every check before installing anything, then show the person one table: each requirement, found or missing,
-and the fix for each missing one. Install only what needs no root (Bun); for the rest, print the fix and wait.
+and the fix for each missing one. Install only what needs no root (Bun, and on macOS the Docker runtime below); for the rest, print the fix and wait.
 
 | Requirement | Check | Pass | Fix when missing |
 |---|---|---|---|
@@ -69,6 +69,41 @@ and the fix for each missing one. Install only what needs no root (Bun); for the
 | A provider CLI (step 4) | `codex --version`, `pi --version`, `gemini --version` | any one, or none for Claude | Claude needs no CLI install: the runner bundles Claude Code. Sign-in is checked in step 4 |
 
 Do not continue past a missing Docker, Compose or git.
+
+### macOS without Docker
+
+If `docker` is not found on macOS, ask the person once which runtime they want, and recommend Colima:
+
+- **Colima** (recommended): free and open source, no app, lightest. You install it.
+- **Docker Desktop**: the official app. They install it from docker.com and start it; you wait, then re-run the checks.
+- **Another runtime they already use** (OrbStack, Rancher Desktop): they start it; you re-run the checks.
+
+For Colima, you install everything yourself, without root:
+
+1. Homebrew: `brew --version`. If missing, stop: its installer asks for the person's password, so they run
+   `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"` and follow
+   its last lines to put `brew` on the PATH. Then continue.
+2. Install and register the Compose plugin:
+
+   ```sh
+   brew install colima docker docker-compose
+   mkdir -p ~/.docker/cli-plugins
+   ln -sfn "$(brew --prefix)/opt/docker-compose/bin/docker-compose" ~/.docker/cli-plugins/docker-compose
+   ```
+
+3. Start it with room for a render (drawer allows a container 4 GB; Colima's default VM has 2 GB), and keep it
+   running across reboots:
+
+   ```sh
+   colima start --cpu 2 --memory 6 --disk 20
+   brew services start colima
+   ```
+
+   On an 8 GB Mac use `--memory 4` and set `DRAWER_MEMORY=3g` in step 2.
+4. Re-run the Docker and Compose checks; `docker context show` prints `colima`.
+
+Tell the person: drawer runs only while Colima runs; `colima stop` frees its memory, `colima start` brings it back.
+Source: [colima.run/docs/installation](https://colima.run/docs/installation/).
 
 ## 2. Get it and configure it
 

@@ -53,6 +53,10 @@ Record measurements that the design uses as dimensions of the scanned part. Choo
 of at least twice the scan noise. Plan a fit in an assembly that includes the scanned part.
 Use a mate for each intended interface and the printer's clearance.
 
+When copying the scanned object itself, put a `match` on the printed part pointing to the scanned
+part. Use both area shares in `compare` to check where the new model and scan differ. Fix the
+largest meaningful difference first.
+
 ## The spec
 
 - The model's coordinates are the print orientation: z is up, the part sits on z = 0, and it is

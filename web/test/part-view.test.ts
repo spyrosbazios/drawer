@@ -89,7 +89,7 @@ describe("attempt tree layout", () => {
 
 const gate = (id: string, status: GateResult["status"], expected: string | null = null): GateResult => ({ id, label: id, status, measured: null, expected, detail: null, hint: null, at: null });
 const param = (name: string, value: ScadParam["value"]): ScadParam => ({ name, type: "number", value, group: "", description: "", min: null, max: null, step: null, options: null, line: 1 });
-const spec = (dimensions: PartReport["spec"]["dimensions"]): PartReport["spec"] => ({ title: "", class: "", description: "", source: "printed", material: "PETG", strictness: "standard", dimensions, waivers: [], prints: [] });
+const spec = (dimensions: PartReport["spec"]["dimensions"]): PartReport["spec"] => ({ title: "", class: "", description: "", source: "printed", material: "PETG", strictness: "standard", dimensions, matches: [], waivers: [], prints: [] });
 
 describe("what changed", () => {
   test("parameters that differ, including added and removed", () => {

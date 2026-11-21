@@ -1,5 +1,5 @@
 import { DIMENSION_KINDS, PART_SOURCES, isMeshFormat } from "@drawer/shared/api";
-import type { Axis, Dimension, DimensionKind, PartSource, PartSpec, PartSpecBody, Strictness } from "@drawer/shared/api";
+import type { Axis, Dimension, DimensionKind, Match, PartSource, PartSpec, PartSpecBody, Strictness } from "@drawer/shared/api";
 import { z } from "zod";
 
 /**
@@ -49,6 +49,7 @@ export interface SpecForm {
   material: string;
   strictness: Strictness;
   dimensions: DimensionForm[];
+  matches: Match[];
 }
 
 const usesAxis = (k: DimensionKind) => k === "size" || k === "hole" || k === "boss" || k === "gap" || k === "wall";
@@ -97,6 +98,7 @@ export function specToForm(spec: PartSpec): SpecForm {
     material: spec.material,
     strictness: spec.strictness,
     dimensions: spec.dimensions.map(dimensionToForm),
+    matches: spec.matches,
   };
 }
 
@@ -176,6 +178,7 @@ export const specFormSchema = z
     material: z.string(),
     strictness: z.enum(STRICTNESS),
     dimensions: z.array(dimensionSchema),
+    matches: z.array(z.object({ id: z.string(), label: z.string(), to: z.string(), tol: z.number(), share: z.number().optional() })),
   })
   .superRefine((v, ctx) => {
     if (v.source === "scanned") {
@@ -239,5 +242,6 @@ export function formToBody(v: SpecForm): PartSpecBody {
     material: v.material,
     strictness: v.strictness,
     dimensions: v.dimensions.map(formToDimension),
+    matches: v.source === "printed" ? v.matches : [],
   };
 }

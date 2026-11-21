@@ -1,5 +1,5 @@
 /** Bump when tables or their stored data change: an index with another version is dropped and rebuilt from the files. */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export const SCHEMA = `
 CREATE TABLE files (

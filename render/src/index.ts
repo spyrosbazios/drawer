@@ -344,6 +344,18 @@ export function createRenderer(opts: RendererOptions): Renderer {
       });
     });
 
+  const projectField = async (dir: string, fieldFile: string): Promise<string> => {
+    const name = fieldFile.replace(/\.f32$/, "-proxy.f32");
+    if (await exists(join(dir, name))) return name;
+    const map = await readFile(join(dir, PROXY_MAPPING));
+    const field = await readFile(join(dir, fieldFile));
+    const indices = new Uint32Array(map.buffer, map.byteOffset, map.length / 4);
+    const values = new Float32Array(field.buffer, field.byteOffset, field.length / 4);
+    const projected = Float32Array.from(indices, (i) => values[i]!);
+    await writeAtomic(join(dir, name), new Uint8Array(projected.buffer));
+    return name;
+  };
+
   const features: Renderer["features"] = (req) =>
     ask(async () => {
       const dir = await keyDir(req.key);
@@ -353,14 +365,7 @@ export function createRenderer(opts: RendererOptions): Renderer {
         const meshFile = basename(await queue.run(() => drawMeshPath(dir, info)));
         const r = await measure.ask({ op: "features", mesh: full });
         await writeAtomic(join(dir, "features.f32"), new Uint8Array(r.values.buffer, r.values.byteOffset, r.values.byteLength));
-        let fieldFile = "features.f32";
-        if (meshFile === "proxy.stl") {
-          const bytes = await readFile(join(dir, PROXY_MAPPING));
-          const indices = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.length / 4);
-          const values = Float32Array.from(indices, (i) => r.values[i]!);
-          fieldFile = "features-proxy.f32";
-          await writeAtomic(join(dir, fieldFile), new Uint8Array(values.buffer));
-        }
+        const fieldFile = meshFile === "proxy.stl" ? await projectField(dir, "features.f32") : "features.f32";
         return { features: r.features, fieldFile, meshFile };
       });
     });
@@ -390,17 +395,20 @@ export function createRenderer(opts: RendererOptions): Renderer {
       });
     });
 
-  const deviation = (req: { a: string; b: string }): Promise<DeviationOutput> =>
+  const deviation: Renderer["deviation"] = (req) =>
     ask(async () => {
       const dirA = await keyDir(req.a);
       const dirB = await keyDir(req.b);
-      const fieldFile = `deviation-${req.a}.f32`;
-      return cachedJson(dirB, `deviation-${req.a}.json`, async () => {
-        const r = await measure.ask({ op: "deviation", a: join(dirA, "mesh.stl"), b: join(dirB, "mesh.stl") });
-        const f = r.result.field;
-        await writeAtomic(join(dirB, fieldFile), new Uint8Array(f.buffer, f.byteOffset, f.byteLength));
-        return { min: r.result.min, max: r.result.max, rms: r.result.rms, p95: r.result.p95, at: r.result.at, fieldFile };
+      const name = `deviation-${req.a}-${numName(req.tol)}`;
+      const fieldFile = `${name}.f32`;
+      const stats = await cachedJson(dirB, `${name}.json`, async () => {
+        const r = await measure.ask({ op: "deviation", a: join(dirA, "mesh.stl"), b: join(dirB, "mesh.stl"), tol: req.tol });
+        const { field, ...stats } = r.result;
+        await writeAtomic(join(dirB, fieldFile), new Uint8Array(field.buffer, field.byteOffset, field.byteLength));
+        return stats;
       });
+      if (req.proxy) return { ...stats, fieldFile: await projectField(dirB, fieldFile), meshFile: "proxy.stl" } satisfies DeviationOutput;
+      return { ...stats, fieldFile, meshFile: "mesh.stl" } satisfies DeviationOutput;
     });
 
   /** One OpenSCAD run outside render(): cwd is the cache directory, so every mesh.stl is reachable. */

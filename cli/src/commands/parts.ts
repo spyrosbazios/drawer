@@ -161,6 +161,7 @@ export const part: Command = {
     }
     const body = { ...base, ...flags };
     if (source && source !== "scanned") delete body.scan;
+    if (source && source !== "printed") delete body.matches;
     if (typeof body.title !== "string" || body.title === "") throw new UsageError("--title is needed to create a part (or a \"title\" in --spec)");
     const summary = await client.putPart(project, id, { ...body, title: body.title });
     emit(ctx.mode, summary, () => `${project}/${partLine(summary)}`);

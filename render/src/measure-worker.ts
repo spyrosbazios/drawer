@@ -8,7 +8,8 @@ import { datum, register, surfaceSamples } from "./align";
 import { surfaceDistance } from "./pseudonormal";
 import { readVec } from "./vectors";
 import { extractFeatures, fitAt } from "./features";
-import { analyse, deviation, gap, probe, shadow, slice, transform, volume } from "./measure";
+import { deviation } from "./deviation";
+import { analyse, gap, probe, shadow, slice, transform, volume } from "./measure";
 import { computeMeshInfo, isBinaryStl, meshFormatOf, parseMesh, parseStl, toBinaryStl } from "./mesh";
 import { clusterProxy, normalizeScan, scanNoise, weldTolerance } from "./scan";
 import { buildTopology, type Topology } from "./topology";
@@ -114,8 +115,8 @@ function handle(req: WorkerRequest): { reply: WorkerReply; transfer: ArrayBuffer
       return { reply: { id: req.id, ok: true, op: "probe", probe: probe(bvhOf(req.mesh), req.from, req.axis) }, transfer: [] };
     }
     case "deviation": {
-      const b = load(req.b);
-      const r = deviation(bvhOf(req.a), b.pos, topologyOf(b));
+      const a = load(req.a), b = load(req.b);
+      const r = deviation(bvhOf(req.a), topologyOf(a), bvhOf(req.b), topologyOf(b), req.tol);
       return { reply: { id: req.id, ok: true, op: "deviation", result: r }, transfer: [r.field.buffer as ArrayBuffer] };
     }
     case "gap": {

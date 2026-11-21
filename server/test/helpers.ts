@@ -301,10 +301,11 @@ export function fakeRenderer(cacheDir: string): FakeRenderer {
       count("deviation");
       const a = solid(req.a);
       const b = solid(req.b);
-      const name = `deviation-${req.a}.f32`;
+      const name = `deviation-${req.a}-${req.tol}.f32`;
       await writeFile(join(meshCache, req.b, name), new Uint8Array(4 * b.info.triangles));
       const d = (b.info.bbox.size[0] ?? 0) - (a.info.bbox.size[0] ?? 0);
-      return { min: Math.min(0, d), max: Math.max(0, d), rms: Math.abs(d) / 2, p95: Math.abs(d), at: d === 0 ? null : [0, 0, 0], fieldFile: name };
+      const stats = { min: Math.min(0, d), max: Math.max(0, d), rms: Math.abs(d) / 2, p95: Math.abs(d), within: Math.abs(d) <= req.tol ? 1 : 0.5 };
+      return { ...stats, reverse: { ...stats, min: -stats.max, max: -stats.min }, at: d === 0 ? null : [0, 0, 0], fieldFile: name, meshFile: "mesh.stl" };
     },
     async interference(req) {
       count("interference");

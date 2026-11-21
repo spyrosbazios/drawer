@@ -451,6 +451,16 @@ export interface ScanPlacement extends Pose {
   file: string;
 }
 
+export interface Match {
+  id: string;
+  label: string;
+  /** Part id in the project. */
+  to: string;
+  tol: number;
+  /** Required area share in both directions. Defaults to 0.95. */
+  share?: number;
+}
+
 export interface PartSpec {
   title: string;
   /** What kind of part it is, in a few words ("snap-fit clip", "enclosure lid"). Guides the modeller; no gate reads it. */
@@ -462,6 +472,7 @@ export interface PartSpec {
   material: string;
   strictness: Strictness;
   dimensions: Dimension[];
+  matches: Match[];
   waivers: Waiver[];
   prints: PrintResult[];
 }
@@ -776,21 +787,29 @@ export interface CompareSide {
   at?: string;
 }
 
-/** POST /projects/:slug/compare { a, b }: how B differs from A. */
+export const DEFAULT_COMPARE_TOL = 0.2;
+
+export interface DeviationStats {
+  min: number;
+  max: number;
+  rms: number;
+  p95: number;
+  /** Area share within the tolerance. */
+  within: number;
+}
+
+/** POST /projects/:slug/compare: how B differs from A. */
 export interface CompareResult {
   a: { render: RenderRef; mesh: MeshInfo };
   b: { render: RenderRef; mesh: MeshInfo };
-  /** Signed distance from B's surface to A's, mm: positive where B has more material. */
-  deviation: {
-    min: number;
-    max: number;
-    rms: number;
-    /** 95 % of B's surface is within this distance of A. */
-    p95: number;
-    /** Where the largest difference is, on B. */
+  /** B to A. Positive lies on the normal side of A. Reverse is A to B. */
+  deviation: DeviationStats & {
+    tol: number;
+    reverse: DeviationStats;
     at: Vec3 | null;
-    /** URL of the distance per triangle of B's mesh.stl: Float32 little-endian, mm. */
     field: string;
+    /** The mesh indexed by the field painted on B. */
+    mesh: string;
   };
   volumeDeltaCm3: number | null;
   sizeDelta: Vec3;
@@ -1177,6 +1196,7 @@ export interface AttemptsResponse {
 export interface CompareBody {
   a: CompareSide;
   b: CompareSide;
+  tol?: number;
 }
 
 /** GET /projects/:slug/overview: what an agent reads first. */

@@ -237,6 +237,7 @@ expected, and a hint.
 | `solid` | one connected, watertight body | printed or bought |
 | `fits_bed` | the bounding box fits the printer's bed (x and y may swap) | printed |
 | `dim:<id>` | the measured value is within the dimension's range | always, one per spec dimension |
+| `match:<id>` | both area shares within ±`tol` reach `share` (default 0.95) | printed, one per match |
 | `lint` | first line is a `//` description; at least one Customizer parameter; no top-level `$fn` above 128. More than 6 unexplained numeric literals inside modules is a `warn` | printed, `standard` and up |
 | `base` | bed contact is at least 20 mm² and 5 % of the footprint | printed, `standard` and up |
 | `overhang` | unsupported overhang area is within the printer's limit; over it is `warn` under `standard`, `fail` under `functional` | printed, `standard` and up |
@@ -259,6 +260,12 @@ that are not `skipped`; `pass`, `warn` and `waived` count as passed.
   that contains the point. A `gap` whose point is inside material, a `wall` whose point is in air, or
   a point that lies on the surface, fails and says so.
 - `min_wall`: from the thickness field (see Measuring).
+
+**Matches** compare the printed model to another part in the same project. Each entry in
+`matches` has `id`, `label`, `to` (the target part id), positive `tol` in millimetres, and optional
+`share` in (0, 1]. The index records a `matches` dependency on the target spec. Report freshness
+follows the target's state, including changes to a referenced scan. The gate reports both area
+shares and the place of the largest sampled difference.
 
 **Waivers** (`POST .../parts/:id/waive`) are a person's decision: the author `agent` gets
 `403 forbidden`. An empty reason removes the waiver. `parses` and `solid` cannot be waived. There is
@@ -304,10 +311,14 @@ section skip the standard previews. Measure and compare also return previews.
 - `POST .../probe/<path>` → whether a point is inside material and how long the run of material or
   air through it is along an axis. Open meshes return `422 render_failed`.
 - `POST .../section/<path>` → a PNG of the part cut at `axis` = `at`, lower side kept.
-- `POST /projects/:slug/compare` → how B differs from A (two parts, files or revisions): signed
-  distance from B's surface to A's per triangle (`deviation-<key of A>.f32`), min, max, RMS, 95th
-  percentile, volume and size deltas. Positive means B has more material there. This signed comparison
-  requires closed meshes and returns `422 render_failed` on an open surface.
+- `POST /projects/:slug/compare` → signed distance statistics in both directions, area shares within
+  the supplied positive `tol` (default 0.2 mm), volume and size deltas. B-to-A statistics appear at
+  the top level of `deviation`. A-to-B statistics appear in `reverse`. The `at` point is the largest
+  sampled difference in either direction. Signs follow angle-weighted pseudonormals on both open
+  and closed meshes. The deviation field holds the mean signed distance per triangle of the
+  returned B mesh. The match gate uses the same area-weighted surface samples. Sample spacing
+  scales with tolerance. A comparison that would exceed eight million samples in either direction
+  asks for a larger tolerance or a retessellated mesh.
 
 ## Assembly
 
@@ -568,7 +579,7 @@ drawer probe <file> --from x,y,z --axis x    run of material or air through a po
 drawer section <file> --axis x --at 0 [--size 800]   downloads the PNG, prints its local path
 drawer attempts <project>/<id>               the attempt tree
 drawer restore <project>/<id> <rev-id>       make an old attempt current
-drawer compare <project> <a> <b>             a, b: a part id or a path, optionally @<rev-id>
+drawer compare <project> <a> <b> [--tol mm]  a, b: part ids or paths, optionally @<rev-id>
 drawer assembly <project> [--set file.json]  the assembly report; --set replaces assembly.json first
 drawer printed <project>/<id> ok|issue "<note>"
 drawer sessions [project]                    agent sessions

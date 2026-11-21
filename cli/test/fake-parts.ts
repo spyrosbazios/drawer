@@ -7,6 +7,7 @@
  *   THIN          min_wall fails, unless a what-if sets wall >= 1.6
  *   NOLINT        lint warns
  */
+import { DEFAULT_COMPARE_TOL } from "@drawer/shared/api";
 import type {
   ProviderKind,
   ApiError,
@@ -78,10 +79,11 @@ const DEFAULT_SPEC: Omit<PartSpec, "title"> = {
   material: "PETG",
   strictness: "standard",
   dimensions: [],
+  matches: [],
   waivers: [],
   prints: [],
 };
-const SPEC_FIELDS = new Set(["title", "class", "description", "source", "material", "strictness", "dimensions", "scan"]);
+const SPEC_FIELDS = new Set(["title", "class", "description", "source", "material", "strictness", "dimensions", "scan", "matches"]);
 
 export function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -188,6 +190,7 @@ export class FakeModeling {
       if (model.includes("NOLINT")) gates.push(gate("lint", "Source conventions", "warn", { detail: "9 unexplained numeric literals inside modules", hint: "name them as parameters" }));
       else gates.push(gate("lint", "Source conventions", "pass"));
     }
+    for (const match of spec.matches ?? []) gates.push(gate(`match:${match.id}`, match.label, model === null ? "skipped" : "pass"));
     for (const w of spec.waivers) {
       const g = gates.find((x) => x.id === w.gate);
       if (g) {
@@ -421,12 +424,14 @@ export class FakeModeling {
   }
 
   private compare(bodyText: string): Response {
-    const body = parse(bodyText) as { a: { part?: string; path?: string; at?: string }; b: { part?: string; path?: string; at?: string } };
+    const raw = parse(bodyText);
+    const body = raw as { a: { part?: string; path?: string; at?: string }; b: { part?: string; path?: string; at?: string } };
+    const tol = typeof raw.tol === "number" ? raw.tol : DEFAULT_COMPARE_TOL;
     const key = (side: typeof body.a) => `cmp-${side.part ?? side.path ?? "x"}-${side.at ?? "now"}`.replace(/[^a-z0-9-]/gi, "-");
     const result: CompareResult = {
       a: { render: refFor(key(body.a)), mesh: MESH },
       b: { render: refFor(key(body.b)), mesh: { ...MESH, volumeCm3: 9.3 } },
-      deviation: { min: -0.4, max: 1.2, rms: 0.31, p95: 0.8, at: [12, 4, 6], field: `/api/renders/${key(body.b)}/deviation.f32` },
+      deviation: { min: -0.4, max: 1.2, rms: 0.31, p95: 0.8, within: 0.6, reverse: { min: -1.2, max: 0.4, rms: 0.31, p95: 0.8, within: 0.7 }, tol, at: [12, 4, 6], field: `/api/renders/${key(body.b)}/deviation.f32`, mesh: refFor(key(body.b)).mesh },
       volumeDeltaCm3: 1.2,
       sizeDelta: [2, 0, -1],
     };

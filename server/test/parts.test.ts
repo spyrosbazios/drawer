@@ -332,7 +332,7 @@ describe("measuring", () => {
     expect(res.json.sizeDelta).toEqual([4, 0, 0]);
     expect(res.json.volumeDeltaCm3).toBe(1);
     const aKey = res.json.a.render.mesh.split("/").at(-2);
-    expect(res.json.deviation.field).toBe(res.json.b.render.mesh.replace(/mesh\.stl$/, `deviation-${aKey}.f32`));
+    expect(res.json.deviation.field).toBe(res.json.b.render.mesh.replace(/mesh\.stl$/, `deviation-${aKey}-0.2.f32`));
     expect((await h.get(res.json.deviation.field)).status).toBe(200);
     expect((await h.post("/api/projects/m/compare", { a: { path: "refs/thing.scad", part: "x" }, b: { path: "refs/wider.scad" } })).status).toBe(400);
   });

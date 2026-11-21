@@ -3,7 +3,7 @@
  * from the model's parameters, so changing a number (a what-if, set params, the fake agent) changes the
  * measurements and the gates the way the real server would.
  */
-import { ASSEMBLY_FILE, LIBRARY_SLUG, PART_DIR, PART_SPEC_SUFFIX, UNWAIVABLE_GATES } from "../../../shared/src/api";
+import { ASSEMBLY_FILE, DEFAULT_COMPARE_TOL, LIBRARY_SLUG, PART_DIR, PART_SPEC_SUFFIX, UNWAIVABLE_GATES } from "../../../shared/src/api";
 import type {
   AssemblyReport,
   AssemblySpec,
@@ -218,6 +218,7 @@ export function specOf(p: StoredProject, id: string, at?: string): PartSpec {
     material: s.material ?? p.meta.defaults.material,
     strictness: s.strictness ?? p.meta.defaults.strictness,
     dimensions: s.dimensions ?? [],
+    matches: s.matches ?? [],
     waivers: s.waivers ?? [],
     prints: s.prints ?? [],
   };
@@ -318,7 +319,8 @@ function dimensionGate(d: Dimension, boxes: readonly Box[], values: Record<strin
   };
 }
 
-function gatesOf(spec: PartSpec, text: string, boxes: readonly Box[] | null, values: Record<string, number>): GateResult[] {
+/** `targets`: the boxes of each part a match points at, null when it has none. */
+function gatesOf(spec: PartSpec, text: string, boxes: readonly Box[] | null, values: Record<string, number>, targets: ReadonlyMap<string, readonly Box[] | null>): GateResult[] {
   const g = (id: string, label: string, status: GateResult["status"], measured: string | null, expected: string | null, hint: string | null = null, at: Vec3 | null = null, detail: string | null = null): GateResult => ({
     id,
     label,
@@ -333,7 +335,7 @@ function gatesOf(spec: PartSpec, text: string, boxes: readonly Box[] | null, val
   const standard = printed && spec.strictness !== "quick";
   if (!boxes) {
     const out = [g("parses", "Builds", "fail", null, null, "Fix the syntax error the check reports.", null, "Parser error: syntax error in line 1")];
-    for (const id of ["solid", "fits_bed", ...spec.dimensions.map((d) => `dim:${d.id}`)]) out.push(g(id, id, "skipped", null, null, null, null, "No mesh: the model does not build."));
+    for (const id of ["solid", "fits_bed", ...spec.dimensions.map((d) => `dim:${d.id}`), ...spec.matches.map((m) => `match:${m.id}`)]) out.push(g(id, id, "skipped", null, null, null, null, "No mesh: the model does not build."));
     return out;
   }
   const bb = bboxOf(boxes);
@@ -352,6 +354,11 @@ function gatesOf(spec: PartSpec, text: string, boxes: readonly Box[] | null, val
       const ok = thicknessOf(thin) >= min - 1e-9;
       out.push(g("min_wall", "Minimum wall", ok ? "pass" : "fail", `${fmt(thicknessOf(thin))} mm`, `≥ ${fmt(min)} mm`, ok ? null : `Thicken the wall at ${centre(thin).join(", ")} to ${fmt(min)} mm.`, centre(thin)));
     }
+  }
+  for (const match of spec.matches) {
+    const target = targets.get(match.to);
+    const close = target ? bboxOf(target).size.every((size, i) => Math.abs(size - bb.size[i]!) <= match.tol) : false;
+    out.push(g(`match:${match.id}`, match.label, close ? "pass" : "fail", close ? "100% in both directions" : null, `±${match.tol} mm`, close ? null : `Compare the model with ${match.to} and fix the largest difference first.`));
   }
   if (spec.strictness === "functional") for (const x of out) if (x.status === "warn") x.status = "fail";
   for (const x of out) {
@@ -394,7 +401,8 @@ export function computeReport(slug: string, id: string, opts: { at?: string; par
   const params = paramsOf(text);
   const values = valuesOf(params, opts.params);
   const boxes = spec.scan ? boxesOfPart(slug, id, opts.at) : text.includes("FAIL") ? null : shapeOf(id)(values);
-  const gates = gatesOf(spec, text, boxes, values).filter((gate) => !spec.scan || gate.id === "parses" || gate.id.startsWith("dim:"));
+  const targets = new Map(spec.matches.map((m) => [m.to, head(p, specPath(m.to)) ? boxesOfPart(slug, m.to, opts.at) : null] as const));
+  const gates = gatesOf(spec, text, boxes, values, targets).filter((gate) => !spec.scan || gate.id === "parses" || gate.id.startsWith("dim:"));
   const counted = gates.filter((x) => x.status !== "skipped");
   const passed = counted.filter((x) => x.status !== "fail").length;
   return {
@@ -530,6 +538,7 @@ function specOf_defaults(p: StoredProject, spec: Partial<PartSpec> & { title: st
     material: p.meta.defaults.material,
     strictness: p.meta.defaults.strictness,
     dimensions: [],
+    matches: [],
     waivers: [],
     prints: [],
     ...spec,
@@ -632,7 +641,7 @@ function boxesOfSide(slug: string, side: CompareSide): Box[] {
   throw new HttpError("invalid", "A side needs a part or a path");
 }
 
-export function compare(slug: string, a: CompareSide, b: CompareSide): CompareResult {
+export function compare(slug: string, a: CompareSide, b: CompareSide, tol = DEFAULT_COMPARE_TOL): CompareResult {
   const A = boxesOfSide(slug, a);
   const B = boxesOfSide(slug, b);
   // Per box of B: how much thicker it is than A's box at the same index. Plausible, signed, per triangle.
@@ -657,6 +666,16 @@ export function compare(slug: string, a: CompareSide, b: CompareSide): CompareRe
       max: Math.max(...deltas),
       rms: round(Math.sqrt(deltas.reduce((s, d) => s + d * d, 0) / Math.max(1, deltas.length)), 3),
       p95: abs[Math.floor(abs.length * 0.95)] ?? 0,
+      within: abs.filter((n) => n <= tol).length / Math.max(1, abs.length),
+      reverse: {
+        min: -Math.max(...deltas),
+        max: -Math.min(...deltas),
+        rms: round(Math.sqrt(deltas.reduce((s, d) => s + d * d, 0) / Math.max(1, deltas.length)), 3),
+        p95: abs[Math.floor(abs.length * 0.95)] ?? 0,
+        within: abs.filter((n) => n <= tol).length / Math.max(1, abs.length),
+      },
+      tol,
+      mesh: rb.ref.mesh,
       at: wb && deltas[worst] !== 0 ? centre(wb) : null,
       field: `/api/renders/${rb.meshKey}/${name}`,
     },

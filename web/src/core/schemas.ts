@@ -215,6 +215,8 @@ const dimension = z.object({
   max: z.number().optional(),
 });
 
+const match = z.object({ id: z.string(), label: z.string(), to: z.string(), tol: z.number(), share: z.number().optional() });
+
 const partSpec = z.object({
   title: z.string(),
   class: z.string(),
@@ -224,6 +226,7 @@ const partSpec = z.object({
   material: z.string(),
   strictness,
   dimensions: z.array(dimension),
+  matches: z.array(match),
   waivers: z.array(z.object({ gate: z.string(), reason: z.string(), by: z.string(), at: z.string() })),
   prints: z.array(z.object({ revisionId: z.string(), at: z.string(), outcome: z.enum(["ok", "issue"]), note: z.string() })),
 });
@@ -325,10 +328,12 @@ export const attemptsSchema = z.object({
   ),
 }) satisfies z.ZodType<AttemptsResponse>;
 
+const deviationStats = z.object({ min: z.number(), max: z.number(), rms: z.number(), p95: z.number(), within: z.number() });
+
 export const compareSchema = z.object({
   a: z.object({ render: renderRef, mesh: meshInfo }),
   b: z.object({ render: renderRef, mesh: meshInfo }),
-  deviation: z.object({ min: z.number(), max: z.number(), rms: z.number(), p95: z.number(), at: vec3.nullable(), field: z.string() }),
+  deviation: deviationStats.extend({ reverse: deviationStats, tol: z.number(), at: vec3.nullable(), field: z.string(), mesh: z.string() }),
   volumeDeltaCm3: z.number().nullable(),
   sizeDelta: vec3,
 }) satisfies z.ZodType<CompareResult>;

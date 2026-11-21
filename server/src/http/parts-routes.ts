@@ -124,8 +124,10 @@ export function registerPartRoutes(r: Router, service: Service, deps: { json: Js
   });
   r.add("POST", "/projects/:slug/compare", async (ctx) => {
     const body = await readJsonBody(ctx.req);
-    onlyFields(body, ["a", "b"]);
-    return json(await parts.compare(slug(ctx), side(body.a, "a"), side(body.b, "b")));
+    onlyFields(body, ["a", "b", "tol"]);
+    const tol = body.tol === undefined ? undefined : reqNumber(body, "tol");
+    if (tol !== undefined && tol <= 0) throw invalid("tol must be positive");
+    return json(await parts.compare(slug(ctx), side(body.a, "a"), side(body.b, "b"), tol));
   });
 
   r.add("GET", "/projects/:slug/assembly", async (ctx) => json(await parts.assemblyReport(slug(ctx))));

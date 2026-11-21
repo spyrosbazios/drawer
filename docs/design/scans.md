@@ -30,37 +30,6 @@ any way for a person to edit a mesh. The agent writing OpenSCAD is drawer's scan
 | 4. Write the spec from measured values, then the model | agent | parts, as today |
 | 5. Check the model against the scan | server | `match` gate (copy), `mate`/`clash` against the scan (fit) |
 
-## S5. Checking the model: the `match` gate
-
-For a copy. On a printed part's spec:
-
-```ts
-interface Match {
-  id: string; label: string;
-  /** The part to match: usually a scanned one. */
-  to: string;
-  /** Both surfaces must lie within ±tol of each other, mm. */
-  tol: number;
-  /** Over at least this share of the area. Default 0.95. */
-  share?: number;
-}
-interface PartSpec { matches: Match[]; ... }
-```
-
-Gate `match:<id>` passes when at least `share` of the model's area is within `tol` of the scan **and**
-at least `share` of the scan's area is within `tol` of the model. One direction alone passes a model
-that is missing a boss. Not waivable by the agent, like every gate.
-
-It is a gate of its own, like `mate:<id>`, not a dimension kind: a dimension is one number in a range,
-and this is two area shares and a place.
-
-What changes under it: today's `deviation` measures one direction, one point per triangle (so a large
-flat triangle is sampled once), with a sign from ray parity. It becomes area-weighted sampling of both
-surfaces at a spacing tied to `tol`, the pseudonormal sign, and the area share within a given distance
-in its output. `compare` gets the same numbers; there is one deviation, not two.
-
-The gate's `at` is the place of the largest difference, and the deviation field already colours it.
-
 ## S6. Guidance
 
 A chapter in [`server/src/guide.md`](../../server/src/guide.md), "Working from a scan", mirrored in the
@@ -83,7 +52,6 @@ skill. Its rules:
 
 | Stage | Holds | Behaviour changes |
 |---|---|---|
-| 5 | S5 `match`, both-way deviation | a copy can be checked |
 | 6 | S6 guide chapter, complete | written alongside each stage, finished here |
 
 Every stage changes `shared/src/api.ts`, the server, the CLI, the agent's tools, the web app and its

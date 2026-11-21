@@ -2,7 +2,7 @@
  * Contracts between the server and its two helper packages. The server depends on these
  * interfaces only; @drawer/render and @drawer/importers implement them.
  */
-import type { AlignResult, OpenClash, Axis, Diagnostic, Feature, FeatureKind, ImportFile, ImportPreview, ImportSite, MeshAnalysis, MeshInfo, ParamValues, ProbeResult, RenderStage, RenderView, ScadParam, SliceResult, Vec3, ScanUnit, MeshFormat } from "./api";
+import type { AlignResult, OpenClash, Axis, DeviationStats, Diagnostic, Feature, FeatureKind, ImportFile, ImportPreview, ImportSite, MeshAnalysis, MeshInfo, ParamValues, ProbeResult, RenderStage, RenderView, ScadParam, SliceResult, Vec3, ScanUnit, MeshFormat } from "./api";
 
 // ---- @drawer/render ---------------------------------------------------------------------
 
@@ -82,14 +82,11 @@ export interface PlacedMesh {
   matrix: number[];
 }
 
-export interface DeviationOutput {
-  min: number;
-  max: number;
-  rms: number;
-  p95: number;
+export interface DeviationOutput extends DeviationStats {
+  reverse: DeviationStats;
   at: Vec3 | null;
-  /** File name inside B's cache directory: Float32 LE per triangle of B's mesh.stl. */
   fieldFile: string;
+  meshFile: string;
 }
 
 export interface AssemblyRenderOutput {
@@ -144,7 +141,7 @@ export interface Renderer {
   /** A view of a finished render scaled down to at most `size` pixels on its longer side. Returns the file name inside the cache directory. Throws RenderError. */
   thumbnail(req: { key: string; view: RenderView; size: number }): Promise<string>;
   /** Signed distance from B's surface to A's. */
-  deviation(req: { a: MeshKey; b: MeshKey }): Promise<DeviationOutput>;
+  deviation(req: { a: MeshKey; b: MeshKey; tol: number; proxy?: boolean }): Promise<DeviationOutput>;
   /** Smallest distance between two placed solids (0 when they touch or overlap) and the volume they share. */
   interference(req: { a: PlacedMesh; b: PlacedMesh; clearanceMm?: number }): Promise<{ gapMm: number; overlapCm3: number | null; penetration?: OpenClash }>;
   /** Views and a contact sheet of several placed solids together, each in its own colour; `highlight` pairs are drawn in the warning colour. Cached under its own key. Throws RenderError. */

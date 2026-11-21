@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import type { RenderView } from "@drawer/shared/api";
 
 /** Bump when the pipeline itself changes what it writes (colours, sheet layout, file set) or what a cached measurement beside the render means. */
-export const PIPELINE_VERSION = "drawer-render/7";
+export const PIPELINE_VERSION = "drawer-render/8";
 
 interface MeshKeyInputs {
   /** Bytes of the file being rendered. */

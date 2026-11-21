@@ -541,6 +541,7 @@ const setPartSpec = defineTool({
     material: z.string().optional(),
     strictness: z.enum(["quick", "standard", "functional"]).optional(),
     dimensions: z.array(dimension).optional(),
+    matches: z.array(z.object({ id: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/), label: z.string().min(1), to: partId, tol: z.number().positive(), share: z.number().positive().max(1).optional() })).optional(),
   },
   async run(ctx, { part, dimensions, scan, ...rest }) {
     const spec = {
@@ -781,13 +782,14 @@ const section = defineTool({
 const compare = defineTool({
   name: "compare",
   description:
-    "How B differs from A: each side is a part, a file, or either at a revision (from attempts). Signed surface distance (positive = B has more material), RMS, 95th percentile, where the largest difference is, volume and size deltas.",
-  input: { a: compareSide, b: compareSide },
-  async run(ctx, { a, b }) {
-    const res = await ctx.client.compare(ctx.project, { a, b });
+    "How B differs from A: each side is a part, a file, or either at a revision (from attempts). Signed surface distances and area within tolerance in both directions, the largest difference, volume and size deltas.",
+  input: { a: compareSide, b: compareSide, tol: z.number().positive().optional() },
+  async run(ctx, { a, b, tol }) {
+    const res = await ctx.client.compare(ctx.project, { a, b, ...(tol === undefined ? {} : { tol }) });
     const d = res.deviation;
     const text = [
       `Deviation of B from A: min ${d.min.toFixed(3)}, max ${d.max.toFixed(3)}, RMS ${d.rms.toFixed(3)}, p95 ${d.p95.toFixed(3)} mm${d.at ? `, largest at ${vec(d.at)}` : ""}`,
+      `Within ±${d.tol} mm: A ${(d.reverse.within * 100).toFixed(2)}%, B ${(d.within * 100).toFixed(2)}%.`,
       `Size delta ${vec(res.sizeDelta)} mm${res.volumeDeltaCm3 !== null ? `, volume delta ${res.volumeDeltaCm3.toFixed(3)} cm³` : ""}`,
     ].join("\n");
     return output(text, `compare: p95 ${d.p95.toFixed(2)} mm`);

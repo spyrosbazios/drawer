@@ -3,7 +3,7 @@
  * status and next steps out. Nothing here touches the disk or the renderer.
  */
 import { UNWAIVABLE_GATES } from "@drawer/shared/api";
-import type { Dimension, GateResult, GateStatus, Material, MeshAnalysis, MeshInfo, PartSpec, PrinterProfile, ReportStatus, ScadParam, Strictness, Vec3 } from "@drawer/shared/api";
+import type { Dimension, GateResult, GateStatus, Match, Material, MeshAnalysis, MeshInfo, PartSpec, PrinterProfile, ReportStatus, ScadParam, Strictness, Vec3 } from "@drawer/shared/api";
 
 /** What was measured for one dimension. `size` for an envelope; `value` otherwise. */
 export type DimMeasurement =
@@ -222,6 +222,22 @@ function lintGate(lint: LintResult): GateResult {
 
 export function minWallRequired(printer: PrinterProfile, material: Material | null): number {
   return material?.minWallMm ?? printer.minWallMm;
+}
+
+export function matchGate(spec: Match, result: { forward: number; reverse: number; at: Vec3 | null } | { error: string } | null): GateResult {
+  const id = `match:${spec.id}`;
+  if (!result) return skipped(id, spec.label, "no mesh to compare");
+  const share = spec.share ?? 0.95;
+  const expected = `both surfaces ≥ ${fmt(share * 100, 2)}% within ±${fmt(spec.tol, 4)} mm`;
+  if ("error" in result) return gate(id, spec.label, "fail", { expected, detail: result.error });
+  const { forward, reverse, at } = result;
+  const ok = forward >= share && reverse >= share;
+  return gate(id, spec.label, ok ? "pass" : "fail", {
+    measured: `model ${fmt(forward * 100, 2)}%, ${spec.to} ${fmt(reverse * 100, 2)}%`,
+    expected,
+    at,
+    hint: ok ? null : `Compare the model with ${spec.to} and fix the largest difference first.`,
+  });
 }
 
 /** Every gate that applies to the part, in a stable order, with strictness and waivers applied. */

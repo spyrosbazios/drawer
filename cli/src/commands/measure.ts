@@ -197,7 +197,8 @@ const signed = (n: number) => `${n > 0 ? "+" : ""}${num(n)}`;
 function compareText(r: LocalCompare): string {
   const d = r.deviation;
   const lines = [
-    `b against a (mm, positive where b has more material): min ${signed(d.min)}, max ${signed(d.max)}, rms ${num(d.rms)}, 95% within ${num(d.p95)}${d.at ? `, largest at (${d.at.map(num).join(", ")}) on b` : ""}`,
+    `b against a (mm, positive on the normal side of a): min ${signed(d.min)}, max ${signed(d.max)}, rms ${num(d.rms)}, 95% within ${num(d.p95)}${d.at ? `, largest at (${d.at.map(num).join(", ")})` : ""}`,
+    `within ±${num(d.tol)} mm: a ${num(d.reverse.within * 100)}%, b ${num(d.within * 100)}%`,
     `size delta ${r.sizeDelta.map(signed).join(" x ")} mm${r.volumeDeltaCm3 === null ? "" : `, volume delta ${signed(r.volumeDeltaCm3)} cm3`}`,
     `a  ${formatMesh(r.a.mesh)}`,
     `b  ${formatMesh(r.b.mesh)}`,
@@ -231,17 +232,20 @@ export const align: Command = {
 
 export const compare: Command = {
   name: "compare",
-  usage: ["drawer compare <project> <a> <b>"],
+  usage: ["drawer compare <project> <a> <b> [--tol mm]"],
   summary: "how b differs from a: deviation, volume and size deltas, both sheets",
   details:
     "a and b are each a part id or a project path, optionally @<rev-id> (`lid@r12`, `refs/original.stl`). Use it to see exactly\n" +
     "what a change did, or how a model deviates from a reference. Prints the local paths of both sheets.",
+  flags: { string: ["tol"] },
   async run(ctx, args) {
     const [project, a, b, ...extra] = args.positionals;
     if (!project || extra.length > 0) throw new UsageError("usage: drawer compare <project> <a> <b>");
     const sides = { a: parseSide(a, "a"), b: parseSide(b, "b") };
     const client = await ctx.client();
-    const result = await client.compare(project, sides);
+    const tol = args.num("tol");
+    if (tol !== undefined && tol <= 0) throw new UsageError("--tol must be positive");
+    const result = await client.compare(project, { ...sides, ...(tol === undefined ? {} : { tol }) });
     const out: LocalCompare = {
       ...result,
       sheets: { a: await fetchPicture(client, ctx.env, result.a.render.sheet), b: await fetchPicture(client, ctx.env, result.b.render.sheet) },

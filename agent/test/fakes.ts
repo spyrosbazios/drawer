@@ -42,6 +42,7 @@ const spec: PartSpec = {
   material: "PETG",
   strictness: "standard",
   dimensions: [],
+  matches: [],
   waivers: [],
   prints: [],
 };

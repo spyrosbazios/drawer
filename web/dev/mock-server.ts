@@ -413,7 +413,7 @@ async function handle(req: Request): Promise<Response> {
   if (m?.[1] && method === "POST") {
     const b = await body<CompareBody>(req);
     await Bun.sleep(300);
-    return json(parts.compare(m[1], b.a, b.b));
+    return json(parts.compare(m[1], b.a, b.b, b.tol));
   }
 
   // ---- parts ----

@@ -3,9 +3,11 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join as joinPath } from "node:path";
+import { deviation } from "../src/deviation";
+import { buildTopology } from "../src/topology";
 import { buildBvh } from "../src/bvh";
 import { createRenderer } from "../src/index";
-import { analyse, deviation, gap, probe, slice, transform, volume } from "../src/measure";
+import { analyse, gap, probe, slice, transform, volume } from "../src/measure";
 import { toBinaryStl } from "../src/mesh";
 import { MeasureClient } from "../src/measure-client";
 import { box, hollowBox, join, prism, pyramid, torus, washer } from "./shapes";
@@ -200,7 +202,7 @@ describe("deviation", () => {
   test("a cube shifted by 1 mm in x", () => {
     const a = buildBvh(cube());
     const shifted = transform(cube(), translate(1, 0, 0));
-    const r = deviation(a, shifted);
+    const r = deviation(a, buildTopology(a.pos), buildBvh(shifted), buildTopology(shifted), 0.2);
     expect(r.min).toBeCloseTo(-1, 6);
     expect(r.max).toBeCloseTo(1, 6);
     expect(r.field.length).toBe(12);
@@ -209,8 +211,27 @@ describe("deviation", () => {
   });
 
   test("identical meshes deviate by nothing", () => {
-    const r = deviation(buildBvh(cube()), cube());
+    const a = cube(), b = cube();
+    const r = deviation(buildBvh(a), buildTopology(a), buildBvh(b), buildTopology(b), 0.2);
     expect([r.min, r.max, r.rms, r.p95]).toEqual([0, 0, 0, 0]);
+  });
+
+  test("both area shares expose a large missing boss", () => {
+    const a = join(cube(), box([3, 3, 10], [7, 7, 16]));
+    const b = cube();
+    const result = deviation(buildBvh(a), buildTopology(a), buildBvh(b), buildTopology(b), 0.2);
+    expect(result.within).toBe(1);
+    expect(result.reverse.within).toBeLessThan(0.9);
+    expect(result.at?.[2]).toBeGreaterThan(15.9);
+  });
+
+  test("open surfaces get their signs from the local normal", () => {
+    const a = new Float32Array([0, 0, 0, 10, 0, 0, 10, 10, 0, 0, 0, 0, 10, 10, 0, 0, 10, 0]);
+    const b = transform(a, translate(0, 0, 1));
+    const result = deviation(buildBvh(a), buildTopology(a), buildBvh(b), buildTopology(b), 0.5);
+    expect([result.min, result.max, result.reverse.min, result.reverse.max]).toEqual([1, 1, -1, -1]);
+    expect([...result.field]).toEqual([1, 1]);
+    expect(result.within).toBe(0);
   });
 });
 
@@ -264,8 +285,8 @@ describe("renderer measuring methods (worker, cached files)", () => {
     expect(await r.probe({ key: keyA, from: [10, 10, -0.5], axis: "z" })).toEqual({ inside: false, onSurface: false, low: null, high: 0, distance: null });
     expect(await stat(joinPath(cacheDir, "meshes", keyA, "probe-z-10_10_-0.5.json")).then(() => true)).toBe(true);
 
-    const d = await r.deviation({ a: keyA, b: keyB });
-    expect(d.fieldFile).toBe(`deviation-${keyA}.f32`);
+    const d = await r.deviation({ a: keyA, b: keyB, tol: 0.2 });
+    expect(d.fieldFile).toBe(`deviation-${keyA}-0.2.f32`);
     expect(d.max).toBeCloseTo(0.5, 5);
     expect(d.min).toBeCloseTo(-0.5, 5);
 

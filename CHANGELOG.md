@@ -9,6 +9,8 @@ version is one semver number for the whole repository, set by the git tag (see [
 
 ### Added
 
+- Check a printed copy against another part with a `match` gate. Compare reports how much of each surface is within tolerance.
+
 - Place scans as parts and propose their frames with `align`. Assemblies can measure open scans.
 
 - Measure planes, cylinders and spheres on a scan or model. Slice returns open outlines and can project the full silhouette.

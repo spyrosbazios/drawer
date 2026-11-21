@@ -78,7 +78,8 @@ describe("spec form", () => {
       dim({ id: "env", kind: "envelope", box: [40, 20, 15] }),
       dim({ id: "w", kind: "wall", axis: "x", from: [1, 2, 3], min: 1.5 }),
     ],
-    waivers: [],
+    matches: [],
+  waivers: [],
     prints: [],
   };
 

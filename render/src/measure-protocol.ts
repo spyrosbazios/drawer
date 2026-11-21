@@ -2,7 +2,8 @@
 import type { AlignResult, OpenClash, Axis, Feature, FeatureKind, MeshInfo, ProbeResult, SliceResult, Vec3 } from "@drawer/shared/api";
 import type { ScanNormalization } from "@drawer/shared/contracts";
 import type { ScanUnit } from "@drawer/shared/api";
-import type { AnalysisResult, DeviationResult } from "./measure";
+import type { AnalysisResult } from "./measure";
+import type { DeviationResult } from "./deviation";
 
 type Ask =
   | { op: "normalize"; format: MeshInfo["format"]; bytes: Uint8Array; units?: ScanUnit }
@@ -16,7 +17,7 @@ type Ask =
   | { op: "align"; mesh: string; to?: string }
   | { op: "fit"; mesh: string; at: Vec3; kind?: FeatureKind }
   | { op: "probe"; mesh: string; from: Vec3; axis: Axis }
-  | { op: "deviation"; a: string; b: string }
+  | { op: "deviation"; a: string; b: string; tol: number }
   | { op: "gap"; a: { mesh: string; matrix: number[] }; b: { mesh: string; matrix: number[] }; clearanceMm: number };
 
 export type WorkerRequest = Ask & { id: number };

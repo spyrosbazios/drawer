@@ -91,3 +91,23 @@ test("a scanned part measures its placed file, follows changes and has no OpenSC
   await h.drained();
   expect((await report()).status).toBe("passed");
 });
+
+test("a match follows its target's model, including both directions", async () => {
+  const project = "/api/projects/scans";
+  const spec = { title: "Copy", strictness: "quick", matches: [{ id: "surface", label: "Copy surface", to: "original", tol: 0.2 }] };
+  await h.write("scans", "refs/original.stl", "// @size=10,20,30 @leaky");
+  expect((await h.call("PUT", `${project}/parts/original`, { body: { title: "Original", source: "scanned", scan: { file: "refs/original.stl", rotate: [0, 0, 0], translate: [0, 0, 0] } } })).status).toBe(200);
+  expect((await h.call("PUT", `${project}/parts/copy`, { body: spec })).status).toBe(200);
+  await h.write("scans", "parts/copy.scad", "// @size=10,20,30");
+  const report = async () => (await h.get<import("@drawer/shared/api").PartReport>(`${project}/parts/copy/report`)).json;
+  expect((await report()).gates.find((g) => g.id === "match:surface")?.status).toBe("pass");
+  const before = h.renderer.calls.deviation ?? 0;
+  await h.write("scans", "refs/original.stl", "// @size=12,20,30 @leaky", { "x-drawer-rev": "*" });
+  await h.drained();
+  expect(h.renderer.calls.deviation).toBeGreaterThan(before);
+  const changed = await report();
+  expect(changed.status).toBe("draft");
+  expect(changed.gates.find((g) => g.id === "match:surface")).toMatchObject({ status: "fail", at: [0, 0, 0] });
+  const compared = await h.post<import("@drawer/shared/api").CompareResult>(`${project}/compare`, { a: { part: "original" }, b: { part: "copy" }, tol: 0.3 });
+  expect(compared.json.deviation).toMatchObject({ tol: 0.3, within: 0.5, reverse: { within: 0.5 } });
+});

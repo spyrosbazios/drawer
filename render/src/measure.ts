@@ -5,7 +5,7 @@
  */
 import type { Axis, MeshAnalysis, ProbeResult, SliceContour, SliceResult, Vec3 } from "@drawer/shared/api";
 import { union, type MultiPolygon, type Polygon } from "polygon-clipping";
-import { buildTopology, faces, weld, UnionFind, type Faces } from "./topology";
+import { buildTopology, weld, UnionFind, type Faces } from "./topology";
 import { type Bvh, buildBvh, isInside, nearestDist2, rayCrossings, rayFirst } from "./bvh";
 
 /** Bed contact: downward faces within this distance of the lowest z. */
@@ -487,58 +487,6 @@ export function probe(b: Bvh, from: Vec3, axis: Axis): ProbeResult {
     low: low === null ? null : round(low),
     high: high === null ? null : round(high),
     distance: low === null || high === null ? null : round(high - low),
-  };
-}
-
-// ---- deviation --------------------------------------------------------------------------
-
-export interface DeviationResult {
-  min: number;
-  max: number;
-  rms: number;
-  p95: number;
-  at: Vec3 | null;
-  field: Float32Array;
-}
-
-/** Per triangle of B, the signed distance from its centroid to A's surface: negative inside A. */
-export function deviation(a: Bvh, bPos: Float32Array, f = faces(bPos)): DeviationResult {
-  const n = bPos.length / 9;
-  const field = new Float32Array(n);
-  let min = Infinity, max = -Infinity, sq = 0, total = 0;
-  let worst = -1;
-  for (let t = 0; t < n; t++) {
-    const x = f.centroid[t * 3]!, y = f.centroid[t * 3 + 1]!, z = f.centroid[t * 3 + 2]!;
-    let d = Math.sqrt(nearestDist2(a, x, y, z));
-    if (d < 1e-6) d = 0;
-    else if (isInside(a, x, y, z)) d = -d;
-    field[t] = d;
-    if (d < min) min = d;
-    if (d > max) max = d;
-    const area = f.area[t]!;
-    sq += d * d * area;
-    total += area;
-    if (worst < 0 || Math.abs(d) > Math.abs(field[worst]!)) worst = t;
-  }
-  if (n === 0) return { min: 0, max: 0, rms: 0, p95: 0, at: null, field };
-  // Area-weighted 95th percentile of |d|.
-  const idx = Array.from({ length: n }, (_, i) => i).sort((i, j) => Math.abs(field[i]!) - Math.abs(field[j]!));
-  let acc = 0;
-  let p95 = Math.abs(field[idx[idx.length - 1]!]!);
-  for (const i of idx) {
-    acc += f.area[i]!;
-    if (acc >= 0.95 * total) {
-      p95 = Math.abs(field[i]!);
-      break;
-    }
-  }
-  return {
-    min: round(min),
-    max: round(max),
-    rms: round(total > 0 ? Math.sqrt(sq / total) : 0),
-    p95: round(p95),
-    at: [round(f.centroid[worst * 3]!), round(f.centroid[worst * 3 + 1]!), round(f.centroid[worst * 3 + 2]!)],
-    field,
   };
 }
 

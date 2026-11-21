@@ -4,7 +4,7 @@ import { stat } from "node:fs/promises";
 import type { Fact, FileKind, Link, MeshInfo, PartSpec, ReportStatus, SearchHit } from "@drawer/shared/api";
 import type { Renderer } from "@drawer/shared/contracts";
 import { errorMessage, isNodeError, revOfFile } from "../util.ts";
-import { PART_SPEC_SUFFIX } from "@drawer/shared/api";
+import { PART_DIR, PART_SPEC_SUFFIX } from "@drawer/shared/api";
 import { TEXT_SNIFF_LIMIT, kindFromExtension, looksLikeText, normalizePath } from "../store/paths.ts";
 import { parseMarkdown } from "./markdown.ts";
 import { parseScad } from "./scad.ts";
@@ -17,9 +17,19 @@ const MAX_INDEXED_TEXT = 2 * 1024 * 1024;
 function specLinks(text: string): { relation: string; target: string }[] {
   try {
     const spec = JSON.parse(text) as Partial<PartSpec>;
-    if (spec.source !== "scanned" || typeof spec.scan?.file !== "string") return [];
-    const target = normalizePath(spec.scan.file);
-    return kindFromExtension(target) === "mesh" ? [{ relation: "scans", target }] : [];
+    const links: { relation: string; target: string }[] = [];
+    if (spec.source === "scanned" && typeof spec.scan?.file === "string") {
+      const target = normalizePath(spec.scan.file);
+      if (kindFromExtension(target) === "mesh") links.push({ relation: "scans", target });
+    }
+    if (Array.isArray(spec.matches)) {
+      for (const match of spec.matches) {
+        if (typeof match?.to === "string" && /^[a-z0-9][a-z0-9-]*$/.test(match.to)) {
+          links.push({ relation: "matches", target: `${PART_DIR}/${match.to}${PART_SPEC_SUFFIX}` });
+        }
+      }
+    }
+    return links;
   } catch {
     return [];
   }

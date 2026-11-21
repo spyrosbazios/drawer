@@ -75,3 +75,10 @@ Check a `hole`, `boss`, `gap` or `wall` point with `drawer slice` / `drawer prob
 Use `source: "scanned"` with `scan: { "file": "refs/object/scan.stl", "rotate": [0, 0, 0], "translate": [0, 0, 0] }`.
 Save the frame proposed by `drawer align` after checking the views. The placed mesh is measured
 through `parts/<id>.part.json`. Record dimensions on this part and use it in assemblies.
+
+## Scan copies
+
+A printed part can declare `"matches": [{ "id": "copy", "label": "Copy the scan", "to": "original",
+"tol": 0.3, "share": 0.95 }]`. `to` is the scanned part id. The gate needs the specified share of
+both surfaces within the tolerance. Use `drawer compare` with the same tolerance to inspect the
+largest difference.

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AssemblySpec, Dimension, GateResult, MeshInfo, PartSpec, ScadParam } from "@drawer/shared/api";
 import { assemblyGates, assemblyStatus, apply, bom, boxDistance, candidatePairs, placement, transformBox, type InstancePart } from "../src/parts/assembly-gates.ts";
 import { deriveAttempts } from "../src/parts/attempts.ts";
-import { applyPolicy, countGates, dimensionGate, lintSource, nextSteps, partGates, partStatus, worst, type GateAnalysis, type PartGateInput } from "../src/parts/gates.ts";
+import { applyPolicy, countGates, dimensionGate, lintSource, matchGate, nextSteps, partGates, partStatus, worst, type GateAnalysis, type PartGateInput } from "../src/parts/gates.ts";
 import { validateAssembly, validateMaterials, validatePartSpec, validatePartSpecBody, validatePrinter } from "../src/parts/validate.ts";
 import { defaultMaterials, defaultPrinter } from "../src/store/starter.ts";
 
@@ -14,7 +14,7 @@ const PARAM: ScadParam = { name: "w", type: "number", value: 10, group: "", desc
 const CLEAN = "// a clip\nw = 10;\nmodule clip() { cube([w, 2, 3]); }\nclip();\n";
 
 function spec(over: Partial<PartSpec> = {}): PartSpec {
-  return { title: "Clip", class: "", description: "", source: "printed", material: "PLA", strictness: "standard", dimensions: [], waivers: [], prints: [], ...over };
+  return { title: "Clip", class: "", description: "", source: "printed", material: "PLA", strictness: "standard", dimensions: [], matches: [], waivers: [], prints: [], ...over };
 }
 
 function input(over: Partial<PartGateInput> = {}): PartGateInput {
@@ -146,6 +146,21 @@ describe("dimension gates", () => {
 
   test("a measurement error fails with that detail", () => {
     expect(dimensionGate(dim({ kind: "hole", at: 1, nominal: 3 }), { ok: false, error: "not round", at: [0, 0, 1] })).toMatchObject({ status: "fail", detail: "not round", at: [0, 0, 1] });
+  });
+});
+
+describe("match gates", () => {
+  const m = { id: "copy", label: "Copy", to: "knob", tol: 0.2 };
+
+  test("both shares must reach the required share", () => {
+    expect(matchGate(m, { forward: 0.97, reverse: 0.96, at: null })).toMatchObject({ id: "match:copy", status: "pass" });
+    expect(matchGate(m, { forward: 0.99, reverse: 0.9, at: [1, 2, 3] })).toMatchObject({ status: "fail", at: [1, 2, 3] });
+    expect(matchGate({ ...m, share: 0.85 }, { forward: 0.99, reverse: 0.9, at: null }).status).toBe("pass");
+  });
+
+  test("no mesh skips; an error fails with its detail", () => {
+    expect(matchGate(m, null).status).toBe("skipped");
+    expect(matchGate(m, { error: "no model for knob" })).toMatchObject({ status: "fail", detail: "no model for knob" });
   });
 });
 
@@ -309,6 +324,10 @@ describe("structured-file validation", () => {
       [{ title: "T", source: "printed", material: "PLA", strictness: "quick", dimensions: [{ id: "w", label: "W", kind: "boss", axis: "z", nominal: 1 }] }, "dimensions[0].at"],
       [{ title: "T", source: "printed", material: "PLA", strictness: "quick", waivers: [{ gate: "parses", reason: "r", by: "web", at: "" }] }, "cannot be waived"],
       [{ title: "T", source: "printed", material: "PLA", strictness: "quick", waivers: [{ gate: "solid", reason: "r", by: "web", at: "" }] }, "cannot be waived"],
+      [{ title: "T", source: "printed", material: "PLA", strictness: "quick", matches: [{ id: "m", label: "M", to: "knob", tol: 0 }] }, "matches[0].tol"],
+      [{ title: "T", source: "printed", material: "PLA", strictness: "quick", matches: [{ id: "m", label: "M", to: "knob", tol: 0.2, share: 1.5 }] }, "matches[0].share"],
+      [{ title: "T", source: "printed", material: "PLA", strictness: "quick", matches: [{ id: "m", label: "M", to: "../x", tol: 0.2 }] }, "matches[0].to"],
+      [{ title: "T", source: "bought", material: "steel", strictness: "quick", matches: [{ id: "m", label: "M", to: "knob", tol: 0.2 }] }, "only on printed"],
     ];
     expect(validatePartSpec({ title: "T", source: "printed", material: "PLA", strictness: "quick", dimensions: [{ id: "p", label: "P", kind: "boss", axis: "z", at: 2, near: [1, 1], nominal: 4 }] }, ["PLA"]).dimensions[0]).toEqual({ id: "p", label: "P", kind: "boss", axis: "z", at: 2, near: [1, 1], nominal: 4 });
     for (const [value, field] of bad) expect(() => validatePartSpec(value, ["PLA"])).toThrow(field);
@@ -316,7 +335,7 @@ describe("structured-file validation", () => {
   });
 
   test("a part spec body takes the defaults and rejects waivers", () => {
-    expect(validatePartSpecBody({ title: "T" }, { material: "PETG", strictness: "functional" }, ["PLA", "PETG"])).toEqual({ title: "T", class: "", description: "", source: "printed", material: "PETG", strictness: "functional", dimensions: [] });
+    expect(validatePartSpecBody({ title: "T" }, { material: "PETG", strictness: "functional" }, ["PLA", "PETG"])).toEqual({ title: "T", class: "", description: "", source: "printed", material: "PETG", strictness: "functional", dimensions: [], matches: [] });
     expect(() => validatePartSpecBody({ title: "T", waivers: [] }, { material: "PLA", strictness: "quick" }, ["PLA"])).toThrow("waivers");
   });
 

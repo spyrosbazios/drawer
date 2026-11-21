@@ -464,14 +464,15 @@ describe("compare", () => {
     expect(r.code).toBe(0);
     expect(bodyOf(posts("/compare")[0])).toEqual({ a: { part: "lid", at: "r12" }, b: { path: "refs/original.stl" } });
     const lines = r.out.trimEnd().split("\n");
-    expect(lines[0]).toBe("b against a (mm, positive where b has more material): min -0.4, max +1.2, rms 0.31, 95% within 0.8, largest at (12, 4, 6) on b");
-    expect(lines[1]).toBe("size delta +2 x 0 x -1 mm, volume delta +1.2 cm3");
-    expect(lines[2]).toMatch(/^a {2}size 40 x 30 x 12.5 mm, volume 8.13 cm3/);
-    expect(lines[3]).toMatch(/^b {2}size 40 x 30 x 12.5 mm, volume 9.3 cm3/);
-    expect(lines[4]).toStartWith(`sheet a  ${cacheRoot()}/`);
-    expect(lines[4]).toEndWith("/sheet.png");
-    expect(lines[5]).toStartWith(`sheet b  ${cacheRoot()}/`);
-    expect(existsSync(lines[4]?.replace("sheet a  ", "") ?? "")).toBe(true);
+    expect(lines[0]).toBe("b against a (mm, positive on the normal side of a): min -0.4, max +1.2, rms 0.31, 95% within 0.8, largest at (12, 4, 6)");
+    expect(lines[1]).toBe("within ±0.2 mm: a 70%, b 60%");
+    expect(lines[2]).toBe("size delta +2 x 0 x -1 mm, volume delta +1.2 cm3");
+    expect(lines[3]).toMatch(/^a {2}size 40 x 30 x 12.5 mm, volume 8.13 cm3/);
+    expect(lines[4]).toMatch(/^b {2}size 40 x 30 x 12.5 mm, volume 9.3 cm3/);
+    expect(lines[5]).toStartWith(`sheet a  ${cacheRoot()}/`);
+    expect(lines[5]).toEndWith("/sheet.png");
+    expect(lines[6]).toStartWith(`sheet b  ${cacheRoot()}/`);
+    expect(existsSync(lines[5]?.replace("sheet a  ", "") ?? "")).toBe(true);
     expect(fake.downloads.filter((d) => d.endsWith(".png"))).toHaveLength(2);
   });
 
@@ -483,6 +484,10 @@ describe("compare", () => {
     expect(bodyOf(posts("/compare")[0])).toEqual({ a: { part: "lid" }, b: { part: "lid", at: "r2" } });
     expect((await sb.run(["compare", "box", "lid"])).code).toBe(1);
     expect((await sb.run(["compare", "box", "lid", "lid@"])).code).toBe(1);
+    const tight = (await sb.run(["compare", "box", "lid", "lid@r2", "--tol", "0.05"])).json<CompareResult>();
+    expect(tight.deviation.tol).toBe(0.05);
+    expect(bodyOf(posts("/compare")[1])).toEqual({ a: { part: "lid" }, b: { part: "lid", at: "r2" }, tol: 0.05 });
+    expect((await sb.run(["compare", "box", "lid", "lid@r2", "--tol", "0"])).code).toBe(1);
   });
 });
 

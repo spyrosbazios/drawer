@@ -12,6 +12,7 @@ import { useStartAgent } from "@/hooks/start-agent";
 import { useIsDesktop } from "@/hooks/use-media";
 import { useProjectNav } from "@/lib/nav";
 import { PROJECT_DEFAULTS } from "@/lib/route-search";
+import { AgentAtWork } from "./agent-at-work";
 import { briefHasContent, kickstartActions, kickstartPrompt } from "./kickstart";
 import type { KickstartId } from "./kickstart";
 
@@ -32,7 +33,7 @@ interface KickstartProps {
 
 const route = getRouteApi("/p/$slug");
 
-/** One calm line while a session of the project is on it: the agent panel owns the state and the activity. */
+/** While a session of the project is on it: the animation, and nothing to read. The agent panel owns the state and the activity. */
 function AgentOnIt({ slug, session, library }: { slug: string; session: string; library: boolean }) {
   const nav = useProjectNav(slug);
   const desktop = useIsDesktop();
@@ -40,8 +41,8 @@ function AgentOnIt({ slug, session, library }: { slug: string; session: string; 
   const shown = desktop ? (search.panel ?? PROJECT_DEFAULTS.panel) === "session" : search.sheet === "session";
   return (
     <div className="flex h-full overflow-y-auto scroll-contain">
-      <div className="m-auto flex w-full max-w-lg flex-col items-start gap-4 p-6">
-        <h2 className="text-lg font-medium">{library ? "The agent is setting up the library." : "The agent is on it."}</h2>
+      <div className="m-auto flex w-full max-w-lg flex-col items-center gap-5 p-6">
+        <AgentAtWork label={library ? "The agent is setting up the library." : "The agent is on it."} />
         {!shown && (
           <Button variant="outline" onClick={() => nav.openSession(session, { reveal: !desktop })}>
             <BotIcon /> Open the agent panel
@@ -54,7 +55,7 @@ function AgentOnIt({ slug, session, library }: { slug: string; session: string; 
 
 /**
  * The centre of a project with nothing to look at yet: a few ways to get the agent going, and a free text
- * field. While a session is on it, a single line instead: the actions would only start a second one.
+ * field. While a session is on it, an animation instead: the actions would only start a second one.
  */
 export function Kickstart({ slug, entries, onImport }: KickstartProps) {
   const agent = useStartAgent(slug);

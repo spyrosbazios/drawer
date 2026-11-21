@@ -86,8 +86,8 @@ All three families are shadcn registry items on the Radix base (`radix-nova`), i
   Only a drag on a separator writes either back (`isUserInteraction`), never a layout the window forced.
 - Nothing selected: a project with parts or an assembly redirects (replace) to the assembly, else the first part;
   an empty one shows the kickstart (`workspace/kickstart.ts` holds the prompts, `useStartAgent` in `hooks/start-agent.ts`
-  is the one place the workspace starts a session). While a session of the project is on it, the kickstart is one calm
-  line instead of its actions. The assembly report is requested only when the project's tree lists `assembly.json`.
+  is the one place the workspace starts a session). While a session of the project is on it, the kickstart is an
+  animation (`workspace/agent-at-work.tsx`, still under reduced motion) instead of its actions, with no words of its own. The assembly report is requested only when the project's tree lists `assembly.json`.
 - Review panels (`review/`, `assembly-panel`) are foldable sections (`Folds`/`Fold`) over a pinned footer
   (`PanelFooter`) that holds every action; a closed section says what it holds, a failing one starts open.
 - Statuses are drawn by `StatusChip` (report, gate, session, provider) and gates by `GateList`; never colour a status by hand.

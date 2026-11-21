@@ -21,6 +21,8 @@ import {
 import { CAMERA_VIEWS, cameraCommand } from "@/lib/camera-keys";
 import { VIEW_DIRECTIONS } from "@/lib/camera-rig";
 import type { ViewControl } from "@/lib/camera-rig";
+import { useLocalPref } from "@/lib/local-pref";
+import { realisticShading } from "@/lib/shading";
 import { cn } from "@/lib/utils";
 
 /**
@@ -217,6 +219,12 @@ export function useViewportKeys(view: ViewControl | null): void {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [view]);
+}
+
+/** The View menu's switch between the flat look and the realistic one: one preference, the same in every 3D viewer. */
+export function useShadingEntry(disabled = false): MenuEntry {
+  const on = useLocalPref(realisticShading);
+  return { kind: "check", label: "Realistic shading", checked: on, onChange: realisticShading.set, disabled };
 }
 
 /** The File menu of a viewer whose file can only be taken away as it is. */

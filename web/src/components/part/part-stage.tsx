@@ -1,7 +1,6 @@
 import type { PartReport, SessionRef } from "@drawer/shared/api";
 import { GitCompareArrowsIcon, TriangleAlertIcon } from "lucide-react";
 import { Suspense, useCallback, useMemo, useState } from "react";
-import { Slider } from "@/components/ui/slider";
 import { formatLength } from "@/core/format";
 import { useField } from "@/hooks/measure";
 import { useAttempts } from "@/hooks/parts";
@@ -13,6 +12,7 @@ import { webglAvailable } from "@/lib/mesh-scene";
 import { useProjectNav } from "@/lib/nav";
 import { pointing, usePointed } from "@/lib/pointing";
 import type { PartMode } from "@/lib/route-search";
+import { CutControl } from "@/components/viewers/cut-control";
 import { RenderProgressStrip } from "@/components/viewers/render-progress";
 import { FieldLegend } from "./field-legend";
 import { layoutAttempts } from "./attempt-tree";
@@ -36,7 +36,7 @@ interface Props {
   /** Draw the failing gates as markers on the model (View menu). */
   showGates: boolean;
   section: SectionState;
-  onSectionFraction: (fraction: number) => void;
+  onSection: (section: SectionState) => void;
   /** Hands the scene out (null on unmount): the Camera menu drives it. */
   onScene: (scene: ViewControl | null) => void;
 }
@@ -51,7 +51,7 @@ export function pointMarkers(picks: readonly SessionRef[], part: string): SceneM
 }
 
 /** The 3D view of the part's current (or `at`) report in one of the 3D modes. */
-export function PartStage({ slug, part, report, mode, evaluating, progress, showGates, section: sectionState, onSectionFraction, onScene }: Props) {
+export function PartStage({ slug, part, report, mode, evaluating, progress, showGates, section: sectionState, onSection, onScene }: Props) {
   const picks = usePointed(slug);
   const thickness = useField(mode === "thickness" ? report.analysis?.thickness : null);
   const [mismatch, setMismatch] = useState<string | null>(null);
@@ -97,21 +97,17 @@ export function PartStage({ slug, part, report, mode, evaluating, progress, show
       {mode === "thickness" && domain && (
         <FieldLegend kind="thickness" domain={domain} caption="Wall thickness" mark={required !== null ? { value: required, label: `required ≥ ${formatLength(required)}` } : null} />
       )}
-      {mode === "section" && bbox && <SectionSlider axis={axis} fraction={fraction} offset={section?.offset ?? null} onChange={onSectionFraction} />}
+      {mode === "section" && bbox && (
+        <CutControl
+          axis={axis}
+          onAxis={(a) => onSection({ axis: a, fraction })}
+          fraction={fraction}
+          onFraction={(f) => onSection({ axis, fraction: f })}
+          readout={section ? formatLength(section.offset) : undefined}
+        />
+      )}
       {mode === "deviation" && <ComparePicker slug={slug} part={part} current={report.revisionId} />}
       {evaluating && <RenderProgressStrip progress={progress} />}
-    </div>
-  );
-}
-
-/** The cut position: a continuous control, so it stays in the canvas (the axis is in the View menu). */
-function SectionSlider({ axis, fraction, offset, onChange }: { axis: Axis3; fraction: number; offset: number | null; onChange: (fraction: number) => void }) {
-  return (
-    <div className="absolute inset-x-3 bottom-3 mx-auto flex max-w-sm items-center gap-3 rounded-lg border border-line bg-card/95 px-3 py-2 text-xs shadow-sm backdrop-blur-sm">
-      <Slider min={0} max={1000} value={[Math.round(fraction * 1000)]} onValueChange={(v) => onChange((v[0] ?? 0) / 1000)} aria-label={`Cut position along ${axis}`} />
-      <span className="w-24 shrink-0 text-right tabular-nums">
-        {axis} = {offset === null ? "-" : formatLength(offset)}
-      </span>
     </div>
   );
 }

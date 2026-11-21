@@ -1,5 +1,5 @@
 import type { Vec3 } from "@drawer/shared/api";
-import { Matrix4, Quaternion, Vector3 } from "three";
+import { Quaternion, Vector3 } from "three";
 import type { PerspectiveCamera, Sphere } from "three";
 import type { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
@@ -17,38 +17,27 @@ export const VIEW_DIRECTIONS: Record<ViewName, Vec3> = {
   bottom: [0, -0.001, -1],
 };
 
-/** The iso direction seen from any corner of the cube: the same weights as `iso`, with the corner's signs. */
-export function cornerDirection(sx: number, sy: number, sz: number): Vec3 {
-  const [x, y, z] = VIEW_DIRECTIONS.iso;
-  return [Math.abs(x) * sx, Math.abs(y) * sy, Math.abs(z) * sz];
-}
-
 /**
- * What the in-canvas view cube and the Camera menu drive. Both scenes implement it, so "go to view X" is
- * one implementation: `CameraRig`.
+ * What the Camera menu, the camera keys and the fit button drive. Both scenes implement it, so "go to view X" is
+ * one implementation: `CameraRig`. (The view gizmo turns the camera by itself: `lib/viewport.ts`.)
  */
 export interface ViewControl {
   /** Animates the camera to look at the model from `direction` (model to camera), keeping the model framed. */
   goTo(direction: Vec3): void;
   /** Animates back to the whole model in view, keeping the current direction. */
   fit(): void;
-  /** CSS for a cube that turns with the camera: the container's rotation, and its inverse for parts that must stay flat. */
-  cubeTransforms(): { rotation: string; inverse: string };
   /** Runs after every frame drawn. Returns the unsubscribe. */
   addRenderListener(l: () => void): () => void;
 }
 
 const DURATION_MS = 260;
 const FIT_MARGIN = 1.15;
-// Local cube space is CSS's (y down) with world y mirrored, so a world rotation R becomes S·R·S.
-const FLIP: Vec3 = [1, -1, 1];
 
 const reducedMotion = (): boolean => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /** Moves an orbit camera to frame a bounding sphere from a direction, with a short eased transition. */
 export class CameraRig {
   private tween = 0;
-  private readonly scratch = new Matrix4();
   private readonly quat = new Quaternion();
 
   constructor(
@@ -118,16 +107,6 @@ export class CameraRig {
     this.controls.removeEventListener("start", this.cancel);
   }
 
-  /** CSS transforms for a cube standing in for the model's axes: it turns with the camera. */
-  cubeTransforms(): { rotation: string; inverse: string } {
-    this.scratch.makeRotationFromQuaternion(this.quat.copy(this.camera.quaternion).invert());
-    const e = this.scratch.elements.slice();
-    for (let c = 0; c < 3; c++) for (let r = 0; r < 3; r++) e[c * 4 + r] = (e[c * 4 + r] ?? 0) * (FLIP[r] ?? 1) * (FLIP[c] ?? 1);
-    const rotation = `matrix3d(${e.map(round).join(",")})`;
-    const t = [e[0], e[4], e[8], 0, e[1], e[5], e[9], 0, e[2], e[6], e[10], 0, 0, 0, 0, 1];
-    return { rotation, inverse: `matrix3d(${t.map((v) => round(v ?? 0)).join(",")})` };
-  }
-
   private place(target: Vector3, dir: Vector3, distance: number): void {
     this.controls.target.copy(target);
     this.camera.position.copy(target).addScaledVector(dir, distance);
@@ -135,5 +114,3 @@ export class CameraRig {
     this.controls.update();
   }
 }
-
-const round = (v: number): number => Math.round(v * 1e4) / 1e4;

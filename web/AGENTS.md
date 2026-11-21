@@ -15,6 +15,7 @@ its own origin (`/api/...`); in production the server serves `web/dist`, in dev 
 | `src/core/theme.ts` | the only raw colour values (light + dark) | canonical |
 | `src/lib/route-search.ts` | every URL search param and its validator | canonical |
 | `src/lib/local-pref.ts` | per-browser preferences (folded sections, sidebar hidden, panel sizes) | canonical |
+| `src/lib/viewport.ts` | the three.js stage of every 3D view: camera, lights, gizmo, looks, render loop | canonical |
 | `src/routes/` | route files (`routeTree.gen.ts` is generated) | canonical |
 | `src/core/schemas.ts` | zod readers, each `satisfies` its api.ts type | derived |
 | `src/components/ui/` | shadcn output, animated by Animate UI | generated, never hand-edited |
@@ -68,11 +69,17 @@ All three families are shadcn registry items on the Radix base (`radix-nova`), i
   `ShellBarContext`: the Project menu (project settings) and, while a side panel is folded, the button that brings it
   back. So a view with nothing of its own (a notice, the kickstart, a binary file) is wrapped in `PlainViewer`, never
   drawn bare, and a control that is not a menu (Read | Edit, Save) goes in the bar's `tools` / `status`, not in a
-  toolbar of its own. Every 3D canvas wears the `ViewCube` (`viewers/view-cube.tsx`, CSS 3D synced to the
-  camera, no second WebGL context). "Go to view X" is `CameraRig` in `lib/camera-rig.ts`, behind `ViewControl`: the
-  cube, the Camera menu and the 0-6 / F keys all call it. The keys answer anywhere while a viewer is mounted, never
-  from a field, a menu or a dialog (`lib/camera-keys.ts`). Sliders and legends stay in the canvas; no loose
-  toolbars around it.
+  toolbar of its own.
+- Both 3D scenes (`lib/mesh-scene.ts`, `lib/assembly-scene.ts`) stand on ONE stage, `Viewport` in `lib/viewport.ts`:
+  renderer, Z-up orbit camera, lights, drawing on demand, the view gizmo and the two looks. The gizmo
+  (`three-viewport-gizmo`, a cube in the canvas's top right corner) is drawn by the scene's own renderer in a corner
+  of the same canvas, no second WebGL context: drag it to turn the camera, click a face, edge or corner to go to
+  that view. "Go to view X" is `CameraRig` in `lib/camera-rig.ts`, behind `ViewControl`: a click on the gizmo, the
+  Camera menu, the 0-6 / F keys and the `FitButton` under the gizmo all end there. The keys answer anywhere while a
+  viewer is mounted, never from a field, a menu or a dialog (`lib/camera-keys.ts`). Realistic shading (a room, a sun,
+  shadows on a floor) is one per-browser switch for every viewer (`lib/shading.ts`, View menu); a field (thickness,
+  deviation) is always drawn flat. What changes continuously or belongs to one mode stays in the canvas: sliders,
+  legends, and the whole section cut (`viewers/cut-control.tsx`: axis and position); no loose toolbars around it.
 - Shell (`components/workspace/`): ONE header (logo, project, add, app menu) with nothing about the agent, the side
   panels or the project's settings in it. Each side panel holds its own fold button (`PanelToggle`: the sidebar's
   search row, the right panel's switch row). Laptop: `WorkspaceLayout`, a resizable group sidebar | centre | right panel; the
@@ -82,7 +89,7 @@ All three families are shadcn registry items on the Radix base (`radix-nova`), i
   only an `ActivityDot` (agent tab, the menubar's button for the folded panel, phone Session tab). The agent choice
   lives in the agent panel header's settings popover.
 - Per-viewer state is not URL state: panel sizes, sidebar hidden, which sections are folded (`lib/local-pref.ts`),
-  and the sidebar's search text. The `panel` param stays the truth for the right panel, also when it is dragged shut.
+  realistic shading, and the sidebar's search text. The `panel` param stays the truth for the right panel, also when it is dragged shut.
   Only a drag on a separator writes either back (`isUserInteraction`), never a layout the window forced.
 - Nothing selected: a project with parts or an assembly redirects (replace) to the assembly, else the first part;
   an empty one shows the kickstart (`workspace/kickstart.ts` holds the prompts, `useStartAgent` in `hooks/start-agent.ts`
@@ -133,5 +140,9 @@ All three families are shadcn registry items on the Radix base (`radix-nova`), i
   in a PATCH pins the automatic pick; refetching a gone path is a 404. Send only changed fields; skip gone paths.
 - 2026-11-20: headless Chromium with SwiftShader WebGL under the `heavy` cap starves the whole browser
   (30 s selector timeouts on pages without any 3D). Run flows with `--disable-gpu`; use GL only for 3D shots.
+- 2026-11-21 (`three-viewport-gizmo` 2.2, all handled in `lib/viewport.ts`): it reads `Object3D.DEFAULT_UP`, not
+  `camera.up`, and for Z-up names +Y "Front" (here the front is -Y), so the faces are labelled by axis; its top and
+  bottom views are a quarter turn from ours, so a click only picks the view and `CameraRig` goes there; a click on
+  its element beside the cube leaves the orbit controls disabled; `set()` (a theme change) lets go of the controls.
 - 2026-11-20: `chrome-headless-shell --screenshot` captures the boot splash: the open `/api/events` stream keeps
   the page "loading". Drive it over CDP (navigate, wait, `Page.captureScreenshot`) instead.

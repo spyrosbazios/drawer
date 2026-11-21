@@ -1,34 +1,11 @@
-import {
-  AmbientLight,
-  BackSide,
-  Box3,
-  BufferAttribute,
-  BufferGeometry,
-  Color,
-  DirectionalLight,
-  DoubleSide,
-  FrontSide,
-  MeshBasicMaterial,
-  Plane,
-  Raycaster,
-  Vector2,
-  GridHelper,
-  Group,
-  Mesh,
-  MeshStandardMaterial,
-  PerspectiveCamera,
-  Scene,
-  Sphere,
-  Vector3,
-  WebGLRenderer,
-} from "three";
+import { BackSide, Box3, BufferAttribute, BufferGeometry, Color, DoubleSide, FrontSide, MeshBasicMaterial, Plane, Raycaster, Vector2, GridHelper, Group, Mesh, MeshStandardMaterial, Sphere, Vector3 } from "three";
 import type { Object3D } from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { ThreeMFLoader } from "three/addons/loaders/3MFLoader.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
-import { CameraRig, VIEW_DIRECTIONS } from "./camera-rig";
+import { VIEW_DIRECTIONS } from "./camera-rig";
 import type { ViewControl } from "./camera-rig";
+import { Viewport, token, tokenHex } from "./viewport";
 import type { Vec3 } from "@drawer/shared/api";
 import { colorAt, fieldToVertexColors, hexToRgb } from "./field-colors";
 import type { FieldScale } from "./field-colors";
@@ -66,10 +43,6 @@ const AXIS_NORMAL: Record<Axis3, Point3> = { x: [-1, 0, 0], y: [0, -1, 0], z: [0
 /** Pointer travel (px) under which a press-and-release is a click, not an orbit drag. */
 const CLICK_SLOP = 4;
 
-/** Theme tokens are hex in core/theme.ts, which is the form three.js parses. */
-const tokenHex = (name: string): string => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-const token = (name: string): Color => new Color(tokenHex(name));
-
 /** The theme's field scales, read from the CSS variables (so a theme switch repaints). */
 export function themeScale(kind: FieldPaint["kind"], domain: readonly [number, number]): FieldScale {
   return kind === "thickness"
@@ -105,16 +78,13 @@ export function formatOf(path: string): MeshFormat | null {
 }
 
 /**
- * A three.js view of one model: orbit controls, standard views (`ViewControl`), wireframe and grid toggles. It
- * renders on demand (when the camera, size or theme changes), not in a loop, and releases every GPU resource in `dispose`.
+ * A three.js view of one model on the shared stage (`Viewport`: camera, gizmo, looks, drawing on demand): the
+ * model with its fields, section cut and click-to-point, wireframe and grid toggles. It releases every GPU
+ * resource in `dispose`.
  */
 export class MeshScene implements ViewControl {
-  private readonly renderer = new WebGLRenderer({ antialias: true });
-  private readonly scene = new Scene();
-  private readonly camera = new PerspectiveCamera(40, 1, 0.1, 1000);
-  private readonly controls: OrbitControls;
-  private readonly rig: CameraRig;
-  private readonly material = new MeshStandardMaterial({ roughness: 0.55, metalness: 0.05, side: DoubleSide });
+  private readonly view: Viewport;
+  private readonly material = new MeshStandardMaterial({ roughness: 0.55, metalness: 0.05, side: DoubleSide, clipShadows: true });
   /** Draws the inside of the solid where the section cuts it open: reads as a flat cap in the cut colour. */
   private readonly capMaterial = new MeshBasicMaterial({ side: BackSide });
   private readonly clipPlane = new Plane();
@@ -123,47 +93,22 @@ export class MeshScene implements ViewControl {
   private field: FieldPaint | null = null;
   private cap: Mesh | null = null;
   private pressAt: { x: number; y: number } | null = null;
-  private readonly renderListeners = new Set<() => void>();
   private readonly viewListeners = new Set<(pose: CameraPose) => void>();
   private applyingView = false;
   private onPick: ((hit: PickHit) => void) | null = null;
-  private readonly resize: ResizeObserver;
-  private readonly themeWatch: MutationObserver;
   private model: Object3D | null = null;
   private grid: GridHelper | null = null;
   private bounds = new Sphere();
   private box = new Box3();
   private showGrid = true;
-  private frame = 0;
   private disposed = false;
 
-  constructor(private readonly host: HTMLElement) {
-    this.camera.up.set(0, 0, 1);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    host.appendChild(this.renderer.domElement);
-    this.renderer.domElement.style.display = "block";
-
-    this.scene.add(new AmbientLight(undefined, 0.8));
-    const key = new DirectionalLight(undefined, 2.2);
-    key.position.set(1, -1.5, 2);
-    this.camera.add(key); // the key light travels with the camera, so every preset is lit from the viewer's side
-    this.scene.add(this.camera);
-
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.rig = new CameraRig(this.camera, this.controls);
-    this.controls.addEventListener("change", this.requestRender);
-    this.controls.addEventListener("change", this.emitView);
-    this.renderer.localClippingEnabled = true;
-    this.renderer.domElement.addEventListener("pointerdown", this.onPointerDown);
-    this.renderer.domElement.addEventListener("pointerup", this.onPointerUp);
-
-    this.resize = new ResizeObserver(() => this.onResize());
-    this.resize.observe(host);
-    this.themeWatch = new MutationObserver(() => this.refreshColors());
-    this.themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-
+  constructor(host: HTMLElement) {
+    this.view = new Viewport(host, () => this.refreshColors(), (direction) => this.goTo(direction));
+    this.view.addCameraListener(this.emitView);
+    this.view.renderer.domElement.addEventListener("pointerdown", this.onPointerDown);
+    this.view.renderer.domElement.addEventListener("pointerup", this.onPointerUp);
     this.refreshColors();
-    this.onResize();
   }
 
   /** Loads a model and fits it to the view. */
@@ -174,30 +119,37 @@ export class MeshScene implements ViewControl {
       return;
     }
     if (this.model) {
-      this.scene.remove(this.model);
+      this.view.scene.remove(this.model);
       this.release(this.model);
     }
     this.model = object;
-    this.scene.add(object);
+    this.view.scene.add(object);
     this.attachCap();
     this.paintField();
     this.box.setFromObject(object);
     this.box.getBoundingSphere(this.bounds);
     this.rebuildGrid();
-    this.rig.frame(this.bounds, { direction: VIEW_DIRECTIONS.iso, animate: false });
-    this.requestRender();
+    this.view.setStage(this.box);
+    this.view.rig.frame(this.bounds, { direction: VIEW_DIRECTIONS.iso, animate: false });
+    this.view.requestRender();
   }
 
   goTo(direction: Vec3): void {
-    this.rig.frame(this.bounds, { direction, animate: true });
+    this.view.rig.frame(this.bounds, { direction, animate: true });
   }
 
   fit(): void {
-    this.rig.frame(this.bounds, { animate: true });
+    this.view.rig.frame(this.bounds, { animate: true });
   }
 
-  cubeTransforms(): { rotation: string; inverse: string } {
-    return this.rig.cubeTransforms();
+  /** Shows or removes the view gizmo (two canvases that share a camera show one). */
+  setGizmo(on: boolean): void {
+    this.view.setGizmo(on);
+  }
+
+  /** The realistic look (a room, a sun, shadows) instead of the flat one. */
+  setRealistic(on: boolean): void {
+    this.view.setRealistic(on);
   }
 
   /** Called with a click on the model that was not an orbit drag; null stops pointing. */
@@ -215,7 +167,7 @@ export class MeshScene implements ViewControl {
   setField(field: FieldPaint | null): boolean {
     this.field = field;
     const ok = this.paintField();
-    this.requestRender();
+    this.view.requestRender();
     return ok;
   }
 
@@ -230,20 +182,19 @@ export class MeshScene implements ViewControl {
     this.material.needsUpdate = true;
     this.capMaterial.needsUpdate = true;
     if (this.cap) this.cap.visible = cut !== null;
-    this.requestRender();
+    this.view.requestRender();
   }
 
   /** Where a model point lands on the canvas, in CSS pixels; `behind` when it is behind the camera. */
   toScreen(p: Point3): { x: number; y: number; behind: boolean } {
-    const v = new Vector3(...p).project(this.camera);
-    const el = this.renderer.domElement;
+    const v = new Vector3(...p).project(this.view.camera);
+    const el = this.view.renderer.domElement;
     return { x: ((v.x + 1) / 2) * el.clientWidth, y: ((1 - v.y) / 2) * el.clientHeight, behind: v.z > 1 };
   }
 
   /** Runs after every frame drawn (to move HTML markers with the model). Returns the unsubscribe. */
   addRenderListener(l: () => void): () => void {
-    this.renderListeners.add(l);
-    return () => this.renderListeners.delete(l);
+    return this.view.addRenderListener(l);
   }
 
   /** Runs when a person moves the camera (not when `setView` moves it). Returns the unsubscribe. */
@@ -253,50 +204,40 @@ export class MeshScene implements ViewControl {
   }
 
   getView(): CameraPose {
-    return { position: this.camera.position.toArray(), target: this.controls.target.toArray() };
+    return { position: this.view.camera.position.toArray(), target: this.view.controls.target.toArray() };
   }
 
   setView(pose: CameraPose): void {
     this.applyingView = true;
-    this.camera.position.set(...pose.position);
-    this.controls.target.set(...pose.target);
-    this.controls.update();
+    this.view.camera.position.set(...pose.position);
+    this.view.controls.target.set(...pose.target);
+    this.view.controls.update();
     this.applyingView = false;
-    this.requestRender();
+    this.view.requestRender();
   }
 
   setWireframe(on: boolean): void {
     this.material.wireframe = on;
-    this.requestRender();
+    this.view.requestRender();
   }
 
   setGrid(on: boolean): void {
     this.showGrid = on;
     if (this.grid) this.grid.visible = on;
-    this.requestRender();
+    this.view.requestRender();
   }
 
   dispose(): void {
     this.disposed = true;
-    cancelAnimationFrame(this.frame);
-    this.rig.dispose();
-    this.resize.disconnect();
-    this.themeWatch.disconnect();
-    this.controls.removeEventListener("change", this.requestRender);
-    this.controls.removeEventListener("change", this.emitView);
-    this.renderer.domElement.removeEventListener("pointerdown", this.onPointerDown);
-    this.renderer.domElement.removeEventListener("pointerup", this.onPointerUp);
-    this.renderListeners.clear();
+    this.view.renderer.domElement.removeEventListener("pointerdown", this.onPointerDown);
+    this.view.renderer.domElement.removeEventListener("pointerup", this.onPointerUp);
     this.viewListeners.clear();
     this.onPick = null;
     this.capMaterial.dispose();
-    this.controls.dispose();
     if (this.model) this.release(this.model);
     this.disposeGrid();
     this.material.dispose();
-    this.renderer.dispose();
-    this.renderer.forceContextLoss();
-    this.renderer.domElement.remove();
+    this.view.dispose();
   }
 
   private async fetchModel(url: string, format: MeshFormat): Promise<Object3D> {
@@ -304,7 +245,7 @@ export class MeshScene implements ViewControl {
       const geometry = await new STLLoader().loadAsync(url);
       // Many STL exporters write zero normals; recomputing gives correct flat shading either way.
       geometry.computeVertexNormals();
-      return new Mesh(geometry, this.material);
+      return this.inLight(new Mesh(geometry, this.material));
     }
     const group: Group = format === "3mf" ? await new ThreeMFLoader().loadAsync(url) : await new OBJLoader().loadAsync(url);
     group.traverse((child) => {
@@ -312,8 +253,16 @@ export class MeshScene implements ViewControl {
       (Array.isArray(child.material) ? child.material : [child.material]).forEach((m) => m.dispose());
       child.material = this.material;
       if (!child.geometry.getAttribute("normal")) child.geometry.computeVertexNormals();
+      this.inLight(child);
     });
     return group;
+  }
+
+  /** A model mesh casts and takes shadows; they are drawn only in the realistic look. */
+  private inLight(mesh: Mesh): Mesh {
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    return mesh;
   }
 
   /** The first triangle mesh of the model: the one STL meshes and fields are about. */
@@ -371,9 +320,9 @@ export class MeshScene implements ViewControl {
     this.pressAt = null;
     if (!start || !this.onPick || !this.model) return;
     if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > CLICK_SLOP) return;
-    const rect = this.renderer.domElement.getBoundingClientRect();
+    const rect = this.view.renderer.domElement.getBoundingClientRect();
     const ndc = new Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
-    this.raycaster.setFromCamera(ndc, this.camera);
+    this.raycaster.setFromCamera(ndc, this.view.camera);
     const mesh = this.firstMesh();
     if (!mesh) return;
     // The cut-away side is not drawn, so a click there must reach the surface behind it.
@@ -406,12 +355,12 @@ export class MeshScene implements ViewControl {
     grid.position.set(center.x, center.y, this.box.min.z);
     grid.visible = this.showGrid;
     this.grid = grid;
-    this.scene.add(grid);
+    this.view.scene.add(grid);
   }
 
   private disposeGrid(): void {
     if (!this.grid) return;
-    this.scene.remove(this.grid);
+    this.view.scene.remove(this.grid);
     this.grid.geometry.dispose();
     const m = this.grid.material;
     (Array.isArray(m) ? m : [m]).forEach((x) => x.dispose());
@@ -420,31 +369,9 @@ export class MeshScene implements ViewControl {
 
   /** Re-reads the theme tokens: called at start and whenever the document's theme class changes. */
   private refreshColors(): void {
-    this.scene.background = token("--app-card");
     this.capMaterial.color = token("--app-cut");
     this.paintField();
     if (this.model) this.rebuildGrid();
-    this.requestRender();
+    this.view.requestRender();
   }
-
-  private onResize(): void {
-    const w = Math.max(this.host.clientWidth, 1);
-    const h = Math.max(this.host.clientHeight, 1);
-    this.renderer.setSize(w, h, false);
-    this.renderer.domElement.style.width = "100%";
-    this.renderer.domElement.style.height = "100%";
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
-    this.requestRender();
-  }
-
-  private requestRender = (): void => {
-    if (this.disposed || this.frame !== 0) return;
-    this.frame = requestAnimationFrame(() => {
-      this.frame = 0;
-      if (this.disposed) return;
-      this.renderer.render(this.scene, this.camera);
-      for (const l of this.renderListeners) l();
-    });
-  };
 }

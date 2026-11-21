@@ -3,8 +3,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MeshScene } from "@/lib/mesh-scene";
 import type { FieldPaint, PickHit, Point3, SectionCut } from "@/lib/mesh-scene";
+import { useLocalPref } from "@/lib/local-pref";
+import { realisticShading } from "@/lib/shading";
 import { cn } from "@/lib/utils";
-import { ViewCube } from "@/components/viewers/view-cube";
+import { FitButton } from "@/components/viewers/fit-button";
 import { useViewportKeys } from "@/components/viewers/viewer-menubar";
 
 /** A labelled place drawn over the model; it follows the camera. */
@@ -37,13 +39,14 @@ export interface PartCanvasProps {
   onFieldMismatch?: () => void;
   /** Small caption in the top-left corner ("A · r3"). */
   caption?: string;
-  /** Draw the view cube (compare panes share one camera, so only one of them shows it). */
+  /** Draw the view gizmo (compare panes share one camera, so only one of them shows it). */
   cube?: boolean;
   className?: string;
 }
 
 /** The part's 3D view: a MeshScene with fields, a section cut, click-to-point and HTML markers. */
 export default function PartCanvas({ url, field = null, section = null, markers = [], onPick, onScene, onFieldMismatch, caption, cube = true, className }: PartCanvasProps) {
+  const realistic = useLocalPref(realisticShading);
   const overlay = useRef<HTMLDivElement>(null);
   const onSceneRef = useRef(onScene);
   const [scene, setScene] = useState<MeshScene | null>(null);
@@ -95,6 +98,10 @@ export default function PartCanvas({ url, field = null, section = null, markers 
     scene?.setSection(section);
   }, [scene, section]);
 
+  // A field's colours are measurements: it is always drawn flat.
+  useEffect(() => scene?.setRealistic(realistic && field === null), [scene, realistic, field]);
+  useEffect(() => scene?.setGizmo(cube && state === "ready"), [scene, cube, state]);
+
   useEffect(() => {
     if (!scene) return;
     scene.setPickHandler(onPick ?? null);
@@ -137,7 +144,7 @@ export default function PartCanvas({ url, field = null, section = null, markers 
             ))}
         </div>
         {caption && <span className="pointer-events-none absolute top-2 left-2 rounded border border-line bg-card/90 px-2 py-0.5 text-xs">{caption}</span>}
-        {cube && state === "ready" && <ViewCube view={scene} />}
+        {cube && state === "ready" && <FitButton view={scene} />}
         {state === "loading" && <Skeleton className="absolute inset-0 rounded-none" aria-label="Loading model" />}
         {state === "error" && (
           <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-card p-6 text-center text-sm text-dim">

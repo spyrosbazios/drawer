@@ -1,28 +1,9 @@
-import {
-  AmbientLight,
-  Box3,
-  BufferGeometry,
-  Color,
-  DirectionalLight,
-  DoubleSide,
-  Matrix4,
-  Mesh,
-  MeshStandardMaterial,
-  PerspectiveCamera,
-  Plane,
-  Raycaster,
-  Scene,
-  Sphere,
-  SphereGeometry,
-  Vector2,
-  Vector3,
-  WebGLRenderer,
-} from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { Box3, BufferGeometry, DoubleSide, Matrix4, Mesh, MeshStandardMaterial, Plane, Raycaster, Sphere, SphereGeometry, Vector2, Vector3 } from "three";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import type { Axis, Vec3 } from "@drawer/shared/api";
-import { CameraRig, VIEW_DIRECTIONS } from "./camera-rig";
+import { VIEW_DIRECTIONS } from "./camera-rig";
 import type { ViewControl } from "./camera-rig";
+import { Viewport, token } from "./viewport";
 import { explodeOffsets, toColumnMajor } from "@/components/assembly/assembly-model";
 
 /** One placed instance to draw. `slot` picks the categorical colour `--app-cat<slot+1>`. */
@@ -41,7 +22,6 @@ export interface ScenePick {
   normal: Vec3 | null;
 }
 
-const token = (name: string): Color => new Color(getComputedStyle(document.documentElement).getPropertyValue(name).trim());
 const AXIS_NORMAL: Record<Axis, Vector3> = { x: new Vector3(-1, 0, 0), y: new Vector3(0, -1, 0), z: new Vector3(0, 0, -1) };
 /** A pointer that moves more than this between down and up was an orbit drag, not a click. */
 const CLICK_SLOP_PX = 5;
@@ -61,14 +41,7 @@ interface Placed {
  * releases every GPU resource in `dispose` (and the previous report's in `setInstances`).
  */
 export class AssemblyScene implements ViewControl {
-  private readonly renderer = new WebGLRenderer({ antialias: true });
-  private readonly scene = new Scene();
-  private readonly camera = new PerspectiveCamera(40, 1, 0.1, 1000);
-  private readonly controls: OrbitControls;
-  private readonly rig: CameraRig;
-  private readonly renderListeners = new Set<() => void>();
-  private readonly resize: ResizeObserver;
-  private readonly themeWatch: MutationObserver;
+  private readonly view: Viewport;
   private readonly raycaster = new Raycaster();
   private readonly clip = new Plane(new Vector3(0, 0, -1), 0);
   private readonly markerGeometry = new SphereGeometry(1, 16, 12);
@@ -86,41 +59,19 @@ export class AssemblyScene implements ViewControl {
   private hovered: string | null = null;
   private selected = new Set<string>();
   private down: { x: number; y: number } | null = null;
-  private frame = 0;
   private generation = 0;
   private disposed = false;
 
   onHover: (id: string | null) => void = () => {};
   onPick: (pick: ScenePick | null) => void = () => {};
 
-  constructor(private readonly host: HTMLElement) {
-    this.camera.up.set(0, 0, 1);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.localClippingEnabled = true;
-    host.appendChild(this.renderer.domElement);
-    this.renderer.domElement.style.display = "block";
-    this.renderer.domElement.style.touchAction = "none";
-
-    this.scene.add(new AmbientLight(undefined, 0.8));
-    const key = new DirectionalLight(undefined, 2.2);
-    key.position.set(1, -1.5, 2);
-    this.camera.add(key);
-    this.scene.add(this.camera);
-
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.rig = new CameraRig(this.camera, this.controls);
-    this.controls.addEventListener("change", this.requestRender);
-    const el = this.renderer.domElement;
+  constructor(host: HTMLElement) {
+    this.view = new Viewport(host, () => this.refreshColors(), (direction) => this.goTo(direction));
+    const el = this.view.renderer.domElement;
     el.addEventListener("pointerdown", this.onPointerDown);
     el.addEventListener("pointerup", this.onPointerUp);
     el.addEventListener("pointermove", this.onPointerMove);
     el.addEventListener("pointerleave", this.onPointerLeave);
-
-    this.resize = new ResizeObserver(() => this.onResize());
-    this.resize.observe(host);
-    this.themeWatch = new MutationObserver(() => this.refreshColors());
-    this.themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-    this.onResize();
     this.refreshColors();
   }
 
@@ -145,23 +96,26 @@ export class AssemblyScene implements ViewControl {
     for (const inst of instances) {
       const geometry = this.geometries.get(inst.mesh);
       if (!geometry) continue;
-      const material = new MeshStandardMaterial({ roughness: 0.55, metalness: 0.05, side: DoubleSide, clippingPlanes: [] });
+      const material = new MeshStandardMaterial({ roughness: 0.55, metalness: 0.05, side: DoubleSide, clippingPlanes: [], clipShadows: true });
       const mesh = new Mesh(geometry, material);
       mesh.matrixAutoUpdate = false;
       const base = new Matrix4().fromArray(toColumnMajor(inst.matrix));
       mesh.matrix.copy(base);
       mesh.userData.instance = inst.id;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       mesh.updateMatrixWorld(true);
       const center = new Box3().setFromObject(mesh).getCenter(new Vector3());
-      this.scene.add(mesh);
+      this.view.scene.add(mesh);
       this.placed.push({ id: inst.id, slot: inst.slot, mesh, material, base, center });
     }
     this.box.makeEmpty();
     for (const p of this.placed) this.box.expandByObject(p.mesh);
     this.applyPlacement();
     this.applyLook();
-    this.rig.frame(this.sphere(), { direction: VIEW_DIRECTIONS.iso, margin: this.margin(), animate: false });
-    this.requestRender();
+    this.view.setStage(this.box);
+    this.view.rig.frame(this.sphere(), { direction: VIEW_DIRECTIONS.iso, margin: this.margin(), animate: false });
+    this.view.requestRender();
   }
 
   setMode(mode: AssemblyMode): void {
@@ -195,21 +149,25 @@ export class AssemblyScene implements ViewControl {
   }
 
   goTo(direction: Vec3): void {
-    this.rig.frame(this.sphere(), { direction, margin: this.margin(), animate: true });
+    this.view.rig.frame(this.sphere(), { direction, margin: this.margin(), animate: true });
   }
 
   fit(): void {
-    this.rig.frame(this.sphere(), { margin: this.margin(), animate: true });
+    this.view.rig.frame(this.sphere(), { margin: this.margin(), animate: true });
   }
 
-  cubeTransforms(): { rotation: string; inverse: string } {
-    return this.rig.cubeTransforms();
+  setGizmo(on: boolean): void {
+    this.view.setGizmo(on);
+  }
+
+  /** The realistic look (a room, a sun, shadows) instead of the flat one. */
+  setRealistic(on: boolean): void {
+    this.view.setRealistic(on);
   }
 
   /** Runs after every frame drawn. Returns the unsubscribe. */
   addRenderListener(l: () => void): () => void {
-    this.renderListeners.add(l);
-    return () => this.renderListeners.delete(l);
+    return this.view.addRenderListener(l);
   }
 
   private sphere(): Sphere {
@@ -223,29 +181,20 @@ export class AssemblyScene implements ViewControl {
 
   dispose(): void {
     this.disposed = true;
-    cancelAnimationFrame(this.frame);
-    this.rig.dispose();
-    this.renderListeners.clear();
-    this.resize.disconnect();
-    this.themeWatch.disconnect();
-    const el = this.renderer.domElement;
+    const el = this.view.renderer.domElement;
     el.removeEventListener("pointerdown", this.onPointerDown);
     el.removeEventListener("pointerup", this.onPointerUp);
     el.removeEventListener("pointermove", this.onPointerMove);
     el.removeEventListener("pointerleave", this.onPointerLeave);
-    this.controls.removeEventListener("change", this.requestRender);
-    this.controls.dispose();
     this.clearPlaced();
     this.markerGeometry.dispose();
     this.markerMaterial.dispose();
-    this.renderer.dispose();
-    this.renderer.forceContextLoss();
-    el.remove();
+    this.view.dispose();
   }
 
   private clearPlaced(): void {
     for (const p of this.placed) {
-      this.scene.remove(p.mesh);
+      this.view.scene.remove(p.mesh);
       p.material.dispose();
     }
     for (const g of this.geometries.values()) g.dispose();
@@ -255,7 +204,7 @@ export class AssemblyScene implements ViewControl {
   }
 
   private clearMarkers(): void {
-    for (const m of this.markers) this.scene.remove(m);
+    for (const m of this.markers) this.view.scene.remove(m);
     this.markers = [];
   }
 
@@ -269,9 +218,9 @@ export class AssemblyScene implements ViewControl {
       p.mesh.matrix.copy(new Matrix4().makeTranslation(o[0], o[1], o[2]).multiply(p.base));
       p.mesh.matrixWorldNeedsUpdate = true;
     }
-    this.scene.updateMatrixWorld(true);
+    this.view.scene.updateMatrixWorld(true);
     this.rebuildMarkers();
-    this.requestRender();
+    this.view.requestRender();
   }
 
   private rebuildMarkers(): void {
@@ -290,7 +239,7 @@ export class AssemblyScene implements ViewControl {
       m.scale.setScalar(Math.max(size, 0.3));
       m.renderOrder = 10;
       this.markers.push(m);
-      this.scene.add(m);
+      this.view.scene.add(m);
     }
   }
 
@@ -318,18 +267,17 @@ export class AssemblyScene implements ViewControl {
     }
     this.markerMaterial.color = danger;
     this.rebuildMarkers();
-    this.requestRender();
+    this.view.requestRender();
   }
 
   private refreshColors(): void {
-    this.scene.background = token("--app-card");
     this.applyLook();
   }
 
   private hit(e: PointerEvent): { id: string; position: Vec3; normal: Vec3 | null } | null {
-    const r = this.renderer.domElement.getBoundingClientRect();
+    const r = this.view.renderer.domElement.getBoundingClientRect();
     const ndc = new Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-    this.raycaster.setFromCamera(ndc, this.camera);
+    this.raycaster.setFromCamera(ndc, this.view.camera);
     const hits = this.raycaster.intersectObjects(
       this.placed.map((p) => p.mesh),
       false,
@@ -358,7 +306,7 @@ export class AssemblyScene implements ViewControl {
     const id = this.hit(e)?.id ?? null;
     if (id === this.hovered) return;
     this.hovered = id;
-    this.renderer.domElement.style.cursor = id ? "pointer" : "";
+    this.view.renderer.domElement.style.cursor = id ? "pointer" : "";
     this.onHover(id);
     this.applyLook();
   };
@@ -368,26 +316,5 @@ export class AssemblyScene implements ViewControl {
     this.hovered = null;
     this.onHover(null);
     this.applyLook();
-  };
-
-  private onResize(): void {
-    const w = Math.max(this.host.clientWidth, 1);
-    const h = Math.max(this.host.clientHeight, 1);
-    this.renderer.setSize(w, h, false);
-    this.renderer.domElement.style.width = "100%";
-    this.renderer.domElement.style.height = "100%";
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
-    this.requestRender();
-  }
-
-  private requestRender = (): void => {
-    if (this.disposed || this.frame !== 0) return;
-    this.frame = requestAnimationFrame(() => {
-      this.frame = 0;
-      if (this.disposed) return;
-      this.renderer.render(this.scene, this.camera);
-      for (const l of this.renderListeners) l();
-    });
   };
 }

@@ -10,14 +10,17 @@ import { formatGates, formatLength } from "@/core/format";
 import { useAssembly } from "@/hooks/assembly";
 import { useStartAgent } from "@/hooks/start-agent";
 import { ASSEMBLY_PROMPT } from "@/components/workspace/kickstart";
-import { ViewCube } from "@/components/viewers/view-cube";
-import { PlainViewer, ViewerMenubar, cameraMenu, useViewportKeys } from "@/components/viewers/viewer-menubar";
+import { CutControl } from "@/components/viewers/cut-control";
+import { FitButton } from "@/components/viewers/fit-button";
+import { PlainViewer, ViewerMenubar, cameraMenu, useShadingEntry, useViewportKeys } from "@/components/viewers/viewer-menubar";
 import type { MenuSpec } from "@/components/viewers/viewer-menubar";
 import type { ViewControl } from "@/lib/camera-rig";
 import { AssemblyScene } from "@/lib/assembly-scene";
 import type { AssemblyMode, ScenePick } from "@/lib/assembly-scene";
+import { useLocalPref } from "@/lib/local-pref";
 import { webglAvailable } from "@/lib/mesh-scene";
 import { pointing } from "@/lib/pointing";
+import { realisticShading } from "@/lib/shading";
 import { cn } from "@/lib/utils";
 import { useOpenPart } from "./assembly-actions";
 import { clashingPairs, formatOverlap, failingInstances, failingPairs, mateRows, partSlots } from "./assembly-model";
@@ -42,9 +45,7 @@ const MODES: { id: AssemblyMode; label: string }[] = [
   { id: "clashes", label: "Clashes" },
   { id: "section", label: "Section" },
 ];
-const AXES: Axis[] = ["x", "y", "z"];
 const isMode = (v: string): v is AssemblyMode => MODES.some((m) => m.id === v);
-const isAxis = (v: string): v is Axis => v === "x" || v === "y" || v === "z";
 
 export function AssemblyView({ slug }: AssemblyViewProps) {
   const q = useAssembly(slug);
@@ -102,6 +103,7 @@ function AssemblyBody({ slug, report, refreshing }: { slug: string; report: Asse
   const one = selected.length === 1 && selected[0] !== undefined ? instanceById.get(selected[0]) : undefined;
   const evaluating = report.status === "pending";
 
+  const shading = useShadingEntry();
   const menus: MenuSpec[] = [
     {
       id: "view",
@@ -109,8 +111,7 @@ function AssemblyBody({ slug, report, refreshing }: { slug: string; report: Asse
       entries: [
         { kind: "radio", value: mode, onChange: (v) => isMode(v) && setMode(v), options: MODES.map((m) => ({ value: m.id, label: m.id === "clashes" && clashes.length > 0 ? `${m.label} (${clashes.length})` : m.label })) },
         { kind: "separator" },
-        { kind: "label", text: "Cut across" },
-        { kind: "radio", value: axis, onChange: (v) => isAxis(v) && setAxis(v), options: AXES.map((a) => ({ value: a, label: a.toUpperCase(), disabled: mode !== "section" })) },
+        shading,
       ],
     },
     cameraMenu(scene),
@@ -137,7 +138,7 @@ function AssemblyBody({ slug, report, refreshing }: { slug: string; report: Asse
           <Fallback report={report} />
         )}
         {mode === "exploded" && <OverlaySlider label="Spread" value={explode} onChange={setExplode} aria="Explode distance" />}
-        {mode === "section" && <OverlaySlider label={`${axis} cut`} value={at} onChange={setAt} aria="Section offset" />}
+        {mode === "section" && <CutControl axis={axis} onAxis={setAxis} fraction={at} onFraction={setAt} />}
         {mode === "clashes" && clashes.length > 0 && (
           <ul className="absolute top-2 left-2 space-y-1 text-xs">
             {clashes.map((p) => (
@@ -195,7 +196,7 @@ interface ViewerProps {
   selected: readonly string[];
   /** The clicked spot (null = clicked empty space). */
   onPoint: (pick: ScenePick | null) => void;
-  /** The scene the Camera menu and the view cube drive (null until it exists). */
+  /** The scene the Camera menu and the fit button drive (null until it exists). */
   view: ViewControl | null;
   /** Hands the scene out (null on unmount). */
   onScene: (scene: ViewControl | null) => void;
@@ -207,6 +208,7 @@ function Viewer({ slug, report, mode, explode, axis, at, selected, onPoint, view
   const [hover, setHover] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<string | null>(null);
   const [failure, setFailure] = useState<{ key: string; message: string } | null>(null);
+  const realistic = useLocalPref(realisticShading);
   const key = report.revisionId + report.evaluatedAt;
   const instanceById = useMemo(() => new Map(report.instances.map((i) => [i.id, i])), [report]);
 
@@ -258,15 +260,17 @@ function Viewer({ slug, report, mode, explode, axis, at, selected, onPoint, view
   useEffect(() => scene.current?.setExplode(explode), [explode, loaded]);
   useEffect(() => scene.current?.setSection(axis, at), [axis, at, loaded]);
   useEffect(() => scene.current?.setSelected(selected), [selected, loaded]);
+  useEffect(() => scene.current?.setRealistic(realistic), [realistic, loaded]);
 
   const hovered = hover ? instanceById.get(hover) : undefined;
   useViewportKeys(view);
   const state = failure?.key === key ? "error" : loaded === key ? "ready" : "loading";
+  useEffect(() => scene.current?.setGizmo(state === "ready"), [state]);
 
   return (
     <>
       <div ref={host} className="absolute inset-0" />
-      {state === "ready" && <ViewCube view={view} />}
+      {state === "ready" && <FitButton view={view} />}
       {state === "loading" && <Skeleton className="pointer-events-none absolute inset-0 rounded-none" aria-label="Loading models" />}
       {state === "error" && (
         <div className="absolute inset-0 flex items-center justify-center p-4 text-sm text-down">{failure?.message}</div>

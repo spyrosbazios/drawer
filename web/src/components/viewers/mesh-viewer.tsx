@@ -3,7 +3,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MeshScene, webglAvailable } from "@/lib/mesh-scene";
 import type { MeshFormat } from "@/lib/mesh-scene";
-import { ViewCube } from "./view-cube";
+import { useLocalPref } from "@/lib/local-pref";
+import { realisticShading } from "@/lib/shading";
+import { FitButton } from "./fit-button";
 import { useViewportKeys } from "./viewer-menubar";
 
 interface MeshViewerProps {
@@ -16,8 +18,9 @@ interface MeshViewerProps {
   onScene: (scene: MeshScene | null) => void;
 }
 
-/** The 3D canvas of a mesh: orbit controls, the view cube, wireframe and grid. Its menus live in the viewer that renders it. */
+/** The 3D canvas of a mesh: orbit controls, the view gizmo, wireframe, grid and the two looks. Its menus live in the viewer that renders it. */
 export default function MeshViewer({ url, format, wireframe, grid, onScene }: MeshViewerProps) {
+  const realistic = useLocalPref(realisticShading);
   const [scene, setScene] = useState<MeshScene | null>(null);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [failure, setFailure] = useState<{ key: string; message: string } | null>(null);
@@ -63,11 +66,13 @@ export default function MeshViewer({ url, format, wireframe, grid, onScene }: Me
 
   useEffect(() => scene?.setWireframe(wireframe), [scene, wireframe]);
   useEffect(() => scene?.setGrid(grid), [scene, grid]);
+  useEffect(() => scene?.setRealistic(realistic), [scene, realistic]);
+  useEffect(() => scene?.setGizmo(state === "ready"), [scene, state]);
 
   return (
     <div className="relative size-full overflow-hidden">
       <div ref={host} className="absolute inset-0" />
-      {state === "ready" && <ViewCube view={scene} />}
+      {state === "ready" && <FitButton view={scene} />}
       {state === "loading" && <Skeleton className="pointer-events-none absolute inset-0 rounded-none" aria-label="Loading model" />}
       {state === "error" && (
         <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-card p-6 text-center text-sm text-dim">

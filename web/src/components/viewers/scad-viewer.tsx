@@ -9,7 +9,7 @@ import type { MeshScene } from "@/lib/mesh-scene";
 import { cn } from "@/lib/utils";
 import { fileUrl } from "@/services/files";
 import { RenderProgressPanel, RenderProgressStrip } from "./render-progress";
-import { ViewerMenubar, cameraMenu } from "./viewer-menubar";
+import { ViewerMenubar, cameraMenu, useShadingEntry } from "./viewer-menubar";
 import type { MenuSpec } from "./viewer-menubar";
 import { CodeEditor, MeshViewer, ViewerSkeleton } from "./viewer-parts";
 
@@ -49,6 +49,7 @@ export function ScadViewer({ slug, path, at }: Props) {
   const modelShown = showPreview && preview === "model" && result !== undefined;
   const download = fileUrl(slug, path, { at, download: true });
 
+  const shading = useShadingEntry(!modelShown);
   const menus = useMemo<MenuSpec[]>(
     () => [
       {
@@ -65,6 +66,7 @@ export function ScadViewer({ slug, path, at }: Props) {
           { kind: "separator" },
           { kind: "check", label: "Wireframe", checked: wireframe, onChange: setWireframe, disabled: !modelShown },
           { kind: "check", label: "Grid", checked: grid, onChange: setGrid, disabled: !modelShown },
+          shading,
           { kind: "separator" },
           { kind: "check", label: warnings > 0 ? `Console (${warnings} ${warnings === 1 ? "warning" : "warnings"})` : "Console", checked: consoleOpen, onChange: setConsoleChoice },
         ],
@@ -79,7 +81,7 @@ export function ScadViewer({ slug, path, at }: Props) {
         ],
       },
     ],
-    [desktop, pane, preview, wireframe, grid, modelShown, scene, warnings, consoleOpen, rendering, file.isPending, render, download],
+    [desktop, pane, preview, wireframe, grid, shading, modelShown, scene, warnings, consoleOpen, rendering, file.isPending, render, download],
   );
 
   return (

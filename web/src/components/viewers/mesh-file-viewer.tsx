@@ -5,7 +5,7 @@ import { useRender } from "@/hooks/render";
 import { formatOf } from "@/lib/mesh-scene";
 import type { MeshScene } from "@/lib/mesh-scene";
 import { fileUrl } from "@/services/files";
-import { PlainViewer, ViewerMenubar, cameraMenu } from "./viewer-menubar";
+import { PlainViewer, ViewerMenubar, cameraMenu, useShadingEntry } from "./viewer-menubar";
 import type { MenuSpec } from "./viewer-menubar";
 import { BinaryCard, MeshViewer } from "./viewer-parts";
 
@@ -32,6 +32,7 @@ export function MeshFileViewer({ slug, path, rev, at }: Props) {
   const url = fileUrl(slug, path, { at, version: rev });
   const download = fileUrl(slug, path, { at, download: true });
 
+  const shading = useShadingEntry(view !== "model");
   const menus = useMemo<MenuSpec[]>(
     () => [
       {
@@ -42,6 +43,7 @@ export function MeshFileViewer({ slug, path, rev, at }: Props) {
           { kind: "separator" },
           { kind: "check", label: "Wireframe", checked: wireframe, onChange: setWireframe, disabled: view !== "model" },
           { kind: "check", label: "Grid", checked: grid, onChange: setGrid, disabled: view !== "model" },
+          shading,
         ],
       },
       cameraMenu(view === "model" ? scene : null),
@@ -63,7 +65,7 @@ export function MeshFileViewer({ slug, path, rev, at }: Props) {
         ],
       },
     ],
-    [view, wireframe, grid, scene, at, render, download],
+    [view, wireframe, grid, shading, scene, at, render, download],
   );
 
   if (!format) {

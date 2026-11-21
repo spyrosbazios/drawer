@@ -10,7 +10,7 @@ import { pointing, usePointed } from "@/lib/pointing";
 import { PART_MODES } from "@/lib/route-search";
 import type { PartMode } from "@/lib/route-search";
 import { RenderProgressPanel } from "@/components/viewers/render-progress";
-import { PlainViewer, StatusPill, ViewerMenubar, cameraMenu } from "@/components/viewers/viewer-menubar";
+import { PlainViewer, StatusPill, ViewerMenubar, cameraMenu, useShadingEntry } from "@/components/viewers/viewer-menubar";
 import type { MenuEntry, MenuSpec } from "@/components/viewers/viewer-menubar";
 import { layoutAttempts } from "./attempt-tree";
 import type { TreeNode } from "./attempt-tree";
@@ -58,7 +58,6 @@ const MODES: { value: PartMode; label: string }[] = [
   { value: "code", label: "Code" },
 ];
 const isMode = (v: string): v is PartMode => (PART_MODES as readonly string[]).includes(v);
-const isAxis = (v: string): v is SectionState["axis"] => v === "x" || v === "y" || v === "z";
 
 export function PartView({ slug, part, mode, at, compare }: PartViewProps) {
   const nav = useProjectNav(slug);
@@ -88,6 +87,8 @@ export function PartView({ slug, part, mode, at, compare }: PartViewProps) {
   const partPicked = picks.some((r) => r.kind === "part" && r.part === part);
   const others = [...layout.nodes].sort((x, y) => y.attempt.date.localeCompare(x.attempt.date)).filter((n) => n.attempt.revisionId !== (selected?.attempt.revisionId ?? ""));
 
+  const shading = useShadingEntry(comparing ? mode === "deviation" : mode !== "shaded" && mode !== "section");
+
   if (parts.isSuccess && !summary) {
     return (
       <PlainViewer label="Part viewer">
@@ -112,18 +113,14 @@ export function PartView({ slug, part, mode, at, compare }: PartViewProps) {
         { kind: "separator" },
         { kind: "item", label: `Code of A · ${labelA}`, icon: CodeIcon, onSelect: () => setCodeOf("a") },
         { kind: "item", label: `Code of B · ${labelB}`, icon: CodeIcon, onSelect: () => setCodeOf("b") },
+        { kind: "separator" },
+        shading,
       ]
     : [
         { kind: "radio", value: mode, onChange: (v) => isMode(v) && nav.setMode(v), options: MODES.map((m) => ({ value: m.value, label: m.label })) },
         { kind: "separator" },
         ...(gateCount > 0 ? ([{ kind: "check", label: `Show failing gates (${gateCount})`, checked: showGates, onChange: setShowGates, disabled: mode === "code" }, { kind: "separator" }] satisfies MenuEntry[]) : []),
-        { kind: "label", text: "Cut across" },
-        {
-          kind: "radio",
-          value: section.axis,
-          onChange: (v) => isAxis(v) && setSection((s) => ({ ...s, axis: v })),
-          options: (["x", "y", "z"] as const).map((a) => ({ value: a, label: a.toUpperCase(), disabled: mode !== "section" })),
-        },
+        shading,
       ];
 
   const menus: MenuSpec[] = [
@@ -210,7 +207,7 @@ export function PartView({ slug, part, mode, at, compare }: PartViewProps) {
             progress={progress}
             showGates={showGates}
             section={section}
-            onSectionFraction={(fraction) => setSection((s) => ({ ...s, fraction }))}
+            onSection={setSection}
             onScene={setScene}
           />
         </div>
@@ -251,11 +248,11 @@ interface CentreProps {
   progress: ReturnType<typeof useRenderProgress>;
   showGates: boolean;
   section: SectionState;
-  onSectionFraction: (fraction: number) => void;
+  onSection: (section: SectionState) => void;
   onScene: (scene: ViewControl | null) => void;
 }
 
-function Centre({ slug, part, mode, at, modelPath, evaluating, progress, showGates, section, onSectionFraction, onScene }: CentreProps) {
+function Centre({ slug, part, mode, at, modelPath, evaluating, progress, showGates, section, onSection, onScene }: CentreProps) {
   const summary = usePartSummary(slug, part);
   const report = usePartReport(slug, part, at);
 
@@ -288,7 +285,7 @@ function Centre({ slug, part, mode, at, modelPath, evaluating, progress, showGat
       </Centered>
     );
   }
-  return <PartStage slug={slug} part={part} report={r} mode={mode} evaluating={evaluating} progress={progress} showGates={showGates} section={section} onSectionFraction={onSectionFraction} onScene={onScene} />;
+  return <PartStage slug={slug} part={part} report={r} mode={mode} evaluating={evaluating} progress={progress} showGates={showGates} section={section} onSection={onSection} onScene={onScene} />;
 }
 
 function Centered({ icon, title, children }: { icon?: React.ReactNode; title: string; children: React.ReactNode }) {

@@ -5,7 +5,7 @@ The drawer web app: a PWA (laptop shell from `md`, phone shell below) over the d
 server's gates decide. No model editor, no sketcher: `.scad` is always read-only here. It talks only to
 its own origin (`/api/...`); in production the server serves `web/dist`, in dev Vite proxies `/api`. Behaviour of the API: `docs/SPEC.md`.
 
-<!-- reviewed: 2026-11-20 -->
+<!-- reviewed: 2026-11-21 -->
 
 ## Where facts live
 
@@ -25,6 +25,7 @@ its own origin (`/api/...`); in production the server serves `web/dist`, in dev 
 ## Commands
 
     MOCK_PORT=3952 bun run dev/mock-server.ts           # default 3951; 3952 while the real dev server holds 3951
+    MOCK_LIBRARY=starter bun run dev/mock-server.ts     # the library's printer still the starter example (Settings → "Set up with the agent")
     VITE_API_TARGET=http://127.0.0.1:3952 bun run dev   # 127.0.0.1:5199, proxies /api
     bun run typecheck | lint | test | build
 
@@ -46,7 +47,7 @@ All three families are shadcn registry items on the Radix base (`radix-nova`), i
   `bunx @animate-ui/cli@latest animate <name>` (or `animate all`). Animate UI swaps the `radix-ui` import for
   `@animate-ui/react/primitives/radix-ui`: same API, Motion inside. Never add a Base UI or React Aria copy of one.
 - **Agent thread**: shadcn's AI Elements (message, bubble, message-scroller, trace, code-block, attachment,
-  questionnaire, marker, item, spinner). Patterns: `https://ui.shadcn.com/docs/ai-elements/radix/<name>.md`, written
+  questionnaire, marker, spinner). Patterns: `https://ui.shadcn.com/docs/ai-elements/radix/<name>.md`, written
   for AI SDK parts: `components/session/` maps `SessionItem` onto them, one case per item type in `thread-items.tsx` (the place a new type gets its renderer). Not `elements.ai-sdk.dev` (deprecated).
 - **Layout**: `resizable` (react-resizable-panels v4: `orientation`, sizes as `"30%"` strings).
 - Markdown stays react-markdown (no Streamdown); fenced code goes to `CodeBlock` via the `pre` override in `session/markdown.tsx`.
@@ -65,7 +66,8 @@ All three families are shadcn registry items on the Radix base (`radix-nova`), i
 - Centre viewers (part, assembly, mesh file, `.scad` file) share one `ViewerMenubar` (`viewers/viewer-menubar.tsx`:
   menus described as data) and every 3D canvas wears the `ViewCube` (`viewers/view-cube.tsx`, CSS 3D synced to the
   camera, no second WebGL context). "Go to view X" is `CameraRig` in `lib/camera-rig.ts`, behind `ViewControl`: the
-  cube, the Camera menu and the 0-6 / F keys all call it. Sliders and legends stay in the canvas; no loose
+  cube, the Camera menu and the 0-6 / F keys all call it. The keys answer anywhere while a viewer is mounted, never
+  from a field, a menu or a dialog (`lib/camera-keys.ts`). Sliders and legends stay in the canvas; no loose
   toolbars around it.
 - Shell (`components/workspace/`): ONE header (logo, project, add, settings, side-panel toggles, app menu) with
   nothing about the agent in it. Laptop: `WorkspaceLayout`, a resizable group sidebar | centre | right panel; the
@@ -76,9 +78,11 @@ All three families are shadcn registry items on the Radix base (`radix-nova`), i
   settings popover.
 - Per-viewer state is not URL state: panel sizes, sidebar hidden, which sections are folded (`lib/local-pref.ts`),
   and the sidebar's search text. The `panel` param stays the truth for the right panel, also when it is dragged shut.
+  Only a drag on a separator writes either back (`isUserInteraction`), never a layout the window forced.
 - Nothing selected: a project with parts or an assembly redirects (replace) to the assembly, else the first part;
-  an empty one shows the kickstart (`workspace/kickstart.ts` holds the prompts, `useStartAgent` is the one place the
-  workspace starts a session).
+  an empty one shows the kickstart (`workspace/kickstart.ts` holds the prompts, `useStartAgent` in `hooks/start-agent.ts`
+  is the one place the workspace starts a session). While a session of the project is on it, the kickstart is one calm
+  line instead of its actions. The assembly report is requested only when the project's tree lists `assembly.json`.
 - Review panels (`review/`, `assembly-panel`) are foldable sections (`Folds`/`Fold`) over a pinned footer
   (`PanelFooter`) that holds every action; a closed section says what it holds, a failing one starts open.
 - Statuses are drawn by `StatusChip` (report, gate, session, provider) and gates by `GateList`; never colour a status by hand.
@@ -88,9 +92,9 @@ All three families are shadcn registry items on the Radix base (`radix-nova`), i
 - Session items live in the query cache merged by `seq` (`core/sessions.ts`); a `session` event fetches only
   `?since=<cached version>`. Never refetch a whole session on an event.
 - The thread folds a run of tool calls and the thoughts between them into one "N steps" group (`groupRows`); a
-  thought with no tool call in its run stays its own row. The thread has ONE live row: a running thought
-  (the newest item, session working: `liveThought`) shimmers with the line it is on and the activity tail
-  gives way to it; in a folded group it is shown below the line like a running step.
+  thought with no tool call in its run stays its own row. The thread has ONE live row: the newest item when it is
+  a running thought or tool call in a working session (`liveRow`) shimmers, and the activity tail gives way to it;
+  in a folded group it is shown below the line like a running step. Stop lives in the composer only.
 - Picks for the next message live in `lib/pointing.ts`, outside React, per project; the composer clears them. Unsent text
   and attached files live in `session/composer-drafts.ts` (uploads start at once and run on while the panel is away).
 - Thumbnails (`Project.thumbnail`) and render PNGs are addressed by their content and immutable: never add a cache-buster.
@@ -110,7 +114,9 @@ All three families are shadcn registry items on the Radix base (`radix-nova`), i
   rows off screen are sized by estimate, so `Thread` scrolls to the end again after the first frames.
 - 2026-11-20: a resizable panel that is *unmounted* when hidden loses its layout (react-resizable-panels brings it
   back at 0 wide from the saved layout) and remounts the centre viewer. Keep the panels mounted, collapse them with
-  `panelRef`, and never save a layout that has a collapsed panel (`saveOpenLayout`).
+  `panelRef`, reopen them with `resize` to the remembered px size (`openSizes`: written by a drag only, so a
+  collapsed panel keeps its width, also across reloads). 2026-11-21: `onResize` also fires when a narrow window squeezes
+  a panel to zero, which read as the viewer hiding the sidebar for good.
 - 2026-11-20: a `<form>` inside the new-project `<form>` (the URL import panel) made Enter and Preview submit
   the outer form and reload the page. Panels that live inside a form must not render a form.
 - 2026-11-20: oxlint's `react` correctness rules reject `setState` in an effect body and ref reads during

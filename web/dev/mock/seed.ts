@@ -52,10 +52,13 @@ const simple = (title: string, params: [string, number, string][]) =>
 function library(): void {
   const lib = createProject(LIBRARY_SLUG, "Library");
   write(lib, "AGENTS.md", "# Library\n\nShared notes for every project.\n\n- [rule] Read printer.json and tolerances.md before sizing anything\n- [rule] Dimensions are millimetres\n");
+  // MOCK_LIBRARY=starter: the library as a fresh install has it (printer still the example, no notes, no parts).
+  const starter = process.env.MOCK_LIBRARY === "starter";
+  write(lib, "printer.json", `${JSON.stringify(starter ? { ...PRINTER, name: "Example FDM printer" } : PRINTER, null, 2)}\n`);
+  write(lib, "materials.json", `${JSON.stringify({ materials: MATERIALS }, null, 2)}\n`);
+  if (starter) return;
   write(lib, "tolerances.md", "# Tolerances\n\n- [rule] Press fit: hole = pin - 0.15 mm\n- [rule] Sliding fit: hole = pin + 0.25 mm\n- [result] PETG snap arms under 1.6 mm cracked twice\n");
   write(lib, "materials.md", "# Materials\n\n- [material] PETG shrinks about 0.3 percent\n- [material] PLA creeps above 50 C\n");
-  write(lib, "printer.json", `${JSON.stringify(PRINTER, null, 2)}\n`);
-  write(lib, "materials.json", `${JSON.stringify({ materials: MATERIALS }, null, 2)}\n`);
   seedPart(LIBRARY_SLUG, "m3x8-screw", { title: "M3 x 8 screw", class: "screw", source: "bought", dimensions: [] }, [{ text: "// M3 x 8 socket head screw\ncylinder(d = 3, h = 8);\n", message: "screw" }]);
   seedPart(LIBRARY_SLUG, "magnet-6x2", { title: "Magnet 6 x 2", class: "magnet", source: "bought", dimensions: [] }, [{ text: "// 6 x 2 mm disc magnet\ncylinder(d = 6, h = 2);\n", message: "magnet" }]);
 }

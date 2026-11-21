@@ -61,7 +61,7 @@ try {
   let bytes: Uint8Array | null = surface();
   const baselineMiB = peakMiB();
   let start = performance.now();
-  const scan: ScanResult = await (await post("projects/bench/scans?name=noisy&filename=noisy.stl&units=mm", bytes)).json();
+  const scan = (await (await post("projects/bench/scans?name=noisy&filename=noisy.stl&units=mm", bytes)).json()) as ScanResult;
   bytes = null;
   const intake = { seconds: (performance.now() - start) / 1000, peakMiB: peakMiB() };
   start = performance.now();

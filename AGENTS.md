@@ -1,6 +1,6 @@
 # drawer
 
-<!-- reviewed: 2026-11-20 -->
+<!-- reviewed: 2026-11-21 -->
 
 Self-hosted, agent-only CAD workspace: a person states intent and reviews, an agent models in OpenSCAD,
 the server measures every model against its spec and decides when a part is done. Behaviour and routes:
@@ -83,7 +83,18 @@ library path. A library every project should have goes there; a one-off goes in 
 `docker/openscad-dev` runs OpenSCAD from the `drawer-render-base` image (build it with the
 `render-base` target of `docker/Dockerfile`, tagged `drawer-render-base`).
 Each package has `typecheck` and `test` scripts; `web` also has `lint` and `build`. Render tests need
-`DRAWER_OPENSCAD` set, or the real-OpenSCAD ones are skipped.
+`DRAWER_OPENSCAD` set, or the real-OpenSCAD ones are skipped. `scripts/` is typechecked with `server`.
+
+The parity check, for a change that must not alter any result (a refactoring step, a new mesh structure):
+it evaluates every part of a frozen copy of a data folder with real OpenSCAD and compares the reports with
+the recorded ones. Run `check` before the change and after it. A baseline holds real projects, so it lives
+outside the repository.
+
+    DRAWER_OPENSCAD=$PWD/docker/openscad-dev bun scripts/parity.ts check <baseline folder>
+    DRAWER_OPENSCAD=$PWD/docker/openscad-dev bun scripts/parity.ts record <data folder> <new baseline folder>
+
+`docker/openscad-dev` runs the image named by `OPENSCAD_DEV_IMAGE` when that is set; any drawer image holds
+the same OpenSCAD and libraries as `drawer-render-base`.
 
 A runner for the dev server (real model usage on every message):
 

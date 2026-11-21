@@ -32,18 +32,23 @@ steps and adds no new ones.
    - **Their own agent** through the CLI and skill (step 5).
    - Both, or neither for now.
 
-## 1. Prerequisites
+## 1. Check the requirements
 
-```sh
-docker compose version    # Docker with Compose v2
-git --version
-```
+Run every check before installing anything, then show the person one table: each requirement, found or missing,
+and the fix for each missing one. Install only what needs no root (Bun); for the rest, print the fix and wait.
 
-For steps 4 and 5 also [Bun](https://bun.sh): `bun --version` (install without root:
-`curl -fsSL https://bun.sh/install | bash`).
+| Requirement | Check | Pass | Fix when missing |
+|---|---|---|---|
+| OS | `uname -sm` | Linux or macOS (Darwin), x86_64 or arm64 | Windows: do all of this inside WSL2 |
+| Docker running | `docker info --format '{{.ServerVersion}}'` | prints a version | not found: Docker Engine (Linux) or Docker Desktop (macOS, Windows). "permission denied": add the user to the `docker` group (root) and log in again. "Cannot connect": start Docker |
+| Compose v2 | `docker compose version` | `v2` or newer | the Compose plugin, installed with Docker |
+| git, curl | `git --version && curl --version` | both print a version | the OS package manager |
+| Memory | Linux `free -g`, macOS `sysctl -n hw.memsize` | 8 GB or more | less: set `DRAWER_MEMORY=2g` in step 2 and tell the person big renders may fail |
+| Disk | `df -h ~` | 3 GB free | free space first |
+| Bun (steps 4, 5) | `bun --version` | prints a version | `curl -fsSL https://bun.sh/install \| bash`, then a new shell |
+| A provider CLI (step 4) | `codex --version`, `pi --version`, `gemini --version` | any one, or none for Claude | Claude needs no CLI install: the runner bundles Claude Code. Sign-in is checked in step 4 |
 
-If Docker is missing or `docker ps` says permission denied, stop and hand the person the fix for their OS
-(Docker's own install guide, then `sudo usermod -aG docker $USER` and a new login). Do not continue without it.
+Do not continue past a missing Docker, Compose or git.
 
 ## 2. Get it and configure it
 
@@ -60,7 +65,7 @@ Edit `.env` (every line is documented in it):
 - Other devices (from step 0): `DRAWER_BIND=<the private address>`, and any host name in `DRAWER_ALLOWED_HOSTS`.
 - Optionally `TZ` to the person's time zone.
 
-Check that the port is free: `ss -ltn | grep ':3050 '` prints nothing. If it is taken, set `DRAWER_PORT`.
+Check that the port is free: `curl -s http://127.0.0.1:3050` must fail to connect (exit code 7). If it is taken, set `DRAWER_PORT`.
 
 ## 3. Start the server
 
@@ -75,8 +80,8 @@ From here `<url>` means `http://<DRAWER_BIND>:<DRAWER_PORT>`.
 
 ## 4. The built-in agent (optional)
 
-Needs at least one provider CLI signed in on this machine. Check, and if none is, print the login command for the
-one the person wants and wait (table: [agent/README.md](agent/README.md)).
+Needs at least one provider signed in on this machine. Ask which one the person wants; if they know it is not
+signed in yet, print its login command now ([agent/README.md](agent/README.md)) and wait. The runner confirms it below.
 
 ```sh
 cd ~/drawer && bun install
@@ -123,7 +128,10 @@ integration gives it the same server.
 curl -s <url>/api/runners
 ```
 
-**Pass**: the runner is listed. If not, read the logs above.
+**Pass**: the runner is listed, and in its `providers` the one the person wants is `ready`. The runner checks each
+provider itself, so this is the sign-in check: `signed_out` means the person runs that provider's login (table in
+[agent/README.md](agent/README.md)), `not_installed` means its CLI is missing. The status refreshes within 5 minutes;
+restart the runner to see it at once. If the runner is not listed, read the logs above.
 
 ## 5. The CLI and skill for their own agent (optional)
 

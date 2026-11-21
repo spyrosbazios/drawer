@@ -270,7 +270,18 @@ section skip the standard previews. Measure and compare also return previews.
     thickness that covers at least 1 mm² and 0.2 % of the surface, so one sliver triangle does not
     decide it. The per-triangle values are served as `thickness.f32`.
 - `POST .../slice/<path>` → the closed outlines of the cross-section at `axis` = `at`, each with area,
-  bounding box and a best-fit circle.
+  bounding box and a best-fit circle. On an open mesh, section endpoints within the weld tolerance
+  join, and any remaining open chains appear in `open`. With `shadow: true` in place of `at`, the server
+  returns the union of the projected triangles along the axis.
+- `POST .../features/<path>` → up to 40 planes, cylinders and spheres, largest first. Each fit reports
+  its origin, direction, diameter and length where applicable, RMS, largest residual and coverage.
+  `features.f32` holds the feature index per full-resolution triangle (-1 for none). The result also
+  specifies the matching field and mesh URLs for display, using a remapped field for a light mesh.
+- `POST .../fit/<path>` with `{ at: [x, y, z], kind? }` → the fit on the surface nearest that point,
+  or 422 when no fit agrees with the surface. Both fitting routes work from the mesh cache.
+  They grow connected patches using normals and distance, then use least-squares fits following
+  [Forbes](https://eprintspublications.npl.co.uk/5050/) and [Shakarji](https://nvlpubs.nist.gov/nistpubs/jres/103/6/j36sha.pdf).
+  On a mesh file, the viewer can colour by feature or fit the picked point.
 - `POST .../probe/<path>` → whether a point is inside material and how long the run of material or
   air through it is along an axis. Open meshes return `422 render_failed`.
 - `POST .../section/<path>` → a PNG of the part cut at `axis` = `at`, lower side kept.
@@ -461,6 +472,8 @@ must come with `content-type: application/json`. No GET changes anything. The se
 | GET | `/projects/:slug/parts/:id/attempts` | → `AttemptsResponse` |
 | POST | `/projects/:slug/parts/:id/restore` | `RestoreBody` → `WriteResult` |
 | POST | `/projects/:slug/measure/<path>` | `MeasureBody` → `MeasureResult` |
+| POST | `/projects/:slug/features/<path>` | `FeaturesBody` → `FeaturesResult` |
+| POST | `/projects/:slug/fit/<path>` | `FitBody` → `Feature` |
 | POST | `/projects/:slug/slice/<path>` | `SliceBody` → `SliceResult` |
 | POST | `/projects/:slug/probe/<path>` | `ProbeBody` → `ProbeResult` |
 | POST | `/projects/:slug/section/<path>` | `SectionBody` → `SectionResult` |
@@ -525,7 +538,9 @@ drawer part <project>/<id> [--title t] [--class c] [--material m] [--strictness 
 drawer report <project>/<id> [--param name=value]... [--at <rev-id>]   the server's verdict; --param is a what-if
 drawer set <project>/<id> name=value...      write parameter values into the model
 drawer measure <file>                        mesh info and analysis of any model
-drawer slice <file> --axis z --at 5          cross-section outlines
+drawer features <file> [--at <rev-id>]       planes, cylinders and spheres
+drawer fit <file> --at x,y,z [--kind plane|cylinder|sphere]
+drawer slice <file> --axis z (--at 5 | --shadow)
 drawer probe <file> --from x,y,z --axis x    run of material or air through a point
 drawer section <file> --axis x --at 0 [--size 800]   downloads the PNG, prints its local path
 drawer attempts <project>/<id>               the attempt tree

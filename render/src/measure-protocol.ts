@@ -1,17 +1,19 @@
 /** Messages between the renderer and measure-worker.ts. */
-import type { Axis, MeshInfo, ProbeResult, SliceContour, Vec3 } from "@drawer/shared/api";
+import type { Axis, Feature, FeatureKind, MeshInfo, ProbeResult, SliceResult, Vec3 } from "@drawer/shared/api";
 import type { ScanNormalization } from "@drawer/shared/contracts";
 import type { ScanUnit } from "@drawer/shared/api";
 import type { AnalysisResult, DeviationResult } from "./measure";
 
 type Ask =
   | { op: "normalize"; format: MeshInfo["format"]; bytes: Uint8Array; units?: ScanUnit }
-  | { op: "proxy"; mesh: string; dest: string }
+  | { op: "proxy"; mesh: string; dest: string; mapping: string }
   | { op: "info"; file: string }
   | { op: "convert"; format: MeshInfo["format"]; source: Uint8Array; dest: string }
   | { op: "volume"; mesh: string }
   | { op: "analyse"; mesh: string; overhangDeg: number }
-  | { op: "slice"; mesh: string; axis: Axis; at: number }
+  | { op: "slice"; mesh: string; axis: Axis; at: number | null }
+  | { op: "features"; mesh: string }
+  | { op: "fit"; mesh: string; at: Vec3; kind?: FeatureKind }
   | { op: "probe"; mesh: string; from: Vec3; axis: Axis }
   | { op: "deviation"; a: string; b: string }
   | { op: "gap"; a: { mesh: string; matrix: number[] }; b: { mesh: string; matrix: number[] } };
@@ -25,7 +27,9 @@ export type WorkerAnswer =
   | { op: "convert"; info: MeshInfo }
   | { op: "volume"; mm3: number }
   | { op: "analyse"; analysis: AnalysisResult; thickness: Float32Array }
-  | { op: "slice"; contours: SliceContour[] }
+  | { op: "slice"; result: SliceResult }
+  | { op: "features"; features: Feature[]; values: Float32Array }
+  | { op: "fit"; feature: Feature | null }
   | { op: "probe"; probe: ProbeResult }
   | { op: "deviation"; result: DeviationResult }
   | { op: "gap"; gapMm: number; disjoint: boolean };

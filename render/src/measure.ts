@@ -3,7 +3,8 @@
  * deviation and the gap between two solids. Pure and synchronous: the renderer runs these in a
  * worker (see measure-worker.ts), tests call them directly.
  */
-import type { Axis, MeshAnalysis, ProbeResult, SliceContour, Vec3 } from "@drawer/shared/api";
+import type { Axis, MeshAnalysis, ProbeResult, SliceContour, SliceResult, Vec3 } from "@drawer/shared/api";
+import { union, type MultiPolygon, type Polygon } from "polygon-clipping";
 import { buildTopology, faces, weld, UnionFind, type Faces } from "./topology";
 import { type Bvh, buildBvh, isInside, nearestDist2, rayCrossings, rayFirst } from "./bvh";
 
@@ -138,7 +139,7 @@ export function planeAxes(axis: Axis): [number, number] {
   return axis === "x" ? [1, 2] : axis === "y" ? [0, 2] : [0, 1];
 }
 
-export function slice(pos: Float32Array, axis: Axis, at: number, w = weld(pos)): SliceContour[] {
+export function slice(pos: Float32Array, axis: Axis, at: number, w = weld(pos), weldGap = 0): Pick<SliceResult, "contours" | "open"> {
   const n = pos.length / 9;
   const ai = AXIS_INDEX[axis];
   const [ui, vi] = planeAxes(axis);
@@ -178,13 +179,49 @@ export function slice(pos: Float32Array, axis: Axis, at: number, w = weld(pos)):
     }
   }
 
+  // Snap boundary endpoints to each other within the surface weld tolerance.
+  if (weldGap > 0) {
+    const boundary = [...segsOf].filter(([, edges]) => edges.length === 1);
+    const cells = new Map<string, number[]>();
+    for (const [id, edges] of boundary) {
+      const [x, y] = pointOf.get(id)!;
+      const ix = Math.floor(x / weldGap), iy = Math.floor(y / weldGap);
+      let found: number | null = null;
+      let distance = weldGap;
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+        for (const candidate of cells.get(`${ix + i},${iy + j}`) ?? []) {
+          const q = pointOf.get(candidate)!;
+          const d = Math.hypot(x - q[0], y - q[1]);
+          if (d <= distance) {
+            found = candidate;
+            distance = d;
+          }
+        }
+      }
+      if (found !== null) {
+        const segment = edges[0]! * 2;
+        segs[segment + (segs[segment] === id ? 0 : 1)] = found;
+        segsOf.get(found)!.push(edges[0]!);
+        segsOf.delete(id);
+        const q = pointOf.get(found)!;
+        const bucket = cells.get(`${Math.floor(q[0] / weldGap)},${Math.floor(q[1] / weldGap)}`)!;
+        bucket.splice(bucket.indexOf(found), 1);
+      } else {
+        const key = `${ix},${iy}`;
+        const bucket = cells.get(key) ?? [];
+        bucket.push(id);
+        cells.set(key, bucket);
+      }
+    }
+  }
+
   const loops: [number, number][][] = [];
+  const open: [number, number][][] = [];
   const used = new Uint8Array(segs.length / 2);
-  for (let s0 = 0; s0 < used.length; s0++) {
-    if (used[s0]) continue;
+  const trace = (s0: number, start: number): void => {
+    if (used[s0]) return;
     used[s0] = 1;
-    const start = segs[s0 * 2]!;
-    let key = segs[s0 * 2 + 1]!;
+    let key = segs[s0 * 2] === start ? segs[s0 * 2 + 1]! : segs[s0 * 2]!;
     const keys = [start];
     let closed = false;
     for (;;) {
@@ -198,7 +235,6 @@ export function slice(pos: Float32Array, axis: Axis, at: number, w = weld(pos)):
       used[next] = 1;
       key = segs[next * 2] === key ? segs[next * 2 + 1]! : segs[next * 2]!;
     }
-    if (!closed) continue;
     const pts: [number, number][] = [];
     for (const k of keys) {
       const p = pointOf.get(k)!;
@@ -208,15 +244,55 @@ export function slice(pos: Float32Array, axis: Axis, at: number, w = weld(pos)):
     const first = pts[0];
     const lastP = pts[pts.length - 1];
     if (pts.length > 1 && first && lastP && Math.abs(first[0] - lastP[0]) <= 1e-9 && Math.abs(first[1] - lastP[1]) <= 1e-9) pts.pop();
-    const polygon = dropCollinear(pts);
-    if (polygon.length >= 3) loops.push(polygon);
-  }
+    if (closed) {
+      const polygon = dropCollinear(pts);
+      if (polygon.length >= 3) loops.push(polygon);
+    } else if (pts.length >= 2) {
+      const stride = Math.max(1, Math.ceil((pts.length - 1) / (MAX_CONTOUR_POINTS - 1)));
+      open.push(pts.filter((_, i) => i % stride === 0 || i === pts.length - 1).map(([x, y]) => [round(x), round(y)]));
+    }
+  };
+  for (const [start, edges] of segsOf) if (edges.length === 1) trace(edges[0]!, start);
+  for (let s0 = 0; s0 < used.length; s0++) trace(s0, segs[s0 * 2]!);
 
-  return loops.map((pts, i) => {
+  const contours = loops.map((pts, i) => {
     let depth = 0;
     for (let j = 0; j < loops.length; j++) if (j !== i && pointInPolygon(pts[0]!, loops[j]!)) depth++;
     return contour(pts, depth % 2 === 1);
   });
+  return { contours, open };
+}
+
+/** Orthographic silhouette, the union of all projected triangles. Merge in bounded batches. */
+export function shadow(pos: Float32Array, axis: Axis): SliceContour[] {
+  const [u, v] = planeAxes(axis);
+  const levels: (MultiPolygon | undefined)[] = [];
+  const batch: Polygon[] = [];
+  const flush = (): void => {
+    if (batch.length === 0) return;
+    let accumulated = union(batch[0]!, ...batch.slice(1));
+    batch.length = 0;
+    let level = 0;
+    while (levels[level] !== undefined) {
+      accumulated = union(levels[level]!, accumulated);
+      levels[level++] = undefined;
+    }
+    levels[level] = accumulated;
+  };
+  for (let t = 0; t < pos.length; t += 9) {
+    const a: [number, number] = [pos[t + u]!, pos[t + v]!];
+    const b: [number, number] = [pos[t + 3 + u]!, pos[t + 3 + v]!];
+    const c: [number, number] = [pos[t + 6 + u]!, pos[t + 6 + v]!];
+    if ((b[0] - a[0]) * (c[1] - a[1]) === (b[1] - a[1]) * (c[0] - a[0])) continue;
+    batch.push([[a, b, c, a]]);
+    if (batch.length >= 128) flush();
+  }
+  flush();
+  const merged = levels.filter((group): group is MultiPolygon => group !== undefined);
+  if (!merged.length) return [];
+  return union(merged[0]!, ...merged.slice(1)).flatMap((polygon) =>
+    polygon.map((ring, i) => contour(dropCollinear(ring.slice(0, -1)), i > 0)),
+  );
 }
 
 function pointInPolygon(p: [number, number], poly: [number, number][]): boolean {

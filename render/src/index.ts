@@ -16,8 +16,8 @@
  * OpenSCAD runs on the render queue.
  */
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, extname, join, resolve } from "node:path";
-import { MESH_FORMATS, type Axis, type Diagnostic, type MeshInfo, type ParamValues, type ProbeResult, type RenderView, type SliceResult, type Vec3 } from "@drawer/shared/api";
+import { basename, dirname, extname, join, resolve } from "node:path";
+import { MESH_FORMATS, type Axis, type Diagnostic, type FeatureKind, type MeshInfo, type ParamValues, type ProbeResult, type RenderView, type SliceResult, type Vec3 } from "@drawer/shared/api";
 import {
   type AssemblyRenderOutput,
   type CheckOutput,
@@ -63,6 +63,7 @@ const PALETTE = ["SteelBlue", "Orange", "SeaGreen", "Gold", "MediumPurple", "Tea
 const HIGHLIGHT_COLOUR = "Red";
 const ASSEMBLY_MARKER = "assembly.json";
 const THICKNESS_FILE = "thickness.f32";
+const PROXY_MAPPING = "proxy-triangles.u32";
 /** Above this gap two solids certainly share no volume: OpenSCAD is not asked. */
 const CLEAR_GAP_MM = 0.001;
 const CHECK_TIMEOUT_MS = 60_000;
@@ -178,7 +179,9 @@ export function createRenderer(opts: RendererOptions): Renderer {
       const tmp = await mkdtemp(join(meshCache, ".proxy-"));
       try {
         const dest = join(tmp, "proxy.stl");
-        await measure.ask({ op: "proxy", mesh: full, dest });
+        const mapping = join(tmp, PROXY_MAPPING);
+        await measure.ask({ op: "proxy", mesh: full, dest, mapping });
+        await rename(mapping, join(dir, PROXY_MAPPING));
         await rename(dest, path);
       } finally {
         await rm(tmp, { recursive: true, force: true });
@@ -329,14 +332,43 @@ export function createRenderer(opts: RendererOptions): Renderer {
       });
     });
 
-  const slice = (req: { key: string; axis: Axis; at: number }): Promise<SliceResult> =>
+  const slice = (req: { key: string; axis: Axis; at: number | null }): Promise<SliceResult> =>
     ask(async () => {
       checkAxis(req.axis);
       const dir = await keyDir(req.key);
-      return cachedJson(dir, `slice-${req.axis}-${numName(req.at)}.json`, async () => {
+      const cache = req.at === null ? `shadow-${req.axis}.json` : `slice-${req.axis}-${numName(req.at)}.json`;
+      return cachedJson(dir, cache, async () => {
         const r = await measure.ask({ op: "slice", mesh: join(dir, "mesh.stl"), axis: req.axis, at: req.at });
-        return { axis: req.axis, at: req.at, contours: r.contours };
+        return r.result;
       });
+    });
+
+  const features: Renderer["features"] = (req) =>
+    ask(async () => {
+      const dir = await keyDir(req.key);
+      return cachedJson(dir, "features.json", async () => {
+        const full = join(dir, "mesh.stl");
+        const info = (await readMeshMeta(dir))?.info ?? (await measure.ask({ op: "info", file: full })).info;
+        const meshFile = basename(await queue.run(() => drawMeshPath(dir, info)));
+        const r = await measure.ask({ op: "features", mesh: full });
+        await writeAtomic(join(dir, "features.f32"), new Uint8Array(r.values.buffer, r.values.byteOffset, r.values.byteLength));
+        let fieldFile = "features.f32";
+        if (meshFile === "proxy.stl") {
+          const bytes = await readFile(join(dir, PROXY_MAPPING));
+          const indices = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.length / 4);
+          const values = Float32Array.from(indices, (i) => r.values[i]!);
+          fieldFile = "features-proxy.f32";
+          await writeAtomic(join(dir, fieldFile), new Uint8Array(values.buffer));
+        }
+        return { features: r.features, fieldFile, meshFile };
+      });
+    });
+
+  const fit = (req: { key: string; at: Vec3; kind?: FeatureKind }) =>
+    ask(async () => {
+      const dir = await keyDir(req.key);
+      const { feature } = await measure.ask({ op: "fit", mesh: join(dir, "mesh.stl"), at: req.at, ...(req.kind ? { kind: req.kind } : {}) });
+      return feature;
     });
 
   const probe = (req: { key: string; from: Vec3; axis: Axis }): Promise<ProbeResult> =>
@@ -534,6 +566,8 @@ export function createRenderer(opts: RendererOptions): Renderer {
     applyParams: (source, values) => applyParams(source, values),
     analyse,
     slice,
+    features,
+    fit,
     probe,
     section,
     thumbnail,

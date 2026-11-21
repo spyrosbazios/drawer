@@ -4,9 +4,10 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { type Bvh, buildBvh } from "./bvh";
-import { analyse, deviation, gap, probe, slice, transform, volume } from "./measure";
+import { extractFeatures, fitAt } from "./features";
+import { analyse, deviation, gap, probe, shadow, slice, transform, volume } from "./measure";
 import { computeMeshInfo, isBinaryStl, meshFormatOf, parseMesh, parseStl, toBinaryStl } from "./mesh";
-import { clusterProxy, normalizeScan } from "./scan";
+import { clusterProxy, normalizeScan, scanNoise, weldTolerance } from "./scan";
 import { buildTopology, type Topology } from "./topology";
 import type { WorkerReply, WorkerRequest } from "./measure-protocol";
 
@@ -15,6 +16,7 @@ interface CachedMesh {
   pos: Float32Array;
   bvh?: Bvh;
   topology?: Topology;
+  noiseMm?: number;
 }
 const meshes = new Map<string, CachedMesh>();
 
@@ -51,9 +53,12 @@ function handle(req: WorkerRequest): { reply: WorkerReply; transfer: ArrayBuffer
       const scan = normalizeScan(req.format, req.bytes, req.units);
       return { reply: { id: req.id, ok: true, op: "normalize", scan }, transfer: [scan.bytes.buffer as ArrayBuffer] };
     }
-    case "proxy":
-      writeFileSync(req.dest, toBinaryStl(clusterProxy(load(req.mesh).pos)));
+    case "proxy": {
+      const proxy = clusterProxy(load(req.mesh).pos);
+      writeFileSync(req.dest, toBinaryStl(proxy.positions));
+      writeFileSync(req.mapping, proxy.source);
       return { reply: { id: req.id, ok: true, op: "proxy" }, transfer: [] };
+    }
     case "info": {
       const format = meshFormatOf(req.file);
       if (!format) throw new Error(`not a mesh file: ${req.file}`);
@@ -76,7 +81,21 @@ function handle(req: WorkerRequest): { reply: WorkerReply; transfer: ArrayBuffer
     }
     case "slice": {
       const mesh = load(req.mesh);
-      return { reply: { id: req.id, ok: true, op: "slice", contours: slice(mesh.pos, req.axis, req.at, topologyOf(mesh)) }, transfer: [] };
+      const surface = topologyOf(mesh);
+      const section = req.at === null ? { contours: shadow(mesh.pos, req.axis), open: [] } : slice(mesh.pos, req.axis, req.at, surface, surface.closed ? 0 : weldTolerance(mesh.pos));
+      return { reply: { id: req.id, ok: true, op: "slice", result: { ...section, axis: req.axis, at: req.at } }, transfer: [] };
+    }
+    case "features":
+    case "fit": {
+      const mesh = load(req.mesh);
+      const topology = topologyOf(mesh);
+      const noise = (mesh.noiseMm ??= scanNoise(mesh.pos, topology));
+      if (req.op === "fit") {
+        const feature = fitAt(mesh.pos, topology, bvhOf(req.mesh), req.at, req.kind, noise);
+        return { reply: { id: req.id, ok: true, op: "fit", feature }, transfer: [] };
+      }
+      const result = extractFeatures(mesh.pos, topology, noise);
+      return { reply: { id: req.id, ok: true, op: "features", ...result }, transfer: [result.values.buffer as ArrayBuffer] };
     }
     case "probe": {
       if (!topologyOf(load(req.mesh)).closed) throw new Error("an open mesh has no inside; probe requires a closed mesh");

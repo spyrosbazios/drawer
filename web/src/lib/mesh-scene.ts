@@ -16,7 +16,7 @@ export type Point3 = [number, number, number];
 
 /** A per-triangle field drawn on the model: `thickness` on the sequential scale, `deviation` on the diverging one. */
 export interface FieldPaint {
-  kind: "thickness" | "deviation";
+  kind: "thickness" | "deviation" | "features";
   values: Float32Array;
   domain: readonly [number, number];
 }
@@ -45,6 +45,10 @@ const CLICK_SLOP = 4;
 
 /** The theme's field scales, read from the CSS variables (so a theme switch repaints). */
 export function themeScale(kind: FieldPaint["kind"], domain: readonly [number, number]): FieldScale {
+  if (kind === "features") {
+    const stops = ["--app-brand", "--app-dev-pos", "--app-scale-mid", "--app-dev-neg", "--app-run"].map((name) => hexToRgb(tokenHex(name)));
+    return { stops, domain, unknown: hexToRgb(tokenHex("--app-model")), categorical: true };
+  }
   return kind === "thickness"
     ? { stops: ["--app-scale-lo", "--app-scale-mid", "--app-scale-hi"].map((n) => hexToRgb(tokenHex(n))), domain, unknown: hexToRgb(tokenHex("--app-dev-zero")) }
     : { stops: ["--app-dev-neg", "--app-dev-zero", "--app-dev-pos"].map((n) => hexToRgb(tokenHex(n))), domain, unknown: hexToRgb(tokenHex("--app-dev-zero")) };

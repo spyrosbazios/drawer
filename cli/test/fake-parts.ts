@@ -14,6 +14,7 @@ import type {
   AssemblySpec,
   Attempt,
   CompareResult,
+  Feature,
   GateResult,
   LibraryProfile,
   MeshAnalysis,
@@ -314,6 +315,8 @@ export class FakeModeling {
       case "sessions":
         return method === "POST" ? this.createSession(slug, bodyText) : null;
       case "measure":
+      case "features":
+      case "fit":
       case "slice":
       case "probe":
       case "section":
@@ -389,6 +392,11 @@ export class FakeModeling {
     const file = this.store.files.get(slug)?.get(path);
     if (!file) return apiError(404, "not_found", `no file ${path}`);
     const body = parse(bodyText);
+    if (kind === "features" || kind === "fit") {
+      const feature: Feature = { kind: "plane", origin: [0, 0, 0], direction: [0, 0, 1], diameter: null, length: null, side: null, areaMm2: 1200, rms: 0, maxError: 0, coverage: 1 };
+      const ref = refFor(file.rev);
+      return kind === "fit" ? json(feature) : json({ features: [feature], field: ref.mesh.replace("mesh.stl", "features.f32"), mesh: ref.mesh });
+    }
     if (kind === "measure") return json({ project: slug, path, mesh: MESH, analysis: ANALYSIS, render: refFor(`${file.rev}00000000`.slice(0, 24)) });
     if (kind === "probe") {
       const from = body.from as number[];
@@ -397,7 +405,8 @@ export class FakeModeling {
     if (kind === "section") return json({ axis: body.axis, at: body.at, image: `/api/renders/${file.rev}00000000/section-${String(body.axis)}-${String(body.at)}.png` });
     return json({
       axis: body.axis,
-      at: body.at,
+      at: body.shadow ? null : body.at,
+      open: [],
       contours: [
         { hole: false, areaMm2: 1200, centre: [20, 15], bbox: { min: [0, 0], max: [40, 30] }, circle: { centre: [20, 15], diameter: 38, rms: 4, round: false }, points: [] },
         { hole: true, areaMm2: 9.1, centre: [10, 5], bbox: { min: [8.3, 3.3], max: [11.7, 6.7] }, circle: { centre: [10, 5], diameter: 3.4, rms: 0.01, round: true }, points: [] },

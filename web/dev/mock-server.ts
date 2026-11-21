@@ -15,6 +15,8 @@ import type {
   CreateProjectBody,
   CreateSessionBody,
   FileAttachmentBody,
+  FeaturesBody,
+  FitBody,
   EvaluateBody,
   LibraryProfile,
   MaterialsFile,
@@ -365,7 +367,7 @@ async function handle(req: Request): Promise<Response> {
   }
 
   // ---- measuring ----
-  m = /^\/projects\/([^/]+)\/(measure|slice|probe|section)\/(.+)$/.exec(route);
+  m = /^\/projects\/([^/]+)\/(measure|features|fit|slice|probe|section)\/(.+)$/.exec(route);
   if (m?.[1] && m[2] && m[3] && method === "POST") {
     const [, slug, op, file] = m;
     await Bun.sleep(150);
@@ -374,9 +376,19 @@ async function handle(req: Request): Promise<Response> {
         const b = await body<MeasureBody>(req);
         return json(parts.measure(slug, validPath(file), b.revision));
       }
+      case "features": {
+        const b = await body<FeaturesBody>(req);
+        return json(parts.featuresOfFile(slug, validPath(file), b.revision));
+      }
+      case "fit": {
+        const b = await body<FitBody>(req);
+        const result = parts.featuresOfFile(slug, validPath(file), b.revision).features.find((feature) => !b.kind || feature.kind === b.kind);
+        if (!result) throw new HttpError("render_failed", "No fitting surface at that point");
+        return json(result);
+      }
       case "slice": {
         const b = await body<SliceBody>(req);
-        return json(parts.slice(slug, validPath(file), b.axis, b.at, b.revision));
+        return json(parts.slice(slug, validPath(file), b.axis, b.shadow ? null : b.at ?? 0, b.revision));
       }
       case "probe": {
         const b = await body<ProbeBody>(req);

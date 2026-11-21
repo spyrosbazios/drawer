@@ -10,6 +10,9 @@ import type {
   AssemblySpec,
   Attempt,
   CompareResult,
+  Feature,
+  FeaturesResult,
+  FitBody,
   CompareSide,
   Diagnostic,
   EvaluateBody,
@@ -71,7 +74,7 @@ import {
 
 const ALL_VIEWS = ["iso", "front", "top", "side"] as const;
 const REPORT_SIZE = 800;
-const REPORT_VERSION = "drawer-report-3";
+const REPORT_VERSION = "drawer-report-4";
 const SCAD_RELATIONS = new Set(["uses", "includes", "imports"]);
 
 /** What the parts module needs from the service: writes go through it so they are validated, committed, indexed and announced. */
@@ -727,9 +730,39 @@ export class PartsService {
     return { project: slug, path, mesh: r.info, analysis: analysisView(key, analysis), render: fromRenderResult(r) };
   }
 
-  async slice(slug: string, path: string, body: { axis: SliceResult["axis"]; at: number; revision?: string }): Promise<SliceResult> {
+  async features(slug: string, path: string, revision?: string): Promise<FeaturesResult> {
+    const mesh = await this.ws.mesh(slug, path, revision);
+    try {
+      const result = await this.renderer.features({ key: mesh.key });
+      const base = `/api/renders/${mesh.key}`;
+      return { features: result.features, field: `${base}/${result.fieldFile}`, mesh: `${base}/${result.meshFile}` };
+    } catch (err) {
+      if (err instanceof RenderError) throw new ApiException("render_failed", err.message);
+      throw err;
+    }
+  }
+
+  async fit(slug: string, path: string, body: FitBody): Promise<Feature> {
+    const mesh = await this.ws.mesh(slug, path, body.revision);
+    let result: Feature | null;
+    try {
+      result = await this.renderer.fit({ key: mesh.key, at: body.at, ...(body.kind ? { kind: body.kind } : {}) });
+    } catch (err) {
+      if (err instanceof RenderError) throw new ApiException("render_failed", err.message);
+      throw err;
+    }
+    if (!result) throw new ApiException("render_failed", "no fitting surface at that point");
+    return result;
+  }
+
+  async slice(slug: string, path: string, body: { axis: SliceResult["axis"]; at: number | null; revision?: string }): Promise<SliceResult> {
     const r = await this.ws.mesh(slug, path, body.revision);
-    return this.renderer.slice({ key: r.key, axis: body.axis, at: body.at });
+    try {
+      return await this.renderer.slice({ key: r.key, axis: body.axis, at: body.at });
+    } catch (err) {
+      if (err instanceof RenderError) throw new ApiException("render_failed", err.message);
+      throw err;
+    }
   }
 
   async probe(slug: string, path: string, body: { from: Vec3; axis: SliceResult["axis"]; revision?: string }): Promise<ProbeResult> {

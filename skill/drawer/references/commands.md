@@ -40,12 +40,17 @@ always; `context` prints text and takes `--json`. Errors: one line on stderr. Ex
 
 ```
 drawer scan add <project> <file> --name <name> [--units mm|cm|m|in]
+drawer features <file> [--at <revision>]
+drawer fit <file> --at x,y,z [--kind plane|cylinder|sphere]
+drawer slice <file> --axis z --shadow
 ```
 
 Use the original units for STL, OBJ or PLY. A 3MF supplies its own units. Read
 `refs/<name>/source.md` for the noise estimate and closedness, and measure
 `refs/<name>/scan.stl`. `probe` returns 422 on open surfaces. The volume and wall thickness
-fields are unavailable on those surfaces.
+fields are unavailable on those surfaces. Use `features` and `fit` for surface dimensions. Read the
+fit's RMS and coverage before using a diameter. A slice returns unclosed outlines in `open` and
+`--shadow` gives the entire silhouette along the chosen axis.
 
 ## Parts, reports, measuring
 

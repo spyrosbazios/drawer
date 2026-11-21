@@ -11,6 +11,8 @@ import type {
   CompareResult,
   CompareSide,
   Dimension,
+  Feature,
+  FeaturesResult,
   GateResult,
   MeasureResult,
   MeshAnalysis,
@@ -680,12 +682,27 @@ export function measure(slug: string, path: string, revision?: string): MeasureR
   return { project: slug, path, mesh: meshInfoOfBoxes(boxes), analysis: analysisOf(boxes), render: renderBoxes(boxes).ref };
 }
 
-export function slice(slug: string, path: string, axis: "x" | "y" | "z", at: number, revision?: string): SliceResult {
+export function featuresOfFile(slug: string, path: string, revision?: string): FeaturesResult {
+  const boxes = boxesOfFile(slug, path, revision);
+  const { ref, meshKey } = renderBoxes(boxes);
+  const features = boxes.map((b): Feature => ({
+    kind: "plane",
+    origin: [b.min[0], b.min[1], b.max[2]],
+    direction: [0, 0, 1],
+    diameter: null, length: null, side: null,
+    areaMm2: (b.max[0] - b.min[0]) * (b.max[1] - b.min[1]),
+    rms: 0, maxError: 0, coverage: 1,
+  })).sort((a, b) => b.areaMm2 - a.areaMm2);
+  meshes.get(meshKey)?.fields.set("features.f32", perTriangleField(boxes.map((_, i) => i)));
+  return { features, field: `/api/renders/${meshKey}/features.f32`, mesh: ref.mesh };
+}
+
+export function slice(slug: string, path: string, axis: "x" | "y" | "z", at: number | null, revision?: string): SliceResult {
   const boxes = boxesOfFile(slug, path, revision);
   const k = AXES[axis];
   const [u, v] = [0, 1, 2].filter((i) => i !== k) as [number, number];
   const contours = boxes
-    .filter((b) => (b.min[k] ?? 0) <= at && at <= (b.max[k] ?? 0))
+    .filter((b) => at === null || ((b.min[k] ?? 0) <= at && at <= (b.max[k] ?? 0)))
     .map((b) => {
       const min: [number, number] = [b.min[u] ?? 0, b.min[v] ?? 0];
       const max: [number, number] = [b.max[u] ?? 0, b.max[v] ?? 0];
@@ -701,7 +718,7 @@ export function slice(slug: string, path: string, axis: "x" | "y" | "z", at: num
         points: [min, [max[0], min[1]], max, [min[0], max[1]]] as [number, number][],
       };
     });
-  return { axis, at, contours };
+  return { axis, at, contours, open: [] };
 }
 
 export function probe(slug: string, path: string, from: Vec3, axis: "x" | "y" | "z", revision?: string): ProbeResult {

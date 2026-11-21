@@ -2,7 +2,7 @@
  * Contracts between the server and its two helper packages. The server depends on these
  * interfaces only; @drawer/render and @drawer/importers implement them.
  */
-import type { Axis, Diagnostic, ImportFile, ImportPreview, ImportSite, MeshAnalysis, MeshInfo, ParamValues, ProbeResult, RenderStage, RenderView, ScadParam, SliceResult, Vec3, ScanUnit, MeshFormat } from "./api";
+import type { Axis, Diagnostic, Feature, FeatureKind, ImportFile, ImportPreview, ImportSite, MeshAnalysis, MeshInfo, ParamValues, ProbeResult, RenderStage, RenderView, ScadParam, SliceResult, Vec3, ScanUnit, MeshFormat } from "./api";
 
 // ---- @drawer/render ---------------------------------------------------------------------
 
@@ -131,7 +131,9 @@ export interface Renderer {
   /** Shells, base, overhangs, wall thickness. `overhangDeg` is the steepest printable angle from vertical. */
   analyse(req: { key: MeshKey; overhangDeg: number }): Promise<MeshAnalysisOutput>;
   /** Cross-section outlines at `axis` = `at`. */
-  slice(req: { key: MeshKey; axis: Axis; at: number }): Promise<SliceResult>;
+  slice(req: { key: MeshKey; axis: Axis; at: number | null }): Promise<SliceResult>;
+  features(req: { key: MeshKey }): Promise<{ features: Feature[]; fieldFile: string; meshFile: string }>;
+  fit(req: { key: MeshKey; at: Vec3; kind?: FeatureKind }): Promise<Feature | null>;
   /** The run of material or air through a point along an axis. */
   probe(req: { key: MeshKey; from: Vec3; axis: Axis }): Promise<ProbeResult>;
   /** PNG of the solid cut at `axis` = `at` (the lower side kept), looking at the cut. Returns the file name inside the cache directory. Throws RenderError. */

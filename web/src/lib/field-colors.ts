@@ -10,6 +10,7 @@ export interface FieldScale {
   stops: readonly Rgb[];
   domain: readonly [number, number];
   unknown: Rgb;
+  categorical?: boolean;
 }
 
 /** Where a value falls on the scale, 0..1 (NaN for an unknown value). */
@@ -21,6 +22,7 @@ export function scalePosition(value: number, domain: readonly [number, number]):
 }
 
 export function colorAt(scale: FieldScale, value: number): Rgb {
+  if (scale.categorical) return Number.isInteger(value) && value >= 0 ? scale.stops[value % scale.stops.length] ?? scale.unknown : scale.unknown;
   const t = scalePosition(value, scale.domain);
   if (Number.isNaN(t)) return scale.unknown;
   const n = scale.stops.length;

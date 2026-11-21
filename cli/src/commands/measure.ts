@@ -1,3 +1,4 @@
+import { FEATURE_KINDS, type Feature } from "@drawer/shared/api";
 import type { Axis, CompareResult, CompareSide, MeasureResult, ProbeResult, SliceContour, SliceResult } from "@drawer/shared/api";
 import { UsageError, parseFileArg } from "../args.ts";
 import type { Command } from "../command.ts";
@@ -57,27 +58,72 @@ function contourLine(c: SliceContour, index: number): string {
 
 function sliceText(r: SliceResult): string {
   const [u, v] = AXES.filter((a) => a !== r.axis);
-  const lines = [`slice ${r.axis} = ${num(r.at)}: ${r.contours.length} outlines, coordinates are (${u}, ${v})`];
+  const place = r.at === null ? `shadow along ${r.axis}` : `slice ${r.axis} = ${num(r.at)}`;
+  const lines = [`${place}: ${r.contours.length} outlines, coordinates are (${u}, ${v})`];
+  if (r.open.length) lines.push(`${r.open.length} open outlines`);
   lines.push(...r.contours.map(contourLine));
   return lines.join("\n");
 }
 
 export const slice: Command = {
   name: "slice",
-  usage: ["drawer slice <project>/<path> --axis z --at 5"],
+  usage: ["drawer slice <project>/<path> --axis z (--at 5 | --shadow)"],
   summary: "cross-section outlines at a plane: area, centre, size and best-fit circle of each",
   details: "Use it to find where a feature really is before changing a spec point, and to read a hole's true diameter. `--json` includes the outline points.",
-  flags: { string: ["axis", "at"] },
+  flags: { string: ["axis", "at"], boolean: ["shadow"] },
   async run(ctx, args) {
     const file = parseFileArg(args.positionals[0]);
     if (args.positionals.length > 1) throw new UsageError("slice takes one file argument");
     const axis = parseAxis(args.str("axis"));
     const at = args.num("at");
-    if (at === undefined) throw new UsageError("slice needs --at <position along the axis, mm>");
+    const shadow = args.bool("shadow");
+    if (shadow === (at !== undefined)) throw new UsageError("slice needs exactly one of --at <position along the axis, mm> or --shadow");
     ctx.subject = args.positionals[0];
     const client = await ctx.client();
-    const result = await client.slice(file.project, file.path, { axis, at });
+    const result = await client.slice(file.project, file.path, at === undefined ? { axis, shadow: true } : { axis, at });
     emit(ctx.mode, result, () => sliceText(result));
+  },
+};
+
+function featureText(feature: Feature): string {
+  const lines = [`${feature.kind}: origin (${feature.origin.map(num).join(", ")})`];
+  if (feature.direction) lines.push(`direction (${feature.direction.map(num).join(", ")})`);
+  if (feature.diameter !== null) lines.push(`${feature.side}, diameter ${num(feature.diameter)} mm`);
+  if (feature.length !== null) lines.push(`length ${num(feature.length)} mm`);
+  return `${lines.join(", ")}, ${num(feature.areaMm2)} mm2, ${num(feature.coverage * 100)}% coverage, RMS ${num(feature.rms)} mm, max error ${num(feature.maxError)} mm`;
+}
+
+export const features: Command = {
+  name: "features",
+  usage: ["drawer features <project>/<path> [--at <revision>]"],
+  summary: "find the planes, cylinders and spheres in a mesh",
+  flags: { string: ["at"] },
+  async run(ctx, args) {
+    const file = parseFileArg(args.positionals[0]);
+    if (args.positionals.length > 1) throw new UsageError("features takes one file argument");
+    const revision = args.str("at");
+    const client = await ctx.client();
+    const result = await client.features(file.project, file.path, revision ? { revision } : {});
+    emit(ctx.mode, result, () => result.features.map(featureText).join("\n") || "No fitted features");
+  },
+};
+
+export const fit: Command = {
+  name: "fit",
+  usage: ["drawer fit <project>/<path> --at x,y,z [--kind plane|cylinder|sphere] [--revision <revision>]"],
+  summary: "fit a feature at a point on a mesh",
+  flags: { string: ["at", "kind", "revision"] },
+  async run(ctx, args) {
+    const file = parseFileArg(args.positionals[0]);
+    if (args.positionals.length > 1) throw new UsageError("fit takes one file argument");
+    const at = parseVec3(args.str("at"), "at");
+    const raw = args.str("kind");
+    const kind = FEATURE_KINDS.find((value) => value === raw);
+    if (raw !== undefined && !kind) throw new UsageError("--kind must be plane, cylinder or sphere");
+    const revision = args.str("revision");
+    const client = await ctx.client();
+    const result = await client.fit(file.project, file.path, { at, ...(kind ? { kind } : {}), ...(revision ? { revision } : {}) });
+    emit(ctx.mode, result, () => featureText(result));
   },
 };
 

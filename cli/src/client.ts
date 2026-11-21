@@ -12,6 +12,10 @@ import type {
   CreateSessionBody,
   EditBody,
   EvaluateBody,
+  Feature,
+  FeaturesBody,
+  FeaturesResult,
+  FitBody,
   FileAttachmentBody,
   FileAttachmentResult,
   FileInfo,
@@ -374,6 +378,14 @@ export class Client {
 
   slice(slug: string, path: string, body: SliceBody): Promise<SliceResult> {
     return this.sendJson("POST", this.filePath(slug, "slice", path), body);
+  }
+
+  features(slug: string, path: string, body: FeaturesBody = {}): Promise<FeaturesResult> {
+    return this.sendJson("POST", this.filePath(slug, "features", path), body);
+  }
+
+  fit(slug: string, path: string, body: FitBody): Promise<Feature> {
+    return this.sendJson("POST", this.filePath(slug, "fit", path), body);
   }
 
   probe(slug: string, path: string, body: ProbeBody): Promise<ProbeResult> {

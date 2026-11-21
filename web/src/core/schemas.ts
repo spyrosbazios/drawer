@@ -8,6 +8,8 @@ import type {
   CompareResult,
   FileAttachmentResult,
   FileInfo,
+  Feature,
+  FeaturesResult,
   HistoryResponse,
   ImportPreview,
   ImportResult,
@@ -36,7 +38,7 @@ import type {
   WriteResult,
   Settings,
 } from "@drawer/shared/api";
-import { DIMENSION_KINDS, MESH_FORMATS, PROVIDER_KINDS } from "@drawer/shared/api";
+import { DIMENSION_KINDS, FEATURE_KINDS, MESH_FORMATS, PROVIDER_KINDS } from "@drawer/shared/api";
 import { z } from "zod";
 
 const kind = z.enum(["markdown", "scad", "mesh", "image", "pdf", "text", "binary"]);
@@ -339,9 +341,29 @@ export const measureSchema = z.object({
   render: renderRef,
 }) satisfies z.ZodType<MeasureResult>;
 
+export const featureSchema = z.object({
+  kind: z.enum(FEATURE_KINDS),
+  origin: vec3,
+  direction: vec3.nullable(),
+  diameter: z.number().nullable(),
+  length: z.number().nullable(),
+  side: z.enum(["hole", "boss"]).nullable(),
+  areaMm2: z.number(),
+  rms: z.number(),
+  maxError: z.number(),
+  coverage: z.number(),
+}) satisfies z.ZodType<Feature>;
+
+export const featuresSchema = z.object({
+  features: z.array(featureSchema),
+  field: z.string(),
+  mesh: z.string(),
+}) satisfies z.ZodType<FeaturesResult>;
+
 export const sliceSchema = z.object({
   axis,
-  at: z.number(),
+  at: z.number().nullable(),
+  open: z.array(z.array(vec2)),
   contours: z.array(
     z.object({
       hole: z.boolean(),

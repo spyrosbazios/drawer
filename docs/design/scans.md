@@ -85,7 +85,7 @@ interface AlignResult {
 
 - **Without `to`** (a datum frame for the scan alone): the largest plane goes down onto z = 0, the
   longest remaining direction along x, the bounding box's corner or the main axis of revolution at the
-  origin. Built from S4's features.
+  origin. Built from measured features.
 - **With `to`** (onto a part or another mesh): starts from the principal axes in all 24 orientations,
   refines each briefly with point-to-plane ICP, then the best fully. Pairs further than three times the
   median distance, or with opposed normals, are left out; poses are scored on all samples so a pose
@@ -93,56 +93,6 @@ interface AlignResult {
 
 Alignment is never part of a gate. A gate reads the transform from the spec, so the same files always
 give the same status.
-
-## S4. What the scan is made of: `features` and `fit`
-
-One fitting engine, two ways in.
-
-- `POST /projects/:slug/features/<path>` → every plane, cylinder and sphere the surface holds, largest
-  first, at most 40. For the agent: it reads the object as a list.
-- `POST /projects/:slug/fit/<path>` with `{ at: Vec3, kind?: FeatureKind }` → the one feature at that
-  point. For a person pointing at something in the viewer, and for the agent checking one spot.
-
-```ts
-type FeatureKind = "plane" | "cylinder" | "sphere";
-interface Feature {
-  kind: FeatureKind;
-  /** plane: a point on it. cylinder: a point on the axis. sphere: the centre. */
-  origin: Vec3;
-  /** plane: the normal. cylinder: the axis. sphere: null. */
-  direction: Vec3 | null;
-  diameter: number | null;
-  /** cylinder: its length along the axis. */
-  length: number | null;
-  /** cylinder and sphere: material outside the surface (a hole) or inside it (a pin). */
-  side: "hole" | "boss" | null;
-  areaMm2: number;
-  /** RMS distance of the surface from the fitted shape, and the largest, mm. All points count. */
-  rms: number; maxError: number;
-  /** Share of the full shape that the surface covers: 0.5 for half a cylinder. Low coverage means a less certain diameter. */
-  coverage: number;
-}
-```
-
-`features` also writes `features.f32` (the feature's index per triangle, -1 for none), so the viewer can
-colour the scan by feature with the field mechanism it already has.
-
-**Method** (published, not taken from another program's code):
-
-- Grow a region from a seed triangle over neighbours whose normal and distance agree with the current
-  fit; refit; repeat until it stops growing. `features` seeds from the flattest unclaimed triangles.
-- Plane: centroid and the smallest eigenvector of the covariance. Sphere and cylinder: an algebraic
-  start, then Gauss–Newton on the true distances with the parameterisations of Forbes and Shakarji.
-- The kind is chosen by fit error when not given: the simplest shape within the scan's noise wins.
-- Cone and torus are left out until a real part needs them.
-
-**Proof.** The fits are tested against NIST's reference data sets for least-squares geometry, and
-against generated shapes with known noise, partial coverage and outliers. No accuracy is claimed in the
-docs that a test in the repo does not reproduce.
-
-**Sections.** `slice` on an open mesh closes gaps shorter than the weld tolerance and returns the
-outlines that still do not close as `open`, instead of dropping them. `slice` with `shadow: true`
-returns the outline of the whole object projected along the axis: the pocket a holder needs.
 
 ## S5. Checking the model: the `match` gate
 
@@ -197,7 +147,6 @@ skill. Its rules:
 
 | Stage | Holds | Behaviour changes |
 |---|---|---|
-| 3 | S4 `features`, `fit`, sections on open meshes | the agent can read a scan |
 | 4 | G3, S2 scanned parts, S3 `align` | a scan is a part with a frame; `mate` and `clash` reach it |
 | 5 | S5 `match`, both-way deviation | a copy can be checked |
 | 6 | S6 guide chapter, complete | written alongside each stage, finished here |
@@ -207,7 +156,6 @@ mock server together, as the invariant requires.
 
 ## Open questions
 
-- **Feature extraction at the intake limit.** Repeat the generated noisy mesh benchmark with `features` when it lands.
 - **`clash` against an open scan.** Depth behind the surface is the proposal; the threshold (the
   printer's clearance, or the scan's noise) is not decided.
 - **A scan in the library.** Bought parts live in `_library`; a scanned bought part would need

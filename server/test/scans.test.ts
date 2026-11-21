@@ -37,3 +37,22 @@ test("requires units for unitless input and rejects point clouds, unsafe names a
   expect(empty.json.message).toContain("point cloud");
   expect((await h.get("/api/projects/scans/files/refs/cloud/scan.stl")).status).toBe(404);
 });
+
+test("features and fit build only a mesh and serve the indexed feature field", async () => {
+  await h.write("scans", "refs/part.stl", "solid");
+  const prefix = "/api/projects/scans";
+  const count = h.renderer.calls.render;
+  const result = await h.post<import("@drawer/shared/api").FeaturesResult>(`${prefix}/features/refs/part.stl`, {});
+  expect(result.status).toBe(200);
+  expect(result.json.features[0]?.kind).toBe("plane");
+  expect((await h.get(result.json.field)).status).toBe(200);
+  expect((await h.get(result.json.mesh)).status).toBe(200);
+  const fitted = await h.post<import("@drawer/shared/api").Feature>(`${prefix}/fit/refs/part.stl`, { at: [0, 0, 0], kind: "plane" });
+  expect(fitted.json.kind).toBe("plane");
+  expect((await h.post(`${prefix}/fit/refs/part.stl`, { at: [0, 0] })).status).toBe(400);
+  expect((await h.post(`${prefix}/fit/refs/part.stl`, { at: [0, 0, 0], kind: "sphere" })).status).toBe(422);
+  const shadow = await h.post<import("@drawer/shared/api").SliceResult>(`${prefix}/slice/refs/part.stl`, { axis: "z", shadow: true });
+  expect(shadow.json).toMatchObject({ axis: "z", at: null, open: [] });
+  expect((await h.post(`${prefix}/slice/refs/part.stl`, { axis: "z", shadow: true, at: 1 })).status).toBe(400);
+  expect(h.renderer.calls.render).toBe(count);
+});

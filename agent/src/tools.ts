@@ -7,6 +7,7 @@ import { ApiFailure, type Client } from "@drawer/cli/client";
 import {
   ASSEMBLY_FILE,
   DIMENSION_KINDS,
+  FEATURE_KINDS,
   LIBRARY_SLUG,
   MATERIALS_FILE,
   PART_DIR,
@@ -48,6 +49,8 @@ export type ToolClient = Pick<
   | "setParams"
   | "render"
   | "measure"
+  | "features"
+  | "fit"
   | "slice"
   | "probe"
   | "section"
@@ -682,22 +685,44 @@ const measureFile = defineTool({
   },
 });
 
+const features = defineTool({
+  name: "features",
+  description: "List up to 40 measured planar, cylindrical and spherical features on a model or scan, largest first.",
+  input: { path: filePath },
+  async run(ctx, { path }) {
+    const where = locate(ctx, path);
+    const result = await ctx.client.features(where.slug, where.path);
+    return output(JSON.stringify(result.features), `${result.features.length} features on ${path}`);
+  },
+});
+
+const fit = defineTool({
+  name: "fit",
+  description: "Fit the surface nearest a picked point. Optionally specify plane, cylinder or sphere. Read coverage and RMS along with diameter.",
+  input: { path: filePath, at: vec3, kind: z.enum(FEATURE_KINDS).optional() },
+  async run(ctx, { path, at, kind }) {
+    const where = locate(ctx, path);
+    const feature = await ctx.client.fit(where.slug, where.path, { at: at as Vec3, ...(kind ? { kind } : {}) });
+    return output(JSON.stringify(feature), `fit ${feature.kind} on ${path}`);
+  },
+});
+
 const slice = defineTool({
   name: "slice",
   description:
-    "Cut a .scad or mesh file at axis = at and list the closed outlines: area, bounding box, centre, best-fit circle (diameter, roundness). Use it to find where a hole or slot really is before changing a spec.",
-  input: { path: filePath, axis, at: z.number() },
-  async run(ctx, { path, axis: ax, at }) {
+    "Cut a model at axis = at, or use shadow to project its full shape along the axis. Closed outlines include area and a best-fit circle. Open outlines contain points.",
+  input: { path: filePath, axis, at: z.number().optional(), shadow: z.boolean().optional() },
+  async run(ctx, { path, axis: ax, at, shadow }) {
     const where = locate(ctx, path);
-    const res = await ctx.client.slice(where.slug, where.path, { axis: ax, at });
+    const res = await ctx.client.slice(where.slug, where.path, { axis: ax, ...(at === undefined ? {} : { at }), ...(shadow === undefined ? {} : { shadow }) });
     const lines = res.contours.map(
       (c, i) =>
         `${i + 1}. ${c.hole ? "hole" : "outline"}: area ${c.areaMm2.toFixed(2)} mm², centre ${vec(c.centre)}, box ${vec(c.bbox.min)}–${vec(c.bbox.max)}, circle Ø${c.circle.diameter.toFixed(3)} at ${vec(c.circle.centre)} (${c.circle.round ? "round" : "not round"}, rms ${c.circle.rms.toFixed(3)})`,
     );
-    return output(
-      [`${path} cut at ${ax} = ${at}: ${res.contours.length} outline(s). Coordinates are the other two axes in x-y-z order.`, ...lines].join("\n"),
-      `slice ${path} ${ax}=${at}: ${res.contours.length} outline(s)`,
-    );
+    const place = res.at === null ? `shadow along ${ax}` : `cut at ${ax} = ${res.at}`;
+    const header = `${path} ${place}: ${res.contours.length} closed and ${res.open.length} open outlines. Coordinates are the other two axes in x-y-z order.`;
+    if (res.open.length) lines.push(JSON.stringify(res.open));
+    return output([header, ...lines].join("\n"), `${place} on ${path}`);
   },
 });
 
@@ -965,6 +990,8 @@ export const drawerTools: readonly DrawerTool[] = [
   setParams,
   viewPart,
   measureFile,
+  features,
+  fit,
   slice,
   probe,
   section,

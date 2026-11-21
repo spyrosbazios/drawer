@@ -230,6 +230,10 @@ export function summarizeCall(name: string, input: unknown): string {
       return on("setting the parameters of", part);
     case "view_part":
       return on("looking at", part ?? path);
+    case "features":
+      return on("finding features on", path);
+    case "fit":
+      return on("fitting a surface on", path);
     case "measure_file":
       return on("measuring", path);
     case "slice":

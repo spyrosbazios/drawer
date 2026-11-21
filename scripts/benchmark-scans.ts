@@ -68,7 +68,10 @@ try {
   const mesh = await renderer.mesh({ file: join(root, "projects", "bench", scan.path), searchPaths: [] });
   await renderer.analyse({ key: mesh.key, overhangDeg: 45 });
   const analyse = { seconds: (performance.now() - start) / 1000, peakMiB: peakMiB() };
-  process.stdout.write(`${JSON.stringify({ triangles: mesh.info.triangles, noiseMm: scan.noiseMm, baselineMiB, intake, analyse })}\n`);
+  start = performance.now();
+  const inspected = await renderer.features({ key: mesh.key });
+  const features = { seconds: (performance.now() - start) / 1000, peakMiB: peakMiB(), count: inspected.features.length };
+  process.stdout.write(`${JSON.stringify({ triangles: mesh.info.triangles, noiseMm: scan.noiseMm, baselineMiB, intake, analyse, features })}\n`);
 } finally {
   await app.close();
   await rm(root, { recursive: true, force: true });

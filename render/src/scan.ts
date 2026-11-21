@@ -192,7 +192,7 @@ export function normalizeScan(format: MeshFormat, bytes: Uint8Array, units?: Sca
 }
 
 /** Uniform vertex clustering. Recompute the clusters from the original vertices at each cell size. */
-export function clusterProxy(pos: Float32Array, limit = PROXY_TRIANGLES): Float32Array {
+export function clusterProxy(pos: Float32Array, limit = PROXY_TRIANGLES): { positions: Float32Array; source: Uint32Array } {
   const welded = weld(pos);
   const lo = [Infinity, Infinity, Infinity],
     hi = [-Infinity, -Infinity, -Infinity];
@@ -205,6 +205,7 @@ export function clusterProxy(pos: Float32Array, limit = PROXY_TRIANGLES): Float3
   const clusterOf = new Uint32Array(welded.vertexCount);
   const coordinates = new Float64Array(welded.vertexCount * 4);
   const keep = new Uint32Array(limit * 3);
+  const source = new Uint32Array(limit);
 
   let cell = extent / Math.sqrt(limit);
   let smallCell = 0,
@@ -239,6 +240,7 @@ export function clusterProxy(pos: Float32Array, limit = PROXY_TRIANGLES): Float3
         used += 3;
         break;
       }
+      source[used / 3] = i / 3;
       keep[used++] = a;
       keep[used++] = b;
       keep[used++] = c;
@@ -249,7 +251,7 @@ export function clusterProxy(pos: Float32Array, limit = PROXY_TRIANGLES): Float3
         const o = keep[i]! * 4;
         for (let axis = 0; axis < 3; axis++) result[i * 3 + axis] = coordinates[o + axis]! / coordinates[o + 3]!;
       }
-      return result;
+      return { positions: result, source: source.subarray(0, used / 3) };
     }
     if (used === 0) largeCell = cell;
     else smallCell = cell;

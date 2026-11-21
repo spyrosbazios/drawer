@@ -257,7 +257,17 @@ export function fakeRenderer(cacheDir: string): FakeRenderer {
       const contours: SliceResult["contours"] = [];
       if (s.hole !== null) contours.push(round(s.hole, true));
       if (s.boss !== null) contours.push(round(s.boss, false));
-      return { axis: req.axis, at: req.at, contours };
+      return { axis: req.axis, at: req.at, contours, open: [] };
+    },
+    async features(req) {
+      const s = solid(req.key);
+      const fieldFile = "features.f32";
+      await writeFile(join(meshCache, req.key, fieldFile), new Uint8Array(s.info.triangles * 4));
+      return { features: [{ kind: "plane", origin: [0, 0, 0], direction: [0, 0, 1], diameter: null, length: null, side: null, areaMm2: 100, rms: 0, maxError: 0, coverage: 1 }], fieldFile, meshFile: "mesh.stl" };
+    },
+    async fit(req) {
+      const { features } = await fake.features(req);
+      return req.kind && req.kind !== "plane" ? null : features[0] ?? null;
     },
     async probe(req): Promise<ProbeResult> {
       count("probe");

@@ -40,6 +40,11 @@ closed and the noise estimate in millimetres. The geometry of the scan is in `sc
 Use the noise estimate when choosing tolerances. An open scan has no enclosed volume, measurable
 wall thickness or inside for a probe.
 
+Read `features` before slicing. Take a diameter from a fitted cylinder, and check the fit's RMS
+and coverage. Under a third of a cylinder, say the diameter is uncertain. Use `fit` to check a
+specific spot. Use `slice` for a cross-section and `shadow` for a projected outline when planning a
+pocket. A remaining open outline describes only the part of the surface that the scan captured.
+
 ## The spec
 
 - The model's coordinates are the print orientation: z is up, the part sits on z = 0, and it is

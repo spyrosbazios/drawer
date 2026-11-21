@@ -1,12 +1,12 @@
 /**
  * Routes for parts, measuring, assemblies and the project overview (docs/SPEC.md → HTTP routes).
  */
-import type { CompareSide, EvaluateBody, PrintBody } from "@drawer/shared/api";
+import { FEATURE_KINDS, type CompareSide, type EvaluateBody, type PrintBody } from "@drawer/shared/api";
 import { invalid } from "../errors.ts";
 import type { Service } from "../service.ts";
 import { normalizePath } from "../store/paths.ts";
 import type { Router, RouteContext } from "./router.ts";
-import { onlyFields, optInt, optParams, optString, readJsonBody, reqAxis, reqNumber, reqString, reqVec3, type Obj } from "./validate.ts";
+import { onlyFields, optBool, optInt, optParams, optString, readJsonBody, reqAxis, reqNumber, reqString, reqVec3, type Obj } from "./validate.ts";
 
 type Json = (body: unknown, status?: number) => Response;
 
@@ -77,11 +77,28 @@ export function registerPartRoutes(r: Router, service: Service, deps: { json: Js
     onlyFields(body, ["revision", "params"]);
     return json(await parts.measureFile(slug(ctx), path(ctx), optString(body, "revision"), optParams(body, "params")));
   });
+  r.add("POST", "/projects/:slug/features/*", async (ctx) => {
+    const body = await readJsonBody(ctx.req, { optional: true });
+    onlyFields(body, ["revision"]);
+    return json(await parts.features(slug(ctx), path(ctx), optString(body, "revision")));
+  });
+  r.add("POST", "/projects/:slug/fit/*", async (ctx) => {
+    const body = await readJsonBody(ctx.req);
+    onlyFields(body, ["at", "kind", "revision"]);
+    const revision = optString(body, "revision");
+    const raw = optString(body, "kind");
+    const kind = FEATURE_KINDS.find((value) => value === raw);
+    if (raw !== undefined && kind === undefined) throw invalid("kind must be plane, cylinder or sphere");
+    return json(await parts.fit(slug(ctx), path(ctx), { at: reqVec3(body, "at"), ...(kind ? { kind } : {}), ...(revision ? { revision } : {}) }));
+  });
   r.add("POST", "/projects/:slug/slice/*", async (ctx) => {
     const body = await readJsonBody(ctx.req);
-    onlyFields(body, ["axis", "at", "revision"]);
+    onlyFields(body, ["axis", "at", "revision", "shadow"]);
+    const shadow = optBool(body, "shadow") === true;
     const revision = optString(body, "revision");
-    return json(await parts.slice(slug(ctx), path(ctx), { axis: reqAxis(body, "axis"), at: reqNumber(body, "at"), ...(revision === undefined ? {} : { revision }) }));
+    if (shadow && body.at !== undefined) throw invalid("choose shadow or at");
+    const at = shadow ? null : reqNumber(body, "at");
+    return json(await parts.slice(slug(ctx), path(ctx), { axis: reqAxis(body, "axis"), at, ...(revision === undefined ? {} : { revision }) }));
   });
   r.add("POST", "/projects/:slug/probe/*", async (ctx) => {
     const body = await readJsonBody(ctx.req);

@@ -87,7 +87,7 @@ describe("analyse", () => {
 
 describe("slice", () => {
   test("plate with a 6 mm through hole: a round hole of diameter 6", () => {
-    const contours = slice(washer(20, 3, 4, 64), "z", 2);
+    const contours = slice(washer(20, 3, 4, 64), "z", 2).contours;
     expect(contours.length).toBe(2);
     const hole = contours.find((c) => c.hole);
     const outer = contours.find((c) => !c.hole);
@@ -105,7 +105,7 @@ describe("slice", () => {
     for (const n of [6, 10, 32, 64]) {
       const mesh = prism(n, 5, 10);
       const circles = heights.map((at) => {
-        const [c, ...rest] = slice(mesh, "z", at);
+        const [c, ...rest] = slice(mesh, "z", at).contours;
         expect(rest).toEqual([]);
         expect(c?.points.length).toBe(n);
         return c!.circle;
@@ -127,7 +127,7 @@ describe("slice", () => {
   });
 
   test("cube cut along y: one 10 × 10 square in x-z", () => {
-    const [c, ...rest] = slice(cube(), "y", 5);
+    const [c, ...rest] = slice(cube(), "y", 5).contours;
     expect(rest).toEqual([]);
     expect(c?.hole).toBe(false);
     expect(c?.areaMm2).toBeCloseTo(100, 6);
@@ -137,11 +137,11 @@ describe("slice", () => {
   });
 
   test("a cut that misses gives nothing", () => {
-    expect(slice(cube(), "x", 20)).toEqual([]);
+    expect(slice(cube(), "x", 20)).toEqual({ contours: [], open: [] });
   });
 
   test("long outlines are simplified to 200 points", () => {
-    const [c] = slice(washer(20, 3, 4, 500), "z", 1).filter((x) => !x.hole);
+    const [c] = slice(washer(20, 3, 4, 500), "z", 1).contours.filter((x) => !x.hole);
     expect(c?.points.length).toBe(200);
   });
 });
@@ -180,7 +180,7 @@ describe("measure client", () => {
     const client = new MeasureClient({ workerUrl });
     try {
       await expect(client.ask({ op: "probe", mesh: "x", from: [0, 0, 0], axis: "x" })).rejects.toThrow("measuring worker");
-      expect(await client.ask({ op: "slice", mesh: "x", axis: "z", at: 0 })).toMatchObject({ ok: true, contours: [] });
+      expect(await client.ask({ op: "slice", mesh: "x", axis: "z", at: 0 })).toMatchObject({ ok: true, result: { contours: [], open: [] } });
     } finally {
       client.terminate();
     }
@@ -189,7 +189,7 @@ describe("measure client", () => {
     const client = new MeasureClient({ workerUrl, timeoutMs: 300 });
     try {
       await expect(client.ask({ op: "probe", mesh: "x", from: [0, 0, 0], axis: "y" })).rejects.toThrow("did not answer");
-      expect(await client.ask({ op: "slice", mesh: "x", axis: "z", at: 0 })).toMatchObject({ ok: true, contours: [] });
+      expect(await client.ask({ op: "slice", mesh: "x", axis: "z", at: 0 })).toMatchObject({ ok: true, result: { contours: [], open: [] } });
     } finally {
       client.terminate();
     }

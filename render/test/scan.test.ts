@@ -76,7 +76,7 @@ test("the vertex-clustered preview stays within the triangle budget", () => {
       grid.set([x, y, 0, x + 1, y, 0, x + 1, y + 1, 0, x, y, 0, x + 1, y + 1, 0, x, y + 1, 0], cursor);
       cursor += 18;
     }
-  const proxy = clusterProxy(grid, 50);
+  const proxy = clusterProxy(grid, 50).positions;
   expect(proxy.length / 9).toBeGreaterThan(0);
   expect(proxy.length / 9).toBeLessThanOrEqual(50);
 });

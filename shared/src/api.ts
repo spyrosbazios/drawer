@@ -526,7 +526,39 @@ export interface MeshAnalysis {
   thickness: string | null;
 }
 
-/** One closed outline of a cross-section. Coordinates are the two axes other than the cutting axis, in x-y-z order. */
+export const FEATURE_KINDS = ["plane", "cylinder", "sphere"] as const;
+export type FeatureKind = (typeof FEATURE_KINDS)[number];
+
+export interface Feature {
+  kind: FeatureKind;
+  /** A point on the plane or axis, or the sphere centre. */
+  origin: Vec3;
+  /** Plane normal or cylinder axis. */
+  direction: Vec3 | null;
+  diameter: number | null;
+  length: number | null;
+  side: "hole" | "boss" | null;
+  areaMm2: number;
+  rms: number;
+  maxError: number;
+  coverage: number;
+}
+
+export interface FeaturesBody { revision?: string }
+
+export interface FeaturesResult {
+  features: Feature[];
+  field: string;
+  /** Mesh that the feature values index, one value per displayed triangle. */
+  mesh: string;
+}
+
+export interface FitBody extends FeaturesBody {
+  at: Vec3;
+  kind?: FeatureKind;
+}
+
+/** One closed section outline, in the two remaining axes in x-y-z order. */
 export interface SliceContour {
   /** True when material is outside the outline (a hole in the section). */
   hole: boolean;
@@ -541,7 +573,8 @@ export interface SliceContour {
 
 export interface SliceResult {
   axis: Axis;
-  at: number;
+  at: number | null;
+  open: [number, number][][];
   contours: SliceContour[];
 }
 
@@ -649,7 +682,8 @@ export interface MeasureResult {
 /** POST /projects/:slug/slice/<path>, /probe/<path>, /section/<path>: the same files as measure. */
 export interface SliceBody {
   axis: Axis;
-  at: number;
+  at?: number;
+  shadow?: boolean;
   /** The file as of this revision; default current. */
   revision?: string;
 }
@@ -660,7 +694,10 @@ export interface ProbeBody {
   revision?: string;
 }
 
-export interface SectionBody extends SliceBody {
+export interface SectionBody {
+  axis: Axis;
+  at: number;
+  revision?: string;
   size?: number; // px, default 800
 }
 

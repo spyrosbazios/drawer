@@ -53,6 +53,21 @@ fields are unavailable on those surfaces. Use `features` and `fit` for surface d
 fit's RMS and coverage before using a diameter. A slice returns unclosed outlines in `open` and
 `--shadow` gives the entire silhouette along the chosen axis.
 
+### Working from a scan
+
+The guide's chapter "Working from a scan" is the method; these are its steps as commands.
+
+| Step | Command |
+|---|---|
+| 1. Read the source | `drawer cat <p>/refs/<name>/source.md`: closed or open, `noise_mm`, what was removed |
+| 2. Frame it as a part | `drawer align <p>/refs/<name>/scan.stl --json`, save `rotate`/`translate` in `drawer part <p>/<id> --spec spec.json` with `source: "scanned"` ([specs.md](specs.md)); look at the views; an `alternative:` line means ask the person which way is up |
+| 3. Read the features | `drawer features <p>/parts/<id>.part.json`, then `fit`, `slice`, `slice --shadow` on the same path |
+| 4. Trust by coverage and RMS | under a third of a cylinder: say the diameter is uncertain |
+| 5. Record what you build on | a `boss`/`hole`/`size` dimension on the scanned part, tolerance at least twice `noise_mm` |
+| 6. Model the intent | round a fitted 5.93 mm to the 6 mm it was meant to be, and say so |
+| 7. Check against the scan | copy: a `match` on the printed part, `drawer compare <p> <scanned> <copy> --tol <same>`; fit: an assembly with a `mate` per meeting surface |
+| 8. Inside or behind | ask for a second scan or a calliper reading |
+
 ## Parts, reports, measuring
 
 | Command | Does |
@@ -60,7 +75,7 @@ fit's RMS and coverage before using a diameter. A slice returns unclosed outline
 | `guide` | the modelling guide, markdown on stdout. Read it first |
 | `overview <project>` | brief, project memory, parts with status, assembly, references, notes, printer, materials, library |
 | `parts <project>` | parts with status and failing gates |
-| `part <project>/<id> [--title --class --material --strictness --source printed\|bought --description] [--spec file.json]` | create a part or change its spec; `--spec` is a `PartSpecBody` ([specs.md](specs.md)), flags win; flags alone change the existing spec |
+| `part <project>/<id> [--title --class --material --strictness --source printed\|bought\|scanned --description] [--spec file.json]` | create a part or change its spec; `--spec` is a `PartSpecBody` ([specs.md](specs.md)), flags win; flags alone change the existing spec |
 | `report <project>/<id> [--param name=value]... [--at id] [--require-passed]` | the verdict: status, gates, next steps, pictures. `--param` is a what-if (nothing written); `--at` a past revision; exit 0 whatever the status, `--require-passed` exits 1 unless `passed` |
 | `set <project>/<id> name=value... [-m msg] [--no-report]` | write parameter values into the model's parameter block (one revision), then print the report |
 | `measure <file> [--param name=value]... [--at id]` | shells, watertight, base, overhang, thinnest wall; downloads the render |

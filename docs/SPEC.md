@@ -208,7 +208,8 @@ Historical evaluation uses the spec and mesh from the requested revision.
 largest fitted plane as the datum, the longest remaining direction for x, and the box corner or
 main revolution axis as the origin; every other plane with at least 90 % of the datum's area is
 offered in `ambiguous` as the other way up, with `rms` null. With `to`, the renderer tries the 24 proper principal-axis
-orientations and refines them with point-to-plane ICP. The result includes the RMS distance and
+orientations and refines them with point-to-plane ICP
+([Chen–Medioni](https://graphics.stanford.edu/~smr/ICP/comparison/chen-medioni-align-rob91.pdf)). The result includes the RMS distance and
 other poses with similar scores when alignment is ambiguous.
 
 ## Parts and gates
@@ -315,7 +316,8 @@ section skip the standard previews. Measure and compare also return previews.
 - `POST /projects/:slug/compare` → signed distance statistics in both directions, area shares within
   the supplied positive `tol` (default 0.2 mm), volume and size deltas. B-to-A statistics appear at
   the top level of `deviation`. A-to-B statistics appear in `reverse`. The `at` point is the largest
-  sampled difference in either direction. Signs follow angle-weighted pseudonormals on both open
+  sampled difference in either direction. Signs follow angle-weighted pseudonormals
+  ([Bærentzen–Aanæs](https://doi.org/10.1109/tvcg.2005.49)) on both open
   and closed meshes. The deviation field holds the mean signed distance per triangle of the
   returned B mesh. The match gate uses the same area-weighted surface samples. Sample spacing
   scales with tolerance. A comparison that would exceed eight million samples in either direction

@@ -4,7 +4,7 @@
  * every other turn asks a question (`waiting` until answered), fixes the first draft part it finds, and
  * goes `idle`. It also thinks aloud: `reasoning` items that grow, then close under the same reasoningId. Messages sent meanwhile stay pending and start another turn. Stop interrupts it.
  */
-import type { FileAttachmentResult, NewSessionItem, ProviderKind, RunnerInfo, Session, SessionAttachment, SessionItem, SessionRef } from "../../../shared/src/api";
+import type { FileAttachmentResult, NewSessionItem, ProviderKind, RunnerInfo, Session, SessionAttachment, SessionItem, SessionRef, Settings } from "../../../shared/src/api";
 import { isModelId, MAX_ATTACHMENTS } from "../../../shared/src/api";
 import { png } from "./geometry";
 import { HttpError, broadcast } from "./http";
@@ -56,6 +56,21 @@ export const RUNNERS: RunnerInfo[] = [
   },
 ];
 
+/** What each runner finds for each provider when it is on; the gemini CLI is installed on `workshop` only. */
+const FOUND: Record<string, RunnerInfo["providers"]> = {
+  workshop: RUNNERS[0]?.providers.map((p) => (p.kind === "gemini" ? { ...p, state: "ready", version: "0.9.1", models: ["gemini-3-pro", "gemini-3-flash"], binary: "/home/me/.local/bin/gemini" } : p)) ?? [],
+  laptop: RUNNERS[1]?.providers.map((p) => (p.kind === "gemini" ? { ...p, state: "not_installed", message: "Install gemini on the runner's host." } : p)) ?? [],
+};
+
+/** A runner reports on its next poll, not at once: after the settings changed, what it says follows them a few seconds later. */
+export function reportAfterPoll(settings: Settings, delayMs = 4000): void {
+  setTimeout(() => {
+    for (const runner of RUNNERS) {
+      runner.providers = (FOUND[runner.id] ?? []).map((p) => (settings.providers[p.kind].enabled ? p : { ...p, state: "disabled", message: null }));
+    }
+  }, delayMs);
+}
+
 function emit(s: StoredSession): void {
   const x = s.session;
   broadcast({ type: "session", id: x.id, project: x.project, status: x.status, activity: x.activity, version: x.version, deleted: false });
@@ -105,11 +120,11 @@ async function runTurn(s: StoredSession): Promise<void> {
   patch(s, { status: "working", activity: "reading the project", error: null });
   const slug = s.session.project;
   let call = 0;
-  const tool = async (name: string, summary: string, result: string, activity: string, outcome: { status?: "ok" | "error"; images?: string[] } = {}) => {
+  const tool = async (name: string, summary: string, result: string, activity: string, outcome: { status?: "ok" | "error"; images?: string[]; running?: string } = {}) => {
     if (!alive()) return false;
     const callId = `call-${s.session.id}-${turn}-${++call}`;
     patch(s, { activity });
-    append(s, { type: "tool", callId, name, summary, status: "running", result: null, images: [] });
+    append(s, { type: "tool", callId, name, summary: outcome.running ?? summary, status: "running", result: null, images: [] });
     await sleep(STEP_MS);
     if (!alive()) return false;
     append(s, { type: "tool", callId, name, summary, status: outcome.status ?? "ok", result, images: outcome.images ?? [] });
@@ -145,7 +160,7 @@ async function runTurn(s: StoredSession): Promise<void> {
   const unfiled = s.items.flatMap((i) => (i.type === "user" ? i.attachments : [])).find((a) => a.filedAs === null);
   if (unfiled) {
     const dest = `refs/${unfiled.name.toLowerCase().replace(/[^a-z0-9.]+/g, "-")}`;
-    if (!(await tool("file_attachment", `file_attachment ${unfiled.id} ${dest}`, `Filed "${unfiled.name}" as ${dest}.`, `filing ${unfiled.name}`))) return;
+    if (!(await tool("file_attachment", `filed ${unfiled.name} as ${dest}`, `Filed "${unfiled.name}" as ${dest}.`, `filing ${unfiled.name}`, { running: `filing an attachment as ${dest}` }))) return;
     try {
       fileAttachment(unfiled.id, dest, "*", "agent", undefined);
     } catch {

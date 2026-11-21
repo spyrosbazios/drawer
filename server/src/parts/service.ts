@@ -71,7 +71,7 @@ import {
 
 const ALL_VIEWS = ["iso", "front", "top", "side"] as const;
 const REPORT_SIZE = 800;
-const REPORT_VERSION = "drawer-report-2";
+const REPORT_VERSION = "drawer-report-3";
 const SCAD_RELATIONS = new Set(["uses", "includes", "imports"]);
 
 /** What the parts module needs from the service: writes go through it so they are validated, committed, indexed and announced. */
@@ -127,7 +127,7 @@ function analysisView(key: string, a: MeshAnalysisOutput): MeshAnalysis {
 }
 
 function fromRenderResult(r: RenderResult): RenderRef {
-  return { key: r.key, mesh: r.mesh, views: r.views, sheet: r.sheet };
+  return { key: r.key, mesh: r.mesh, ...(r.proxy ? { proxy: r.proxy } : {}), views: r.views, sheet: r.sheet };
 }
 
 export class PartsService {
@@ -734,6 +734,7 @@ export class PartsService {
 
   async probe(slug: string, path: string, body: { from: Vec3; axis: SliceResult["axis"]; revision?: string }): Promise<ProbeResult> {
     const r = await this.ws.mesh(slug, path, body.revision);
+    if (!r.info.closed) throw new ApiException("render_failed", "an open mesh has no inside; probe requires a closed mesh");
     return this.renderer.probe({ key: r.key, from: body.from, axis: body.axis });
   }
 
@@ -761,6 +762,7 @@ export class PartsService {
     await this.store.requireProject(slug);
     const ra = await this.rendered(slug, this.sidePath(a, "a"), a.at);
     const rb = await this.rendered(slug, this.sidePath(b, "b"), b.at);
+    if (!ra.info.closed || !rb.info.closed) throw new ApiException("render_failed", "signed deviation requires closed meshes");
     const dev = await this.renderer.deviation({ a: meshKeyOf(ra), b: meshKeyOf(rb) });
     const va = ra.info.volumeCm3;
     const vb = rb.info.volumeCm3;

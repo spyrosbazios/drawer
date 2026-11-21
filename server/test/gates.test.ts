@@ -8,7 +8,7 @@ import { defaultMaterials, defaultPrinter } from "../src/store/starter.ts";
 
 const printer = defaultPrinter();
 const PLA = defaultMaterials().materials[0] ?? null;
-const mesh: MeshInfo = { format: "stl", triangles: 100, bbox: { min: [0, 0, 0], max: [40, 30, 10], size: [40, 30, 10] }, volumeCm3: 5 };
+const mesh: MeshInfo = { format: "stl", closed: true, triangles: 100, bbox: { min: [0, 0, 0], max: [40, 30, 10], size: [40, 30, 10] }, volumeCm3: 5 };
 const analysis: GateAnalysis = { shells: 1, watertight: true, surfaceAreaMm2: 500, baseAreaMm2: 1200, footprintMm2: 1200, overhang: { angle: 45, areaMm2: 0, at: null }, wall: { minMm: 2, at: [1, 2, 3] } };
 const PARAM: ScadParam = { name: "w", type: "number", value: 10, group: "", description: "", min: null, max: null, step: null, options: null, line: 2 };
 const CLEAN = "// a clip\nw = 10;\nmodule clip() { cube([w, 2, 3]); }\nclip();\n";

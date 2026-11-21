@@ -9,6 +9,7 @@ import type {
   ImportResult,
   Project,
   SearchResponse,
+  ScanResult,
   TreeResponse,
   WriteResult,
 } from "@drawer/shared/api";
@@ -578,5 +579,20 @@ describe("help and errors", () => {
     const r = await sb.run(["cat", "box/AGENTS.md", "--bogus"]);
     expect(r.code).toBe(1);
     expect(r.err).toContain("unknown option --bogus");
+  });
+});
+
+
+test("scan add sends original units and filename with the raw file", async () => {
+  fake.seed("box", "notes/brief.md", "# Box");
+  await Bun.write(join(sb.home, "surface.ply"), "ply\n");
+  const result = await sb.run(["scan", "add", "box", "surface.ply", "--name", "surface", "--units", "cm"]);
+  expect(result.code).toBe(0);
+  expect(result.json<ScanResult>()).toMatchObject({ path: "refs/surface/scan.stl", source: "refs/surface/source.md" });
+  expect(fake.requests.at(-1)).toMatchObject({
+    method: "POST",
+    path: "/api/projects/box/scans",
+    query: { name: "surface", units: "cm", filename: "surface.ply" },
+    body: "ply\n",
   });
 });

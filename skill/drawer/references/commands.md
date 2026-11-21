@@ -35,6 +35,18 @@ always; `context` prints text and takes `--json`. Errors: one line on stderr. Ex
 | `reindex` | rebuild the index |
 | `import <project> <url> [--name n] [--file-id id]...`, `preview <url>` | import a model page into `refs/<name>/`; show what it would fetch |
 
+
+## Scan intake
+
+```
+drawer scan add <project> <file> --name <name> [--units mm|cm|m|in]
+```
+
+Use the original units for STL, OBJ or PLY. A 3MF supplies its own units. Read
+`refs/<name>/source.md` for the noise estimate and closedness, and measure
+`refs/<name>/scan.stl`. `probe` returns 422 on open surfaces. The volume and wall thickness
+fields are unavailable on those surfaces.
+
 ## Parts, reports, measuring
 
 | Command | Does |

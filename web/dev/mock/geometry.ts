@@ -74,7 +74,7 @@ export function bboxOf(boxes: readonly Box[]): { min: Vec3; max: Vec3; size: Vec
 export const volumeCm3 = (boxes: readonly Box[]): number => boxes.reduce((n, b) => n + (b.max[0] - b.min[0]) * (b.max[1] - b.min[1]) * (b.max[2] - b.min[2]), 0) / 1000;
 
 export function meshInfoOfBoxes(boxes: readonly Box[]): MeshInfo {
-  return { format: "stl", triangles: boxes.length * TRIS_PER_BOX, bbox: bboxOf(boxes), volumeCm3: round(volumeCm3(boxes), 4) };
+  return { format: "stl", closed: true, triangles: boxes.length * TRIS_PER_BOX, bbox: bboxOf(boxes), volumeCm3: round(volumeCm3(boxes), 4) };
 }
 
 /** Reads any binary STL back (used for uploaded meshes). */
@@ -92,9 +92,9 @@ export function meshInfoOfStl(bytes: Uint8Array): MeshInfo {
       }
     }
   }
-  if (n === 0) return { format: "stl", triangles: 0, bbox: { min: [0, 0, 0], max: [0, 0, 0], size: [0, 0, 0] }, volumeCm3: null };
+  if (n === 0) return { format: "stl", closed: false, triangles: 0, bbox: { min: [0, 0, 0], max: [0, 0, 0], size: [0, 0, 0] }, volumeCm3: null };
   const size: Vec3 = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
-  return { format: "stl", triangles: n, bbox: { min, max, size }, volumeCm3: round((size[0] * size[1] * size[2]) / 1000, 4) };
+  return { format: "stl", closed: true, triangles: n, bbox: { min, max, size }, volumeCm3: round((size[0] * size[1] * size[2]) / 1000, 4) };
 }
 
 export const round = (n: number, digits = 2): number => Number(n.toFixed(digits));

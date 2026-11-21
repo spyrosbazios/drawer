@@ -2,7 +2,7 @@
  * Contracts between the server and its two helper packages. The server depends on these
  * interfaces only; @drawer/render and @drawer/importers implement them.
  */
-import type { Axis, Diagnostic, ImportFile, ImportPreview, ImportSite, MeshAnalysis, MeshInfo, ParamValues, ProbeResult, RenderStage, RenderView, ScadParam, SliceResult, Vec3 } from "./api";
+import type { Axis, Diagnostic, ImportFile, ImportPreview, ImportSite, MeshAnalysis, MeshInfo, ParamValues, ProbeResult, RenderStage, RenderView, ScadParam, SliceResult, Vec3, ScanUnit, MeshFormat } from "./api";
 
 // ---- @drawer/render ---------------------------------------------------------------------
 
@@ -52,6 +52,7 @@ export interface MeshOutput {
 
 export interface RenderOutput extends MeshOutput {
   meshKey: string;
+  proxy: boolean;
   views: RenderView[];
 }
 
@@ -96,6 +97,16 @@ export interface AssemblyRenderOutput {
   views: RenderView[];
 }
 
+export interface ScanNormalization {
+  bytes: Uint8Array;
+  info: MeshInfo;
+  originalTriangles: number;
+  degenerateTriangles: number;
+  debrisTriangles: number;
+  noiseMm: number;
+  unit: string;
+}
+
 export interface Renderer {
   /** OpenSCAD's version string, or null when it cannot be run. Cached after the first call. */
   version(): Promise<string | null>;
@@ -105,6 +116,8 @@ export interface Renderer {
   mesh(req: MeshRequest): Promise<MeshOutput>;
   /** Pure parse of a mesh file on disk; no OpenSCAD. Throws on an unreadable file. */
   meshInfo(file: string): Promise<MeshInfo>;
+  /** Normalize uploaded scan bytes before any project files are written. */
+  normalizeScan(req: { format: MeshFormat; bytes: Uint8Array; units?: ScanUnit }): Promise<ScanNormalization>;
 
   /** Parses and evaluates a .scad file without building geometry (seconds, not minutes). Never throws for a broken file: that is `ok: false`. Throws RenderError only when OpenSCAD cannot be run. */
   check(req: { file: string; searchPaths: string[]; params?: ParamValues }): Promise<CheckOutput>;

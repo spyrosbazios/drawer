@@ -24,12 +24,12 @@ export function MeshFileViewer({ slug, path, rev, at }: Props) {
   const [scene, setScene] = useState<MeshScene | null>(null);
   const [wireframe, setWireframe] = useState(false);
   const [grid, setGrid] = useState(true);
-  // Never renders by itself: Render in the File menu, or "Render this revision" in the revisions panel, fills the cache.
-  const { query: render } = useRender(slug, path, rev ?? "", at, false);
+  const scan = /^refs\/[^/]+\/scan\.stl$/.test(path);
+  const { query: render } = useRender(slug, path, rev, at, scan);
   // An old revision that was just rendered opens on its sheet; otherwise the model, until the user picks.
   const view: Shown = chosen ?? (at && render.data ? "sheet" : "model");
   const format = formatOf(path);
-  const url = fileUrl(slug, path, { at, version: rev });
+  const url = render.data?.proxy ?? fileUrl(slug, path, { at, version: rev });
   const download = fileUrl(slug, path, { at, download: true });
 
   const shading = useShadingEntry(view !== "model");
@@ -84,7 +84,7 @@ export function MeshFileViewer({ slug, path, rev, at }: Props) {
       <div className="min-h-0 flex-1">
         {view === "model" ? (
           <Suspense fallback={<Skeleton className="size-full rounded-none" />}>
-            <MeshViewer url={url} format={format} wireframe={wireframe} grid={grid} onScene={setScene} />
+            {scan && !render.data ? (render.error ? <p role="alert" className="p-4 text-sm text-destructive">{render.error.message}</p> : <Skeleton className="size-full" />) : <MeshViewer url={url} format={render.data?.proxy ? "stl" : format} wireframe={wireframe} grid={grid} onScene={setScene} />}
           </Suspense>
         ) : render.data ? (
           <div className="flex size-full items-center justify-center overflow-auto bg-card p-2">

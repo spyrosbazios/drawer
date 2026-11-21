@@ -19,7 +19,7 @@ behaviour. Where the two disagree, `api.ts` wins and this file gets fixed.
   the HTTP API (agents through the `drawer` CLI). Nothing is synced to the machine an agent runs on;
   the CLI keeps only a throw-away cache of rendered PNGs so the agent can look at them.
 - **A project is a folder.** A brief, parts, an optional assembly, references and notes. Any other
-  file is allowed too: markdown, `.scad`, meshes (`.stl`, `.3mf`, `.obj`), images, PDFs.
+  file is allowed too: markdown, `.scad`, meshes (`.stl`, `.3mf`, `.obj`, `.ply`), images, PDFs.
 - **A part is a spec plus a model.** `parts/<id>.part.json` says what must be true; `parts/<id>.scad`
   is the agent's attempt at it. The server evaluates the model against the spec (the *gates*) and
   reports a status. No client can set a status.
@@ -59,7 +59,7 @@ projects/_library/        shared by every project, created on first start; nothi
   refs/**                 datasheets, drawings and meshes of bought parts
 sessions/<id>.json        an agent session's state; <id>.jsonl its items, one JSON object per line
 sessions/attachments/     files sent with messages: <id>.json (descriptor, project, session), <id>.bin
-cache/meshes/<key>/       mesh.stl, meta.json and derived measurements
+cache/meshes/<key>/       mesh.stl, optional proxy.stl, meta.json and derived measurements
 cache/renders/<key>/      view PNGs, sheet.png and render metadata
 cache/reports/<key>.json  part and assembly reports
 cache/thumbnails/         project thumbnails: <key>.png, and <key>.fail for a cover that does not render
@@ -106,7 +106,7 @@ index.db                  SQLite
 |---|---|---|
 | `markdown` | `.md` | reader + edit |
 | `scad` | `.scad` | code + render split |
-| `mesh` | `.stl` `.3mf` `.obj` | 3D viewer |
+| `mesh` | `.stl` `.3mf` `.obj` `.ply` | 3D viewer |
 | `image` | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.svg` | image |
 | `pdf` | `.pdf` | embedded PDF |
 | `text` | `.txt` `.json` `.yaml` `.yml` `.toml` `.csv` `.gcode` `.py` `.js` `.ts` `.sh` `.dxf` and any file that decodes as UTF-8 under 1 MB | code view |
@@ -159,7 +159,11 @@ Borrowed from Basic Memory so the folders stay openable there and in Obsidian.
 - A failed render returns `422 render_failed` with OpenSCAD's stderr in `message`, paths made project-relative.
 - Views: `iso` (55,0,25), `front` (90,0,0), `top` (0,0,0), `side` (90,0,90), all with
   `--viewall --autocenter`, orthographic except `iso`.
-- `MeshInfo` is computed by the server from the STL (triangle count, bbox, signed volume), not by OpenSCAD.
+- The worker computes `MeshInfo` from the triangles, including the bounding box, count and `closed`.
+  A closed surface has exactly two triangles per edge. Only closed meshes with consistent winding
+  and nonzero signed volume report a volume.
+- The renderer reduces mesh previews over 200,000 triangles by vertex clustering and returns a
+  `proxy` URL for `proxy.stl`. Measurements and the `mesh` URL use all triangles.
 - **Thumbnails.** `Project.cover` is the chosen cover, else the first of the part models, other `.scad`
   files (shallowest first), meshes. `Project.thumbnail` is `/api/projects/<slug>/thumbnail/<key>.png`, where
   the key is a hash of the cover's path, its rev, the revs of every file it uses (the index's SCAD links)
@@ -169,6 +173,23 @@ Borrowed from Basic Memory so the folders stay openable there and in Obsidian.
   `ETag`. A cover that does not render is remembered (`<key>.fail`), the request is `404`, a `project`
   event goes out, and the thumbnail moves to the next candidate; `null` when none is left or there is
   nothing to draw. A key that is not the project's current one and was never drawn is `404`.
+
+## Scan intake
+
+Drop an STL, OBJ, 3MF or PLY onto the project tree and choose **Add scan**. Give STL, OBJ and PLY
+their original units (`mm`, `cm`, `m` or `in`). For 3MF the embedded units take precedence. PLY
+accepts ASCII and both binary byte orders. Save the uploads as ordinary reference files when you
+want to keep their original bytes.
+
+Intake accepts a raw file of at most 200 MB and 2,000,000 triangles. Export a triangulated surface
+for point clouds, and decimate larger meshes before uploading. In one revision the server writes
+`refs/<name>/scan.stl` in millimetres and `refs/<name>/source.md`. An existing name returns 409.
+The note records the original filename, units, triangle counts, removal of degenerate triangles
+and pieces below 1% of total surface area, closedness and noise. Intake welds vertices with a
+tolerance of one ten-thousandth of the median nonzero edge length, corrects winding, and discards
+the original upload. On an open component it keeps the side supported by most of the source area
+when making the winding consistent. The noise estimate is the median distance of a vertex to the
+least-squares plane of its neighbours.
 
 ## Parts and gates
 
@@ -244,18 +265,19 @@ section skip the standard previews. Measure and compare also return previews.
   - *Base*: area of downward faces within 0.05 mm of the lowest z.
   - *Overhang*: area of faces whose normal points down more steeply than the printer's
     `maxOverhangDeg` from vertical, excluding the base.
-  - *Wall thickness*: from each triangle's centre a ray goes into the material against the normal;
+  - *Wall thickness* (closed surfaces only): from each triangle's centre a ray goes into the material against the normal;
     the distance to the first exit is that triangle's thickness. The reported minimum is the smallest
     thickness that covers at least 1 mm² and 0.2 % of the surface, so one sliver triangle does not
     decide it. The per-triangle values are served as `thickness.f32`.
 - `POST .../slice/<path>` → the closed outlines of the cross-section at `axis` = `at`, each with area,
   bounding box and a best-fit circle.
 - `POST .../probe/<path>` → whether a point is inside material and how long the run of material or
-  air through it is along an axis.
+  air through it is along an axis. Open meshes return `422 render_failed`.
 - `POST .../section/<path>` → a PNG of the part cut at `axis` = `at`, lower side kept.
 - `POST /projects/:slug/compare` → how B differs from A (two parts, files or revisions): signed
   distance from B's surface to A's per triangle (`deviation-<key of A>.f32`), min, max, RMS, 95th
-  percentile, volume and size deltas. Positive means B has more material there.
+  percentile, volume and size deltas. Positive means B has more material there. This signed comparison
+  requires closed meshes and returns `422 render_failed` on an open surface.
 
 ## Assembly
 
@@ -421,6 +443,7 @@ must come with `content-type: application/json`. No GET changes anything. The se
 | GET | `/projects/:slug/context/<path>` | → `ContextResponse` |
 | GET | `/projects/:slug/search` | `?q=&kind=&limit=` → `SearchResponse` |
 | POST | `/projects/:slug/render/<path>` | `RenderBody` → `RenderResult` |
+| POST | `/projects/:slug/scans` | `?name=&filename=&units=`, raw mesh bytes → `ScanResult` (201) |
 | POST | `/projects/:slug/import` | `ImportBody` → `ImportResult` |
 | POST | `/import/preview` | `{ url }` → `ImportPreview` |
 | GET | `/renders/<key>/<file>` | → bytes |
@@ -491,6 +514,7 @@ drawer context <file> [--depth 2]
 drawer history <project> [path]
 drawer note <project> "<text>" [--file notes/log.md] [--category c]   append a fact line (creates the file)
 drawer import <project> <url> [--name n]
+drawer scan add <project> <file> --name n [--units mm|cm|m|in]
 drawer reindex
 
 drawer guide                                 the modelling guide the server gives every agent

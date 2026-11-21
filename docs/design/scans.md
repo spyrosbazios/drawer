@@ -44,42 +44,6 @@ or whose model is a mesh file, would keep a stale report.
 - `stateKey` and the report key take the referenced file's rev or the referenced part's state key, the
   way an assembly already takes its parts'.
 
-## S1. Scan intake
-
-`measure` and `compare` return preview URLs used by the CLI and web viewer, so they retain preview
-generation. The separate mesh cache serves the measurements. Scan previews use the light copy below.
-
-`POST /projects/:slug/scans?name=<name>&units=mm|cm|m|in` with the file as the body (STL, OBJ, 3MF, PLY).
-`drawer scan add <project> <file> --name --units`. In the web app: dropping a mesh on a project asks
-"is this a scan?" and for its units.
-
-The server normalises once, on the way in, and stores the result. Nothing downstream knows about units.
-
-- Scale to millimetres. STL, OBJ and PLY carry no unit, so `units` is required for them; 3MF's own unit wins.
-- Weld vertices (tolerance from the mesh's median edge length), drop zero-area triangles, drop
-  connected pieces under 1 % of the total area (scanner debris), orient normals outward.
-- Refuse a point cloud (no faces) and a mesh over the triangle limit (see Open questions), with a
-  message that says what to do.
-- Write `refs/<name>/scan.stl` and `refs/<name>/source.md` in one revision. `source.md` holds facts, in
-  the notes grammar: original file name and format, units given, triangles before and after, what was
-  removed, whether the surface is closed, the noise estimate.
-
-The original bytes are not kept: a scan is tens of megabytes and every write is a git blob. This is the
-one place a stored file is not what the person uploaded, and `source.md` says so.
-
-**Noise estimate**: the median distance of each vertex from the plane fitted to its neighbours. It is the
-floor under every tolerance the agent sets from this scan, and the guide says so.
-
-**The light copy.** A scan is drawn (the four views, the browser) from a decimated copy of at most
-200 000 triangles, made by vertex clustering and kept in the mesh cache. Everything is *measured* on the
-full mesh. `GET /renders/...` serves the light copy as `proxy.stl`.
-
-**Open surfaces.** A scan is rarely watertight. Measurements that rest on "inside" (`probe`, wall
-thickness, volume, the sign of a deviation by ray parity) are wrong on an open surface. `MeshInfo` gains
-`closed: boolean`; on an open mesh those measurements return `422` with that reason instead of a number,
-and the deviation sign comes from the surface normal at the closest point (angle-weighted pseudonormal),
-which needs no closed surface.
-
 ## S2. A scan as a part
 
 A scanned object is a part: `source: "scanned"`, beside `printed` and `bought`.
@@ -233,7 +197,6 @@ skill. Its rules:
 
 | Stage | Holds | Behaviour changes |
 |---|---|---|
-| 2 | S1 intake, `closed`, the light copy | a scan can be dropped, viewed and measured |
 | 3 | S4 `features`, `fit`, sections on open meshes | the agent can read a scan |
 | 4 | G3, S2 scanned parts, S3 `align` | a scan is a part with a frame; `mate` and `clash` reach it |
 | 5 | S5 `match`, both-way deviation | a copy can be checked |
@@ -244,8 +207,7 @@ mock server together, as the invariant requires.
 
 ## Open questions
 
-- **Triangle limit.** 2 million is the proposal; measure the worker's memory and the time of `features`
-  on a real scan of that size before fixing it. The 200 MB upload limit already bounds the file.
+- **Feature extraction at the intake limit.** Repeat the generated noisy mesh benchmark with `features` when it lands.
 - **`clash` against an open scan.** Depth behind the surface is the proposal; the threshold (the
   printer's clearance, or the scan's noise) is not decided.
 - **A scan in the library.** Bought parts live in `_library`; a scanned bought part would need

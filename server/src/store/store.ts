@@ -407,6 +407,32 @@ export class Store {
     return { commit, revisionId, upserts: writes.map((w) => w.path), removes: removed };
   }
 
+  /** Publish the files of a new directory together before committing them. The caller holds the write lock. */
+  async createFileDirectory(slug: string, dir: string, writes: { path: string; bytes: Uint8Array }[], opts: { author: string; message: string }): Promise<Change> {
+    if (await this.stat(slug, dir)) throw exists(`${dir} already exists: pick another name`);
+    await this.ensureParents(slug, dir);
+    const staging = join(this.tmpDir, `directory-${randomId()}`);
+    await mkdir(staging);
+    try {
+      for (const { path, bytes } of writes) {
+        if (posix.dirname(path) !== dir) throw invalid(`expected a file in ${dir}`);
+        await Bun.write(join(staging, posix.basename(path)), bytes);
+      }
+      const target = this.abs(slug, dir);
+      await rename(staging, target);
+      let result;
+      try {
+        result = await this.commit(slug, opts.author, opts.message);
+      } catch (err) {
+        await rm(target, { recursive: true, force: true });
+        throw err;
+      }
+      return { ...result, upserts: writes.map(({ path }) => path), removes: [] };
+    } finally {
+      await rm(staging, { recursive: true, force: true });
+    }
+  }
+
   /** Commits whatever is in the work tree (import, bulk writes). */
   async commitWorkTree(slug: string, author: string, message: string): Promise<{ commit: CommitInfo | null; revisionId: string }> {
     return this.commit(slug, author, message);

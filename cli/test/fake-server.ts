@@ -16,6 +16,7 @@ import type {
   Project,
   RenderResult,
   RenderView,
+  ScanResult,
   Revision,
   SearchHit,
   TreeEntry,
@@ -32,7 +33,7 @@ export interface RecordedRequest {
 
 const MESH: MeshInfo = {
   format: "stl",
-  triangles: 1234,
+  closed: true, triangles: 1234,
   bbox: { min: [0, 0, 0], max: [40, 30, 12.5], size: [40, 30, 12.5] },
   volumeCm3: 8.125,
 };
@@ -226,6 +227,17 @@ export class FakeDrawer {
       files.set(body.to, file);
       this.revisions.unshift({ id: `r${++this.counter}`, author, message: body.message ?? "", date: new Date().toISOString(), paths: [body.from, body.to], project: slug });
       return this.json({ revisionId: `r${this.counter}` });
+    }
+    if (sub === "scans" && method === "POST") {
+      const path = `refs/${query.name}/scan.stl`;
+      const source = `refs/${query.name}/source.md`;
+      if (files.has(path)) return this.err(409, "exists", "scan name already exists");
+      const message = `add scan ${query.name}`;
+      this.store(slug, path, bodyBytes, author, message);
+      const note = new TextEncoder().encode(`# Scan source\n\n- [filename] ${query.filename}\n`);
+      files.set(source, { bytes: note, rev: revOf(note), updatedBy: author });
+      this.revisions[0]?.paths.push(source);
+      return this.json({ project: slug, path, source, revisionId: `r${this.counter}`, mesh: MESH, noiseMm: 0.02 } satisfies ScanResult, 201);
     }
     if (sub === "import" && method === "POST") return this.json(this.importInto(slug, JSON.parse(new TextDecoder().decode(bodyBytes))));
 

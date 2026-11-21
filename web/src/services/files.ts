@@ -1,6 +1,6 @@
 import { HEADER_MESSAGE, HEADER_REV } from "@drawer/shared/api";
-import type { FileInfo, HistoryResponse, TreeEntry, WriteResult } from "@drawer/shared/api";
-import { fileInfoSchema, historySchema, treeSchema, writeResultSchema } from "@/core/schemas";
+import type { FileInfo, HistoryResponse, ScanQuery, ScanResult, TreeEntry, WriteResult } from "@drawer/shared/api";
+import { fileInfoSchema, historySchema, scanResultSchema, treeSchema, writeResultSchema } from "@/core/schemas";
 import { encodePath } from "@/core/paths";
 import { api, read } from "./api";
 
@@ -48,6 +48,15 @@ export async function writeFile(slug: string, path: string, body: string | Blob,
   if (opts.message) headers[HEADER_MESSAGE] = encodeURIComponent(opts.message);
   const { data } = await api.put<unknown>(`${proj(slug)}/files/${encodePath(path)}`, body, { headers, timeout: 0 });
   return read(writeResultSchema, data);
+}
+
+export async function addScan(slug: string, query: ScanQuery, file: File): Promise<ScanResult> {
+  const { data } = await api.post<unknown>(`${proj(slug)}/scans`, file, {
+    params: query,
+    headers: { "Content-Type": "application/octet-stream" },
+    timeout: 0,
+  });
+  return read(scanResultSchema, data);
 }
 
 export async function deleteFile(slug: string, path: string, rev: string): Promise<void> {

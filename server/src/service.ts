@@ -19,17 +19,19 @@ import type {
   RenderResult,
   RenderView,
   SearchHit,
+  ScanQuery,
+  ScanResult,
   TreeEntry,
   TreeResponse,
   WriteResult,
 } from "@drawer/shared/api";
-import { LIBRARY_SLUG } from "@drawer/shared/api";
+import { isMeshFormat, LIBRARY_SLUG } from "@drawer/shared/api";
 import { ImportError, RenderError, type Importers, type MeshOutput, type MeshRequest, type Renderer } from "@drawer/shared/contracts";
 import { ApiException, exists, invalid, notFound } from "./errors.ts";
 import type { EventBus } from "./events.ts";
 import { Index, type FileRow, type UpsertSpec } from "./index/indexer.ts";
 import { MAX_IMPORT_IMAGES, imageExtension, safeFileName, sourceMarkdown, uniqueName } from "./importing.ts";
-import { assertNewSlug, isHiddenName, kindFromExtension, normalizePath, slugify } from "./store/paths.ts";
+import { assertNewSlug, extOf, isHiddenName, kindFromExtension, normalizePath, slugify } from "./store/paths.ts";
 import { PartsService } from "./parts/service.ts";
 import { partOfPath } from "./parts/validate.ts";
 import { assertLibraryKeeps, assertLibraryPath } from "./library-layout.ts";
@@ -435,14 +437,14 @@ export class Service {
     return { project: slug, path, rev: result.rev, created: result.created, revisionId: result.revisionId, check, part: partOfPath(path)?.id ?? null };
   }
 
-  /** Several files written and removed as one revision (parts routes). Structured files are validated first. */
-  async writeMany(slug: string, writes: { path: string; bytes: Uint8Array }[], removes: string[], author: string, message: string): Promise<{ revisionId: string }> {
+  /** Several files written and removed as one revision. Structured files are validated first. */
+  async writeMany(slug: string, writes: { path: string; bytes: Uint8Array }[], removes: string[], author: string, message: string, newDir?: string): Promise<{ revisionId: string }> {
     return this.lock.run(async () => {
       await this.store.requireProject(slug);
       for (const w of writes) this.checkPlace(slug, w.path);
       if (slug === LIBRARY_SLUG) for (const path of removes) assertLibraryKeeps(path);
       for (const w of writes) await this.parts.validatorFor(slug, w.path, author)?.(w.bytes);
-      const change = await this.store.writeMany(slug, writes, removes, { author, message });
+      const change = newDir ? await this.store.createFileDirectory(slug, newDir, writes, { author, message }) : await this.store.writeMany(slug, writes, removes, { author, message });
       if (change.commit) {
         await this.indexChange(slug, change, author);
         for (const w of writes) this.emitFile("written", slug, w.path, this.index.fileRow(slug, w.path)?.rev ?? null, author);
@@ -632,6 +634,7 @@ export class Service {
           cached: out.cached,
           seconds: out.seconds,
           mesh: `/api/renders/${out.meshKey}/mesh.stl`,
+          ...(out.proxy ? { proxy: `/api/renders/${out.meshKey}/proxy.stl` } : {}),
           views: Object.fromEntries(out.views.map((v) => [v, `${base}/${v}.png`])),
           sheet: `${base}/sheet.png`,
           info: out.info,
@@ -652,6 +655,48 @@ export class Service {
 
   async overview(slug: string): Promise<ProjectOverview> {
     return this.parts.overview(await this.getProject(slug));
+  }
+
+  // ---- scans --------------------------------------------------------------------------------
+
+  async addScan(slug: string, query: ScanQuery, bytes: Uint8Array, author: string): Promise<ScanResult> {
+    await this.store.requireProject(slug);
+    if (slug === LIBRARY_SLUG) throw invalid("add scans to a project");
+    const name = assertNewSlug(query.name);
+    if (query.filename !== posix.basename(query.filename) || /[\\\x00-\x1f\x7f]/.test(query.filename) || Buffer.byteLength(query.filename) > 255) {
+      throw invalid("filename must be one file name");
+    }
+    const format = extOf(query.filename);
+    if (!isMeshFormat(format)) throw invalid("scan must be an STL, OBJ, 3MF or PLY file");
+    if (format !== "3mf" && query.units === undefined) throw invalid("specify the original scan units");
+    const dir = `refs/${name}`;
+    if (await this.store.stat(slug, dir)) throw exists(`${dir} already exists: pick another name`);
+    const scan = await this.renderer.normalizeScan({ format, bytes, ...(query.units ? { units: query.units } : {}) }).catch((err: unknown) => {
+      if (err instanceof RenderError) throw new ApiException("render_failed", err.message);
+      throw err;
+    });
+    const path = `${dir}/scan.stl`;
+    const source = `${dir}/source.md`;
+    const facts = [
+      "# Scan source",
+      "",
+      `- [filename] ${JSON.stringify(query.filename).replaceAll("[", "\\[").replaceAll("]", "\\]")}`,
+      `- [format] ${format}`,
+      `- [units] ${scan.unit}${format === "3mf" ? " (from the 3MF model)" : ""}`,
+      `- [units_given] ${query.units ?? "none"}`,
+      `- [triangles_original] ${scan.originalTriangles}`,
+      `- [triangles_stored] ${scan.info.triangles}`,
+      `- [degenerate_triangles_removed] ${scan.degenerateTriangles}`,
+      `- [debris_triangles_removed] ${scan.debrisTriangles}`,
+      `- [closed] ${scan.info.closed}`,
+      `- [noise_mm] ${scan.noiseMm}`,
+      "",
+      "Drawer welded and cleaned the surface, corrected winding, and stored the result in millimetres. The original upload was discarded.",
+      "",
+    ];
+    const writes = [{ path, bytes: scan.bytes }, { path: source, bytes: new TextEncoder().encode(facts.join("\n")) }];
+    const { revisionId } = await this.writeMany(slug, writes, [], author, `add scan ${name}`, dir);
+    return { project: slug, path, source, revisionId, mesh: scan.info, noiseMm: scan.noiseMm };
   }
 
   // ---- importing ----------------------------------------------------------------------------

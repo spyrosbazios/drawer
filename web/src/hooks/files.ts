@@ -1,7 +1,8 @@
+import type { ScanQuery } from "@drawer/shared/api";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Query } from "@tanstack/react-query";
 import { isAtOrUnder } from "@/core/paths";
-import { deleteDir, deleteFile, getHistory, getInfo, getTree, moveFile, readText, writeFile } from "@/services/files";
+import { addScan, deleteDir, deleteFile, getHistory, getInfo, getTree, moveFile, readText, writeFile } from "@/services/files";
 import type { WriteOptions } from "@/services/files";
 import { projectKeys } from "./projects";
 
@@ -109,5 +110,17 @@ export function useUploadFiles() {
     } finally {
       for (const key of [fileKeys.tree(slug), ["info", slug], ["history", slug], projectKeys.detail(slug), projectKeys.list(), projectKeys.overview(slug)]) void qc.invalidateQueries({ queryKey: key });
     }
+  };
+}
+
+
+export function useAddScan(slug: string) {
+  const qc = useQueryClient();
+  return async (query: ScanQuery, file: File) => {
+    const scan = await addScan(slug, query, file);
+    for (const key of [fileKeys.tree(slug), ["info", slug], ["history", slug], projectKeys.detail(slug), projectKeys.list(), projectKeys.overview(slug)]) {
+      void qc.invalidateQueries({ queryKey: key });
+    }
+    return scan;
   };
 }

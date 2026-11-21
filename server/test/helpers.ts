@@ -18,7 +18,7 @@ import {
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-export const MESH_INFO: MeshInfo = { format: "stl", triangles: 12, bbox: { min: [0, 0, 0], max: [10, 20, 30], size: [10, 20, 30] }, volumeCm3: 6 };
+export const MESH_INFO: MeshInfo = { format: "stl", closed: true, triangles: 12, bbox: { min: [0, 0, 0], max: [10, 20, 30], size: [10, 20, 30] }, volumeCm3: 6 };
 
 export interface FakeRenderer extends Renderer {
   /** What version() answers; change it before a restart to simulate an OpenSCAD upgrade. */
@@ -100,7 +100,7 @@ function fakeSolid(text: string, params: ParamValues | undefined): FakeSolid {
   const probe = marker("probe");
   const [where, len] = (probe ?? "").split(",");
   return {
-    info: { format: "stl", triangles: one("triangles", 12), bbox: { min, max: [min[0] + size[0], min[1] + size[1], min[2] + size[2]], size }, volumeCm3: one("volume", 6) },
+    info: { format: "stl", closed: marker("leaky") === null, triangles: one("triangles", 12), bbox: { min, max: [min[0] + size[0], min[1] + size[1], min[2] + size[2]], size }, volumeCm3: one("volume", 6) },
     shells: one("shells", 1),
     watertight: marker("leaky") === null,
     base: one("base", 200),
@@ -173,7 +173,7 @@ export function fakeRenderer(cacheDir: string): FakeRenderer {
         await writeFile(join(dir, "sheet.png"), PNG);
         await writeFile(join(dir, "meta.json"), "{}");
       }
-      return { ...mesh, key, meshKey: mesh.key, cached, dir, views: req.views as RenderView[] };
+      return { ...mesh, key, meshKey: mesh.key, proxy: false, cached, dir, views: req.views as RenderView[] };
     },
     async mesh(req) {
       count("mesh");
@@ -191,6 +191,12 @@ export function fakeRenderer(cacheDir: string): FakeRenderer {
         await writeFile(path, "solid fake\nendsolid fake\n");
       }
       return { key, cached, seconds: 0.01, dir, info: s.info, log: ["ECHO: hello"], warnings: [] };
+    },
+    async normalizeScan({ bytes, units }) {
+      const text = new TextDecoder().decode(bytes);
+      if (text.includes("POINT_CLOUD")) throw new RenderError("point cloud has no faces; export a triangulated surface");
+      const info = fakeSolid(text, undefined).info;
+      return { bytes, info, originalTriangles: info.triangles, degenerateTriangles: 0, debrisTriangles: 0, noiseMm: 0.02, unit: units ?? "millimeter" };
     },
     async meshInfo(file: string): Promise<MeshInfo> {
       if (basename(file).startsWith("bad")) throw new Error("unreadable mesh");

@@ -9,6 +9,7 @@ import { note } from "./commands/note.ts";
 import { attempts, guide, overview, part, parts, printed, report, restore, set } from "./commands/parts.ts";
 import { importCmd, newProject, preview, projects, reindex } from "./commands/projects.ts";
 import { render } from "./commands/render.ts";
+import { scan } from "./commands/scan.ts";
 import { context, search } from "./commands/search.ts";
 import { health, server } from "./commands/server.ts";
 import { answer, ask, attachment, attachments, fileAttachment, say, session, sessions } from "./commands/sessions.ts";
@@ -36,6 +37,7 @@ export const COMMANDS: readonly Command[] = [
   history,
   note,
   importCmd,
+  scan,
   reindex,
   guide,
   overview,

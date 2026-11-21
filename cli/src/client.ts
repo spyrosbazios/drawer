@@ -45,6 +45,8 @@ import type {
   RunnerWork,
   RunnersResponse,
   SearchResponse,
+  ScanQuery,
+  ScanResult,
   SectionBody,
   SectionResult,
   Session,
@@ -380,6 +382,10 @@ export class Client {
 
   section(slug: string, path: string, body: SectionBody): Promise<SectionResult> {
     return this.sendJson("POST", this.filePath(slug, "section", path), body);
+  }
+
+  async addScan(slug: string, query: ScanQuery, body: Uint8Array): Promise<ScanResult> {
+    return (await (await this.request("POST", this.projectPath(slug, "/scans"), { query: { ...query }, body })).json()) as ScanResult;
   }
 
   compare(slug: string, body: CompareBody): Promise<CompareResult> {

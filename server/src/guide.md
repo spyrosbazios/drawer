@@ -32,6 +32,14 @@ produce lives in the project.
 7. **Record what you learned** in the project memory as fact lines, and in the library when it holds
    for every project.
 
+
+## Working from a scan
+
+Read `refs/<name>/source.md` first. It records which pieces were removed, whether the mesh is
+closed and the noise estimate in millimetres. The geometry of the scan is in `scan.stl`.
+Use the noise estimate when choosing tolerances. An open scan has no enclosed volume, measurable
+wall thickness or inside for a probe.
+
 ## The spec
 
 - The model's coordinates are the print orientation: z is up, the part sits on z = 0, and it is
@@ -176,5 +184,3 @@ Notes are markdown. A list item `- [category] text` is a fact that can be found 
 ```
 
 Write the decision and its reason, not the story of how you got there.
-
-Slice and probe can measure a model without generating the standard preview views.

@@ -6,7 +6,7 @@
  *
  * Knobs: MOCK_LATENCY (ms per request), MOCK_RENDER_MS, MOCK_EVAL_MS, MOCK_AGENT_MS. Seeded data: dev/mock/seed.ts.
  */
-import { HEADER_AUTHOR, HEADER_MESSAGE, HEADER_REV, LIBRARY_SLUG, MATERIALS_FILE, PRINTER_FILE } from "../../shared/src/api";
+import { HEADER_AUTHOR, HEADER_MESSAGE, HEADER_REV, LIBRARY_SLUG, MATERIALS_FILE, PRINTER_FILE, SCAN_UNITS } from "../../shared/src/api";
 import type {
   PatchSettingsBody,
   AnswerBody,
@@ -25,6 +25,7 @@ import type {
   PrinterProfile,
   ProbeBody,
   RenderResult,
+  ScanResult,
   SearchHit,
   SectionBody,
   SessionMessageBody,
@@ -32,7 +33,7 @@ import type {
   SliceBody,
   WaiveBody,
 } from "../../shared/src/api";
-import { meshInfoOfBoxes, png } from "./mock/geometry";
+import { cubeStl, meshInfoOfBoxes, meshInfoOfStl, png } from "./mock/geometry";
 import * as settings from "./mock/settings";
 import { HttpError, STATUS, body, broadcast, eventStream, fail, json, startHeartbeat } from "./mock/http";
 import * as parts from "./mock/parts";
@@ -332,6 +333,35 @@ async function handle(req: Request): Promise<Response> {
     broadcast({ ...progress, stage: "done", step: total, view: null });
     broadcast({ type: "render", project: m[1], path: m[2], key: result.key });
     return json(result);
+  }
+
+  m = /^\/projects\/([^/]+)\/scans$/.exec(route);
+  if (m?.[1] && method === "POST") {
+    const project = m[1];
+    const p = getProject(project);
+    const name = url.searchParams.get("name") ?? "";
+    const filename = url.searchParams.get("filename") ?? "";
+    const units = SCAN_UNITS.find((unit) => unit === url.searchParams.get("units"));
+    const embedded = filename.toLowerCase().endsWith(".3mf");
+    if (project === LIBRARY_SLUG || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(name) || kindOf(filename) !== "mesh" || (!embedded && !units)) {
+      throw new HttpError("invalid", "Choose a scan name, mesh filename and original units");
+    }
+    if ((await req.arrayBuffer()).byteLength === 0) throw new HttpError("render_failed", "point cloud has no faces");
+    const path = `refs/${name}/scan.stl`;
+    const source = `refs/${name}/source.md`;
+    if (head(p, path) || head(p, source)) throw new HttpError("exists", `refs/${name} already exists`);
+    const size = units === "in" ? 25.4 : units === "m" ? 1000 : units === "cm" ? 10 : 1;
+    const stl = cubeStl(embedded ? 10 : size * 10);
+    const mesh = meshInfoOfStl(stl);
+    const noiseMm = 0.02;
+    const message = `add scan ${name}`;
+    const revision = record(p, author, message, [path, source]);
+    const note = encoder.encode(`# Scan source\n\n- [filename] ${JSON.stringify(filename)}\n- [closed] true\n- [noise_mm] ${noiseMm}\n`);
+    for (const [file, bytes] of [[path, stl], [source, note]] as const) {
+      const saved = put(p, file, bytes, author, message, revision);
+      broadcast({ type: "file", action: "written", project, path: file, rev: saved.rev, author });
+    }
+    return json({ project, path, source, revisionId: revision.id, mesh, noiseMm } satisfies ScanResult, 201);
   }
 
   // ---- measuring ----

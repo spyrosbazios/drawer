@@ -54,10 +54,9 @@ export function record(p: StoredProject, author: string, message: string, paths:
   return rev;
 }
 
-export function put(p: StoredProject, path: string, bytes: Uint8Array, author: string, message: string): { created: boolean; rev: string; revisionId: string } {
+export function put(p: StoredProject, path: string, bytes: Uint8Array, author: string, message: string, revision = record(p, author, message, [path])): { created: boolean; rev: string; revisionId: string } {
   const existing = p.files.get(path);
   const created = !existing || existing.deleted;
-  const revision = record(p, author, message, [path]);
   const version: Version = { revisionId: revision.id, bytes, rev: revOf(bytes) };
   if (existing && !existing.deleted) existing.versions.unshift(version);
   else p.files.set(path, { versions: [version, ...(existing?.versions ?? [])], updatedAt: revision.date, updatedBy: author, deleted: false });

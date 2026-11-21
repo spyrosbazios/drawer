@@ -184,23 +184,25 @@ function cornersByEdge(keys: Float64Array): Uint32Array {
   return order;
 }
 
-export interface Topology extends Welded, Faces {
+export interface Connectivity {
   /** Neighbour triangle across each corner's outgoing edge. -1 for boundary and non-manifold edges. */
   neighbours: Int32Array;
   /** Component representative per triangle. */
   component: Uint32Array;
   shells: number;
   closed: boolean;
+  /** Every closed edge also has opposite winding. */
+  oriented: boolean;
 }
 
-export function buildTopology(pos: Float32Array, tolerance = 0): Topology {
-  const welded = weld(pos, tolerance);
-  const n = pos.length / 9;
+export function connectivity(welded: Welded): Connectivity {
+  const n = welded.index.length / 3;
   const neighbours = new Int32Array(welded.index.length).fill(-1);
   const keys = edgeKeys(welded);
   const order = cornersByEdge(keys);
   const uf = new UnionFind(n);
   let closed = n > 0;
+  let oriented = true;
   let start = 0;
   for (let i = 1; i <= order.length; i++) {
     if (i < order.length && keys[order[i]!] === keys[order[start]!]) continue;
@@ -209,6 +211,7 @@ export function buildTopology(pos: Float32Array, tolerance = 0): Topology {
         b = order[start + 1]!;
       const ta = Math.floor(a / 3),
         tb = Math.floor(b / 3);
+      if (welded.index[a] === welded.index[b]) oriented = false;
       neighbours[a] = tb;
       neighbours[b] = ta;
       uf.union(ta, tb);
@@ -223,5 +226,12 @@ export function buildTopology(pos: Float32Array, tolerance = 0): Topology {
     component[t] = uf.find(t);
     if (component[t] === t) shells++;
   }
-  return { ...welded, ...faces(pos), neighbours, component, shells, closed };
+  return { neighbours, component, shells, closed, oriented: closed && oriented };
+}
+
+export interface Topology extends Welded, Faces, Connectivity {}
+
+export function buildTopology(pos: Float32Array, tolerance = 0): Topology {
+  const welded = weld(pos, tolerance);
+  return { ...welded, ...connectivity(welded), ...faces(pos) };
 }

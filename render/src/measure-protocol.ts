@@ -1,8 +1,12 @@
 /** Messages between the renderer and measure-worker.ts. */
 import type { Axis, MeshInfo, ProbeResult, SliceContour, Vec3 } from "@drawer/shared/api";
+import type { ScanNormalization } from "@drawer/shared/contracts";
+import type { ScanUnit } from "@drawer/shared/api";
 import type { AnalysisResult, DeviationResult } from "./measure";
 
 type Ask =
+  | { op: "normalize"; format: MeshInfo["format"]; bytes: Uint8Array; units?: ScanUnit }
+  | { op: "proxy"; mesh: string; dest: string }
   | { op: "info"; file: string }
   | { op: "convert"; format: MeshInfo["format"]; source: Uint8Array; dest: string }
   | { op: "volume"; mesh: string }
@@ -15,6 +19,8 @@ type Ask =
 export type WorkerRequest = Ask & { id: number };
 
 export type WorkerAnswer =
+  | { op: "normalize"; scan: ScanNormalization }
+  | { op: "proxy" }
   | { op: "info"; info: MeshInfo }
   | { op: "convert"; info: MeshInfo }
   | { op: "volume"; mm3: number }

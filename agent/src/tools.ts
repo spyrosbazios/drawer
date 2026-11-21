@@ -665,7 +665,7 @@ const viewPart = defineTool({
 
 const measureFile = defineTool({
   name: "measure_file",
-  description: "Measure any .scad or mesh file (a reference, a library part, a model): size, volume, shells, watertightness, base, overhang, thinnest wall, and an iso picture.",
+  description: "Measure any .scad or mesh file (a reference, a library part, a model): size, shells, watertightness, base, overhang, and an iso picture. Volume and wall thickness require a closed mesh.",
   input: { path: filePath, params: paramValues.optional() },
   async run(ctx, { path, params }) {
     const where = locate(ctx, path);

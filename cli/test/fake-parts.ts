@@ -48,7 +48,7 @@ export interface FakeStore {
 
 export const MESH: MeshInfo = {
   format: "stl",
-  triangles: 1234,
+  closed: true, triangles: 1234,
   bbox: { min: [0, 0, 0], max: [40, 30, 12.5], size: [40, 30, 12.5] },
   volumeCm3: 8.125,
 };

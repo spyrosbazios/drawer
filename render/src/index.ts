@@ -38,6 +38,7 @@ import { MeasureClient } from "./measure-client";
 import { meshFormatOf } from "./mesh";
 import { applyParams, defineArgs, parseParams } from "./params";
 import { parseDepsFile, parseDiagnostics, parseStderr, run, type RunResult } from "./process";
+import { PROXY_TRIANGLES } from "./scan";
 import { SerialQueue } from "./queue";
 import { composeSheet } from "./sheet";
 import { scaleDown } from "./thumbnail";
@@ -169,6 +170,23 @@ export function createRenderer(opts: RendererOptions): Renderer {
       return r;
     };
 
+  const drawMeshPath = async (dir: string, info: MeshInfo): Promise<string> => {
+    const full = join(dir, "mesh.stl");
+    if (info.triangles <= PROXY_TRIANGLES) return full;
+    const path = join(dir, "proxy.stl");
+    if (!(await exists(path))) {
+      const tmp = await mkdtemp(join(meshCache, ".proxy-"));
+      try {
+        const dest = join(tmp, "proxy.stl");
+        await measure.ask({ op: "proxy", mesh: full, dest });
+        await rename(dest, path);
+      } finally {
+        await rm(tmp, { recursive: true, force: true });
+      }
+    }
+    return path;
+  };
+
   const render = async (req: RenderRequest): Promise<RenderOutput> => {
     const started = performance.now();
     const deadline = Date.now() + timeoutMs;
@@ -183,19 +201,22 @@ export function createRenderer(opts: RendererOptions): Renderer {
     const key = renderKey(geometry.key, views, req.size, openscad);
     const dir = join(renderCache, key);
     const { info, log, warnings } = geometry;
-    const result = { key, meshKey: geometry.key, dir, views, info, log, warnings };
-    if (await exists(join(dir, "meta.json"))) return { ...result, cached: true, seconds: elapsed(started) };
-
     const file = resolve(req.file);
     const isScad = extname(file).toLowerCase() === ".scad";
+    const proxy = !isScad && info.triangles > PROXY_TRIANGLES;
+    const result = { key, meshKey: geometry.key, proxy, dir, views, info, log, warnings };
+    if (await exists(join(dir, "meta.json"))) return { ...result, cached: true, seconds: elapsed(started) };
+
     const defines = isScad ? defineArgs(req.params) : [];
     const openscadRun = pipelineRun({ ...process.env, OPENSCADPATH: req.searchPaths.join(":") }, deadline);
     await mkdir(renderCache, { recursive: true });
     const tmp = await mkdtemp(join(renderCache, ".tmp-"));
     try {
-      const meshPath = join(geometry.dir, "mesh.stl");
       const wrapper = join(tmp, "view.scad");
-      if (!isScad) await writeFile(wrapper, `import(${JSON.stringify(meshPath)}, convexity = 10);\n`);
+      if (!isScad) {
+        const meshPath = await drawMeshPath(geometry.dir, info);
+        await writeFile(wrapper, `import(${JSON.stringify(meshPath)}, convexity = 10);\n`);
+      }
       const cells: { view: RenderView; png: Uint8Array }[] = [];
       for (const [i, view] of views.entries()) {
         progress("views", 2 + i, view);
@@ -507,6 +528,7 @@ export function createRenderer(opts: RendererOptions): Renderer {
     },
     mesh: (req) => ask(() => queue.run(() => mesh(req, () => {}, Date.now() + timeoutMs))),
     meshInfo: async (file) => (await measure.ask({ op: "info", file })).info,
+    normalizeScan: (req) => ask(async () => (await measure.ask({ op: "normalize", ...req })).scan),
     check: (req) => checkQueue.run(() => check(req)),
     params: (source) => parseParams(source),
     applyParams: (source, values) => applyParams(source, values),

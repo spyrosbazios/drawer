@@ -106,7 +106,7 @@ export interface TreeResponse {
   entries: TreeEntry[];
 }
 
-export const MESH_FORMATS = ["stl", "3mf", "obj"] as const;
+export const MESH_FORMATS = ["stl", "3mf", "obj", "ply"] as const;
 export type MeshFormat = (typeof MESH_FORMATS)[number];
 
 export function isMeshFormat(value: string): value is MeshFormat {
@@ -116,9 +116,30 @@ export function isMeshFormat(value: string): value is MeshFormat {
 export interface MeshInfo {
   format: MeshFormat;
   triangles: number;
+  closed: boolean;
   /** Millimetres. */
   bbox: { min: [number, number, number]; max: [number, number, number]; size: [number, number, number] };
   volumeCm3: number | null;
+}
+
+export const SCAN_UNITS = ["mm", "cm", "m", "in"] as const;
+export type ScanUnit = (typeof SCAN_UNITS)[number];
+export const MAX_SCAN_TRIANGLES = 2_000_000;
+
+/** POST /projects/:slug/scans, with raw bytes in the body. */
+export interface ScanQuery {
+  name: string;
+  filename: string;
+  units?: ScanUnit;
+}
+
+export interface ScanResult {
+  project: string;
+  path: string;
+  source: string;
+  revisionId: string;
+  mesh: MeshInfo;
+  noiseMm: number;
 }
 
 export interface Link {
@@ -217,7 +238,9 @@ export interface RenderResult {
   cached: boolean;
   seconds: number;
   /** URL paths (start with /api/renders/). */
-  mesh: string; // binary STL (for a mesh input: the file itself, converted to STL when needed)
+  mesh: string; // full binary STL
+  /** Lightweight STL for drawing a large mesh. Measurements always use the full mesh. */
+  proxy?: string;
   views: Partial<Record<RenderView, string>>;
   /** One PNG with all requested views in a grid. */
   sheet: string;
@@ -537,6 +560,8 @@ export interface ProbeResult {
 export interface RenderRef {
   key: string;
   mesh: string;
+  /** Lightweight STL for drawing a large mesh. Measurements always use the full mesh. */
+  proxy?: string;
   views: Partial<Record<RenderView, string>>;
   sheet: string;
 }

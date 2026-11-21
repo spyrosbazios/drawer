@@ -7,6 +7,11 @@ version is one semver number for the whole repository, set by the git tag (see [
 
 ## Unreleased
 
+### Added
+
+- Drop a scan onto a project or run `drawer scan add` to store a cleaned mesh in millimetres and a source note.
+- Mesh info reports whether the surface is closed. Large mesh previews use a lightweight STL.
+
 ### Changed
 
 - Mesh exports and measurements are cached independently of preview views and sizes.

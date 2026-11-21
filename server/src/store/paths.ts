@@ -103,6 +103,7 @@ const MIME_BY_EXT: Record<string, string> = {
   stl: "model/stl",
   "3mf": "model/3mf",
   obj: "model/obj",
+  ply: "application/octet-stream",
   png: "image/png",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",

@@ -1,6 +1,7 @@
 import { BackSide, Box3, BufferAttribute, BufferGeometry, Color, DoubleSide, FrontSide, MeshBasicMaterial, Plane, Raycaster, Vector2, GridHelper, Group, Mesh, MeshStandardMaterial, Sphere, Vector3 } from "three";
 import type { Object3D } from "three";
 import { ThreeMFLoader } from "three/addons/loaders/3MFLoader.js";
+import { PLYLoader } from "three/addons/loaders/PLYLoader.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { VIEW_DIRECTIONS } from "./camera-rig";
@@ -240,8 +241,9 @@ export class MeshScene implements ViewControl {
   }
 
   private async fetchModel(url: string, format: MeshFormat): Promise<Object3D> {
-    if (format === "stl") {
-      const geometry = await new STLLoader().loadAsync(url);
+    if (format === "stl" || format === "ply") {
+      const loader = format === "stl" ? new STLLoader() : new PLYLoader();
+      const geometry = await loader.loadAsync(url);
       // Many STL exporters write zero normals; recomputing gives correct flat shading either way.
       geometry.computeVertexNormals();
       return this.inLight(new Mesh(geometry, this.material));

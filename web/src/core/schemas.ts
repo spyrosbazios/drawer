@@ -25,6 +25,7 @@ import type {
   RunnersResponse,
   SearchResponse,
   SectionResult,
+  ScanResult,
   Session,
   SessionAttachment,
   SessionDetail,
@@ -99,9 +100,19 @@ export const treeSchema = z.object({
 const meshInfo = z.object({
   format: z.enum(MESH_FORMATS),
   triangles: z.number(),
+  closed: z.boolean(),
   bbox: z.object({ min: vec3, max: vec3, size: vec3 }),
   volumeCm3: z.number().nullable(),
 });
+
+export const scanResultSchema = z.object({
+  project: z.string(),
+  path: z.string(),
+  source: z.string(),
+  revisionId: z.string(),
+  mesh: meshInfo,
+  noiseMm: z.number(),
+}) satisfies z.ZodType<ScanResult>;
 
 const link = z.object({
   from: z.string(),
@@ -158,6 +169,7 @@ export const renderResultSchema = z.object({
   cached: z.boolean(),
   seconds: z.number(),
   mesh: z.string(),
+  proxy: z.string().optional(),
   views,
   sheet: z.string(),
   info: meshInfo,
@@ -249,7 +261,7 @@ const meshAnalysis = z.object({
   thickness: z.string().nullable(),
 });
 
-const renderRef = z.object({ key: z.string(), mesh: z.string(), views, sheet: z.string() });
+const renderRef = z.object({ key: z.string(), mesh: z.string(), proxy: z.string().optional(), views, sheet: z.string() });
 
 export const partSummarySchema = z.object({
   project: z.string(),

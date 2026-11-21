@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { type Bvh, buildBvh } from "./bvh";
 import { analyse, deviation, gap, probe, slice, transform, volume } from "./measure";
 import { computeMeshInfo, isBinaryStl, meshFormatOf, parseMesh, parseStl, toBinaryStl } from "./mesh";
+import { clusterProxy, normalizeScan } from "./scan";
 import { buildTopology, type Topology } from "./topology";
 import type { WorkerReply, WorkerRequest } from "./measure-protocol";
 
@@ -46,6 +47,13 @@ function bvhOf(path: string): Bvh {
 
 function handle(req: WorkerRequest): { reply: WorkerReply; transfer: ArrayBuffer[] } {
   switch (req.op) {
+    case "normalize": {
+      const scan = normalizeScan(req.format, req.bytes, req.units);
+      return { reply: { id: req.id, ok: true, op: "normalize", scan }, transfer: [scan.bytes.buffer as ArrayBuffer] };
+    }
+    case "proxy":
+      writeFileSync(req.dest, toBinaryStl(clusterProxy(load(req.mesh).pos)));
+      return { reply: { id: req.id, ok: true, op: "proxy" }, transfer: [] };
     case "info": {
       const format = meshFormatOf(req.file);
       if (!format) throw new Error(`not a mesh file: ${req.file}`);
@@ -62,15 +70,18 @@ function handle(req: WorkerRequest): { reply: WorkerReply; transfer: ArrayBuffer
       return { reply: { id: req.id, ok: true, op: "volume", mm3: volume(parseStl(readFileSync(req.mesh))) }, transfer: [] };
     case "analyse": {
       const mesh = load(req.mesh);
-      const r = analyse(mesh.pos, req.overhangDeg, bvhOf(req.mesh), topologyOf(mesh));
+      const topology = topologyOf(mesh);
+      const r = analyse(mesh.pos, req.overhangDeg, topology.closed ? bvhOf(req.mesh) : undefined, topology);
       return { reply: { id: req.id, ok: true, op: "analyse", analysis: r.analysis, thickness: r.thickness }, transfer: [r.thickness.buffer as ArrayBuffer] };
     }
     case "slice": {
       const mesh = load(req.mesh);
       return { reply: { id: req.id, ok: true, op: "slice", contours: slice(mesh.pos, req.axis, req.at, topologyOf(mesh)) }, transfer: [] };
     }
-    case "probe":
+    case "probe": {
+      if (!topologyOf(load(req.mesh)).closed) throw new Error("an open mesh has no inside; probe requires a closed mesh");
       return { reply: { id: req.id, ok: true, op: "probe", probe: probe(bvhOf(req.mesh), req.from, req.axis) }, transfer: [] };
+    }
     case "deviation": {
       const b = load(req.b);
       const r = deviation(bvhOf(req.a), b.pos, topologyOf(b));

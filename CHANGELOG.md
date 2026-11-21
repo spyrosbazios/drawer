@@ -5,6 +5,11 @@ version is one semver number for the whole repository, set by the git tag (see [
 
 ## Unreleased
 
+### Fixed
+
+- The app menu explains the HTTPS requirement for installing drawer from another device. The install guide shows
+  how to serve drawer over private HTTPS.
+
 ## 0.2.0 - 2026-11-21
 
 ### Added

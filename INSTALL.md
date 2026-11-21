@@ -133,6 +133,18 @@ curl -s http://<DRAWER_BIND>:<DRAWER_PORT>/api/health
 
 From here `<url>` means `http://<DRAWER_BIND>:<DRAWER_PORT>`.
 
+### Install the web app
+
+Open `http://localhost:3050` on the server itself, or use HTTPS from another device. A plain HTTP URL on a LAN or
+tailnet IP can open drawer in a tab, but Chromium needs HTTPS there to offer app installation.
+
+For example, on a Tailscale host with HTTPS enabled, keep drawer bound to `127.0.0.1` and add the host's full
+Tailscale DNS name (without a port) to `DRAWER_ALLOWED_HOSTS` in `.env`. Run `docker compose up -d` to apply the
+setting, then run `tailscale serve --bg http://127.0.0.1:3050`. Open the HTTPS URL printed by Serve from a device on
+the tailnet. If port 443 already serves another app, choose an unused port with `--https=<port>`.
+
+In Chromium, select **App menu → Install app** when it appears. On iOS, use **Share → Add to Home Screen**.
+
 ## 4. The built-in agent (optional)
 
 Needs at least one provider signed in on this machine. Ask which one the person wants; if they know it is not

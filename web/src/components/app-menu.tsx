@@ -58,6 +58,11 @@ export function AppMenu() {
             <DownloadIcon /> Install app
           </DropdownMenuItem>
         )}
+        {!window.isSecureContext && (
+          <DropdownMenuLabel className="font-normal text-muted-foreground">
+            Open drawer over HTTPS to install the app.
+          </DropdownMenuLabel>
+        )}
         <DropdownMenuItem
           onSelect={() =>
             void checkForUpdates().then(() => toast.success("Checked for updates"), () => toast.error("Could not check for updates"))

@@ -3,6 +3,8 @@ name: CLA
 # Asks a first-time contributor to sign CLA.md with a comment, and records the signature on the `cla-signatures` branch.
 # It runs on pull_request_target with write access, which is safe only because it never checks out or runs the pull
 # request's code: do not add a checkout step here.
+# The allowlist holds the maintainer, who is the party the CLA grants rights to, and accounts that cannot sign:
+# Dependabot, and `claude`, which GitHub lists as an author of every commit with a Claude co-author line.
 on:
   issue_comment:
     types: [created]
@@ -27,4 +29,4 @@ jobs:
           path-to-signatures: signatures/cla.json
           path-to-document: https://github.com/${{ github.repository }}/blob/main/CLA.md
           branch: cla-signatures
-          allowlist: dependabot[bot]
+          allowlist: spyrosbazios,claude,dependabot[bot]

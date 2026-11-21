@@ -22,6 +22,26 @@ steps and adds no new ones.
   edit `.env` themselves.
 - **Ask once, up front**, the questions in step 0. Do not ask anything else unless a step fails.
 
+## Before anything: which OS are you on?
+
+Find out what you are running on, and follow only that branch. Never assume the OS from the person's wording.
+
+- **macOS or Linux** (`uname -sm` prints `Darwin` or `Linux`): continue with step 0. The steps note where the two
+  differ. If `uname -r` contains `microsoft`, you are inside WSL2 on Windows: also continue, as Linux.
+- **Windows, outside WSL** (PowerShell or cmd: `$env:OS` or `%OS%` is `Windows_NT`, or there is no `uname`): drawer
+  does not run natively on Windows. Check the three things below with the Windows commands given, show the person
+  which are missing, and print what they must do (each needs an admin PowerShell or a setting, so they do it):
+  1. WSL2 with Ubuntu: `wsl -l -v` lists Ubuntu with version 2. Fix: `wsl --install -d Ubuntu`, then a reboot.
+  2. systemd in that distro: `wsl -d Ubuntu -- systemctl is-system-running` does not fail. Fix: put
+     `[boot]` and `systemd=true` in `/etc/wsl.conf` inside Ubuntu, then `wsl --shutdown`.
+  3. Docker Desktop with WSL integration for Ubuntu: `wsl -d Ubuntu -- docker info` works. Fix: install Docker
+     Desktop, then Settings, Resources, WSL integration, turn on Ubuntu.
+
+  Then **stop**: tell the person to open the Ubuntu terminal, start their agent there, and paste the same prompt
+  again. Everything from step 0 runs inside Ubuntu. Two things to tell them: drawer opens at `http://localhost:3050`
+  in their Windows browser, and WSL stops when idle, which stops the runner, so they keep an Ubuntu terminal open
+  while they use the built-in agent.
+
 ## 0. Ask the person
 
 1. Where should the checkout live? Default: `~/drawer` (the runner's unit assumes it).
@@ -39,7 +59,7 @@ and the fix for each missing one. Install only what needs no root (Bun); for the
 
 | Requirement | Check | Pass | Fix when missing |
 |---|---|---|---|
-| OS | `uname -sm` | Linux or macOS (Darwin), x86_64 or arm64 | Windows: do all of this inside WSL2 |
+| OS | `uname -sm` | Linux (WSL2 included) or macOS (Darwin), x86_64 or arm64 | see "Before anything" above |
 | Docker running | `docker info --format '{{.ServerVersion}}'` | prints a version | not found: Docker Engine (Linux) or Docker Desktop (macOS, Windows). "permission denied": add the user to the `docker` group (root) and log in again. "Cannot connect": start Docker |
 | Compose v2 | `docker compose version` | `v2` or newer | the Compose plugin, installed with Docker |
 | git, curl | `git --version && curl --version` | both print a version | the OS package manager |

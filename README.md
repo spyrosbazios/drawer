@@ -82,12 +82,13 @@ Screens use sample data from the web app's mock server. The same app installs on
 > delete its projects. Keep its port on loopback or a private address, and never expose it to the public internet.
 > Read the [security model](SECURITY.md) before deploying.
 
-**Let an agent install it.** Paste this into Claude Code, Codex or any coding agent with a shell, on the machine
-that will run drawer:
+**Let an agent install it.** Paste this into Claude Code, Codex or any coding agent with a shell, on the computer
+that will run drawer: macOS, Linux or Windows. On Windows it sets up WSL2 with you first.
 
 ```text
-Install drawer on this machine, end to end. Fetch and follow
-https://raw.githubusercontent.com/spyrosbazios/drawer/main/INSTALL.md exactly: ask me its step-0 questions first,
+Install drawer on this computer, end to end. Fetch and follow
+https://raw.githubusercontent.com/spyrosbazios/drawer/main/INSTALL.md exactly: find out which OS you are on and take
+its branch, ask me its step-0 questions first,
 run every step and check it, never use sudo or sign in for me (print those commands and wait), and keep the port
 private. Finish with the report its last step describes.
 ```
